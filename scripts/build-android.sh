@@ -7,7 +7,12 @@ cd "$(dirname "$0")/.."
 command -v gomobile >/dev/null 2>&1 || { echo 'gomobile is required' >&2; exit 1; }
 output="${ANDROID_BUILD_DIR:-$PWD/dist/android}"
 mkdir -p "$output"
-gomobile bind -target=android/arm,android/arm64,android/386,android/amd64 -androidapi=23 -javapkg=org.bimeron.core -o "$output/bimeron-core.aar" ./androidcore
+if [ -n "${BIMERON_VERSION:-}" ]; then
+    set -- -ldflags "-X bimeron/core.Version=${BIMERON_VERSION#v}"
+else
+    set --
+fi
+gomobile bind "$@" -target=android/arm,android/arm64,android/386,android/amd64 -androidapi=23 -javapkg=org.bimeron.core -o "$output/bimeron-core.aar" ./androidcore
 cp LICENSE "$output/"
 cp THIRD_PARTY_NOTICES.txt "$output/"
 printf '%s\n' "$output/bimeron-core.aar"

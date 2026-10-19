@@ -57,7 +57,11 @@ func run() error {
 		if err := os.MkdirAll(filepath.Dir(bin), 0755); err != nil {
 			return err
 		}
-		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", bin, "./cmd/bimeron")
+		ldflags := "-s -w"
+		if version := os.Getenv("BIMERON_VERSION"); version != "" {
+			ldflags += " -X bimeron/core.Version=" + strings.TrimPrefix(version, "v")
+		}
+		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "./cmd/bimeron")
 		cmd.Dir = root
 		cmd.Env = append(filteredEnv(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
