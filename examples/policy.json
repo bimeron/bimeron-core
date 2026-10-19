@@ -1,0 +1,1 @@
+{"default":"direct","rules":[{"cidr":"192.168.0.0/16","action":"direct"},{"domain":"example.com","action":"proxy"},{"cidr":"203.0.113.0/24","action":"proxy"}]}

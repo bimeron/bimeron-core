@@ -1,0 +1,14 @@
+/bin/
+/profiles/
+.env
+.env.*
+*.key
+*.mobileprovision
+*.p12
+*.exe
+*.test
+/.test-tools/
+.tmp/
+.continue/
+/doctor-report*.json
+/dist/

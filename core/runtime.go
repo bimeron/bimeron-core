@@ -1,0 +1,312 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	"golang.getoutline.org/sdk/transport"
+	"bimeron/internal/accesskey"
+	"bimeron/internal/proxy"
+	"bimeron/internal/vpn"
+)
+
+// platform isolates adapter, route and DNS operations. Transport, policy, DNS
+// forwarding, retries and session state are shared across operating systems.
+type platform interface {
+	Acquire(context.Context) (func(), error)
+	Inspect(context.Context, string, bool) (networkPath, error)
+	Open(context.Context, SessionConfig, *flowRouter, func(string, string)) (link, error)
+}
+type networkPath struct {
+	identity string
+	dialer   net.Dialer
+	dns      []string
+	refresh  func(context.Context) error
+}
+type link interface{ Close() error }
+type vpnBackend struct {
+	platform platform
+	metadata *vpn.DNSMetadata
+}
+
+func newBackend(c SessionConfig) backend {
+	if c.Mode == "proxy" {
+		return proxyBackend{}
+	}
+	return &vpnBackend{platform: newPlatform(c), metadata: vpn.NewDNSMetadata()}
+}
+func (b *vpnBackend) Acquire(ctx context.Context) (func(), error) { return b.platform.Acquire(ctx) }
+func (b *vpnBackend) Open(ctx context.Context, c SessionConfig, report func(string, string)) (session, error) {
+	setupCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
+	defer cancel()
+	report("network_inspect", "Selecting outbound network interface")
+	path, err := b.platform.Inspect(setupCtx, c.Name, true)
+	if err != nil {
+		return nil, err
+	}
+	h, tcp, udp, err := prepareVPN(ctx, setupCtx, c, path, report, b.metadata)
+	if err != nil {
+		return nil, err
+	}
+	router := &flowRouter{}
+	router.replace(h)
+	l, err := b.platform.Open(setupCtx, c, router, report)
+	if err != nil {
+		router.Close()
+		return nil, err
+	}
+	return &vpnSession{link: l, router: router, platform: b.platform, path: path, cfg: c, tcp: tcp, udp: udp, report: report, ctx: ctx, metadata: b.metadata, prepare: prepareVPN}, nil
+}
+
+func directHandler(ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) *vpn.Handler {
+	h := vpn.NewHandler(ctx)
+	h.Metadata = metadata
+	h.Stats = c.stats
+	h.DirectTCP = &transport.TCPDialer{Dialer: path.dialer}
+	h.DirectUDP = &transport.UDPDialer{Dialer: path.dialer}
+	h.Policy = c.Policy
+	h.DNS = c.DNS
+	h.DisableIPv6 = c.DisableIPv6
+	h.Report = report
+	return h
+}
+func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error) {
+	report("key_resolve", "Resolving access key through outbound interface")
+	p, _, endpoints, err := resolveOnPath(ctx, c, path)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	tcp, err := proxy.OutlineTCP(p.TCP, path.dialer)
+	if err != nil {
+		return nil, nil, nil, fault("invalid_tcp_transport", false)
+	}
+	udp, err := proxy.OutlineUDP(p.UDP, path.dialer)
+	if err != nil {
+		return nil, nil, nil, fault("invalid_udp_transport", false)
+	}
+	report("transport_check", "Checking Outline TCP/TLS and UDP/DNS")
+	if _, err := vpn.Check(ctx, tcp, udp, c.DNS); err != nil {
+		return nil, nil, nil, fault("transport_check_failed", true)
+	}
+	if c.endpointChanged != nil {
+		c.endpointChanged(endpoints)
+	}
+	h := directHandler(lifetime, c, path, report, metadata)
+	h.TCP = tcp
+	h.UDP = udp
+	return h, tcp, udp, nil
+}
+
+type vpnSession struct {
+	link     link
+	router   *flowRouter
+	platform platform
+	path     networkPath
+	cfg      SessionConfig
+	tcp      transport.StreamDialer
+	udp      transport.PacketListener
+	report   func(string, string)
+	ctx      context.Context
+	metadata *vpn.DNSMetadata
+	prepare  func(context.Context, context.Context, SessionConfig, networkPath, func(string, string), *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error)
+}
+
+func (s *vpnSession) Close() error { err := s.link.Close(); s.router.Close(); return err }
+
+// Suspend replaces the failed generation with direct-only policy handling.
+// The adapter, routes, NRPT and packet stack stay owned by this session.
+func (s *vpnSession) Suspend() {
+	s.router.replace(directHandler(s.ctx, s.cfg, s.path, s.report, s.metadata))
+}
+func (s *vpnSession) Reconnect(ctx context.Context) error {
+	attempt, cancel := context.WithTimeout(ctx, 75*time.Second)
+	defer cancel()
+	path, err := s.platform.Inspect(attempt, s.cfg.Name, false)
+	if err != nil {
+		return err
+	}
+	if path.identity != s.path.identity {
+		s.router.replace(directHandler(s.ctx, s.cfg, path, s.report, s.metadata))
+		s.path = path
+	}
+	h, tcp, udp, err := s.prepare(s.ctx, attempt, s.cfg, path, s.report, s.metadata)
+	if err != nil {
+		return err
+	}
+	if path.refresh != nil {
+		if err := path.refresh(attempt); err != nil {
+			s.report("dns_refresh_failed", "Could not refresh system DNS state")
+		}
+	}
+	if ctx.Err() != nil {
+		h.Close()
+		return ctx.Err()
+	}
+	s.router.replace(h)
+	s.tcp = tcp
+	s.udp = udp
+	s.path = path
+	return nil
+}
+func (s *vpnSession) Wait(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	now := time.Now()
+	monitor := healthMonitor{identity: s.path.identity, last: now, lastProbe: now, clock: time.Now, report: s.report,
+		inspect: func(ctx context.Context) (string, error) {
+			p, err := s.platform.Inspect(ctx, s.cfg.Name, false)
+			return p.identity, err
+		},
+		probe: func(ctx context.Context) error { _, err := vpn.Check(ctx, s.tcp, s.udp, s.cfg.DNS); return err },
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+		if err := monitor.step(ctx, time.Now()); err != nil {
+			return err
+		}
+	}
+}
+
+// A separate monitor makes network changes, failures and resume testable without
+// changing the host's network or waiting for real sleep/probe intervals.
+type healthMonitor struct {
+	identity        string
+	last, lastProbe time.Time
+	failures        int
+	clock           func() time.Time
+	inspect         func(context.Context) (string, error)
+	probe           func(context.Context) error
+	report          func(string, string)
+}
+
+func (m *healthMonitor) step(ctx context.Context, now time.Time) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if resumed(m.last, now) {
+		return fault("resume_detected", true)
+	}
+	m.last = now
+	inspectCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	identity, err := m.inspect(inspectCtx)
+	cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		var staged *stageError
+		if errors.As(err, &staged) && !staged.retry {
+			return err
+		}
+		return fault("network_unavailable", true)
+	}
+	if identity != m.identity {
+		return fault("network_changed", true)
+	}
+	if now.Sub(m.lastProbe) < 30*time.Second {
+		return nil
+	}
+	m.lastProbe = now
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	err = m.probe(probeCtx)
+	cancel()
+	// The bounded probe itself must not be mistaken for system sleep.
+	m.last = m.clock()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err == nil {
+		m.failures = 0
+		return nil
+	}
+	m.failures++
+	m.report("health_check_failed", "Outline health check failed")
+	if m.failures >= 3 {
+		return fault("transport_unavailable", true)
+	}
+	return nil
+}
+func resumed(last, now time.Time) bool { return now.UnixNano()-last.UnixNano() > int64(30*time.Second) }
+
+// cleanup executes every registered action, even after a failure. Open can use
+// the same object for rollback and normal Stop without double-releasing resources.
+type cleanup struct {
+	once    sync.Once
+	actions []func() error
+	err     error
+}
+
+func (c *cleanup) add(f func() error) { c.actions = append(c.actions, f) }
+func (c *cleanup) Close() error {
+	c.once.Do(func() {
+		for i := len(c.actions) - 1; i >= 0; i-- {
+			if err := c.actions[i](); err != nil {
+				c.err = fault("cleanup_failed_run_recover", false)
+			}
+		}
+	})
+	return c.err
+}
+
+type proxyBackend struct{}
+
+func (proxyBackend) Acquire(context.Context) (func(), error) { return func() {}, nil }
+func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(string, string)) (session, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	p, err := c.Resolve(resolveCtx)
+	if err != nil {
+		if accesskey.IsUnavailable(err) {
+			return nil, fault("access_key_unavailable", false)
+		}
+		return nil, fault("access_key_resolve_failed", true)
+	}
+	d, err := proxy.Outline(p.TCP)
+	if err != nil {
+		return nil, fault("invalid_tcp_transport", false)
+	}
+	l, err := net.Listen("tcp", c.Listen)
+	if err != nil {
+		return nil, fault("proxy_listener_failed", false)
+	}
+	serveCtx, stop := context.WithCancel(ctx)
+	if c.endpointChanged != nil {
+		c.endpointChanged(sessionEndpoints{tcp: net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))})
+	}
+	s := &proxySession{cancel: stop, done: make(chan struct{}), listener: l}
+	report("proxy_listen", fmt.Sprintf("SOCKS5 TCP listening on %s", l.Addr()))
+	go func() {
+		s.err = (&proxy.Server{Proxy: d, Policy: c.Policy, Stats: c.stats}).Serve(serveCtx, l)
+		close(s.done)
+	}()
+	return s, nil
+}
+
+type proxySession struct {
+	cancel   context.CancelFunc
+	done     chan struct{}
+	listener net.Listener
+	err      error
+}
+
+func (s *proxySession) Wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		if s.err != nil {
+			return fault("proxy_listener_failed", false)
+		}
+		return nil
+	}
+}
+func (s *proxySession) Close() error { s.cancel(); _ = s.listener.Close(); <-s.done; return nil }
