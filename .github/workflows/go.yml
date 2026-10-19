@@ -17,3 +17,55 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
+
+  cli-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run scripts/build-dist.go
+      - run: go run scripts/check-dist.go
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-dist
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  android-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: gomobile init
+      - run: sh scripts/build-android.sh
+      - name: Check Android package
+        run: |
+          test -s dist/android/bimeron-core.aar
+          test -s dist/android/bimeron-core-sources.jar
+          cmp LICENSE dist/android/LICENSE
+          cmp THIRD_PARTY_NOTICES.txt dist/android/THIRD_PARTY_NOTICES.txt
+          unzip -Z1 dist/android/bimeron-core.aar | grep 'libgojni.so$' | sort > /tmp/bimeron-abis.txt
+          printf '%s\n' 'jni/arm64-v8a/libgojni.so' 'jni/armeabi-v7a/libgojni.so' 'jni/x86/libgojni.so' 'jni/x86_64/libgojni.so' > /tmp/bimeron-expected-abis.txt
+          diff -u /tmp/bimeron-expected-abis.txt /tmp/bimeron-abis.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-dist
+          path: dist/android/
+          retention-days: 14
+          if-no-files-found: error

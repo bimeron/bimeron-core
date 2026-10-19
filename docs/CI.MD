@@ -1,8 +1,14 @@
 # Automated checks
 
-`.github/workflows/go.yml` runs `go test ./...` on pushes and pull requests.
-The remaining items are proposed checks and release steps. Go should be selected
-from `go.mod`.
+`.github/workflows/go.yml` runs `go test ./...` and builds distribution
+artifacts on pushes and pull requests. Go is selected from `go.mod`.
+
+The `cli-dist` job builds all six Windows, Linux, and macOS CLI directories,
+including the verified Wintun DLL and license in each Windows directory. It
+runs `scripts/check-dist.go` and uploads `cli-dist` for 14 days. The
+`android-dist` job builds the four-ABI Android AAR, checks its contents and
+licenses, and uploads `android-dist` for 14 days. These workflow artifacts
+are build outputs, not GitHub Releases. Apple NetworkExtension is excluded.
 
 ## Proposed test and build workflow
 
@@ -16,11 +22,8 @@ Additional jobs could cover:
   network namespaces; daemon tests also use a new mount namespace with a separate /run.
 - A separate macOS job: unsigned system-extension and app-extension builds,
   Go/C/Swift compilation, and a C ABI smoke test.
-- A separate Android job: build the packet-core AAR for armeabi-v7a, arm64-v8a,
-  x86, and x86_64; check all four `libgojni.so` files, generate SHA256, and
-  upload the artifact. `VpnService` execution must be tested on a device.
-- After successful tests: six CLI builds for Windows/Linux/macOS amd64/arm64,
-  SHA256SUMS, and artifacts retained for 14 days.
+- Android `VpnService` execution on a device.
+- A shared SHA256SUMS for release archives.
 
 Do not upload keys, profiles, or diagnostic reports. Use synthetic test keys and
 local endpoints. Automated tests must not connect a real VPN, install the Windows
