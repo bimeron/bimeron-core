@@ -9,8 +9,8 @@ import (
 	"net"
 	"time"
 
-	stack "github.com/xjasonlyu/tun2socks/v2/core"
 	"bimeron/internal/linuxnet"
+	stack "github.com/xjasonlyu/tun2socks/v2/core"
 )
 
 type linuxPlatform struct {
@@ -69,7 +69,7 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 	if err != nil {
 		return nil, fault("packet_stack_failed", false)
 	}
-	owned.add(func() error { s.Close(); return nil })
+	owned.add(func() error { s.Destroy(); return nil })
 	owned.add(func() error { h.Close(); return nil })
 	owned.add(func() error {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

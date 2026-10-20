@@ -28,6 +28,7 @@ func OpenTUN(name string, mtu uint32) (*TUN, error) {
 	success := false
 	defer func() {
 		if !success {
+			detachQueue(fd, name)
 			unix.Close(fd)
 		}
 	}()
@@ -53,4 +54,18 @@ func OpenTUN(name string, mtu uint32) (*TUN, error) {
 }
 func (t *TUN) Name() string { return t.name }
 func (t *TUN) Type() string { return "tun" }
-func (t *TUN) Close()       { t.once.Do(func() { unix.Close(t.fd); t.LinkEndpoint.Close() }) }
+func detachQueue(fd int, name string) {
+	if ifr, err := unix.NewIfreq(name); err == nil {
+		ifr.SetUint16(unix.IFF_DETACH_QUEUE)
+		_ = unix.IoctlIfreq(fd, unix.TUNSETQUEUE, ifr)
+	}
+}
+func (t *TUN) Close() {
+	t.once.Do(func() {
+		// Detach our queue while its fd still identifies the TUN we own.
+		// Closing the fd alone can leave the interface registered briefly.
+		detachQueue(t.fd, t.name)
+		unix.Close(t.fd)
+		t.LinkEndpoint.Close()
+	})
+}
