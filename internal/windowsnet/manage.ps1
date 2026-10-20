@@ -19,8 +19,15 @@ function Get-OutboundPath {
 }
 switch ($taskConfig.action) {
  'inspect' {
+    # Recover stale Bimeron DNS policy before checking for conflicting policies.
+    try {
+      $rules = @(Get-DnsClientNrptRule)
+      $owned = @($rules | Where-Object { $_.Comment -and $_.Comment.StartsWith($ownerPrefix) })
+      foreach ($rule in $owned) { Remove-DnsClientNrptRule -Name $rule.Name -Force }
+      Clear-DnsClientCache
+    } catch { throw 'DNS recovery failed.' }
     if (Get-NetAdapter -Name $taskConfig.name -ErrorAction SilentlyContinue) { throw 'Tunnel name is already in use.' }
-    if (@(Get-DnsClientNrptRule).Count -gt 0) { throw 'Existing NRPT rules detected. Run bimeron recover for stale Bimeron rules; other NRPT policies are not supported yet.' }
+    if (@($rules | Where-Object { -not ($_.Comment -and $_.Comment.StartsWith($ownerPrefix)) }).Count -gt 0) { throw 'Existing NRPT rules detected. Run bimeron recover for stale Bimeron rules; other NRPT policies are not supported yet.' }
     Get-OutboundPath
  }
  'observe' {

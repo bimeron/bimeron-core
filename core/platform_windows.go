@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"bimeron/internal/killswitch"
+	"bimeron/internal/windowsnet"
 	stack "github.com/xjasonlyu/tun2socks/v2/core"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/tun"
 	winTun "golang.zx2c4.com/wireguard/tun"
-	"bimeron/internal/killswitch"
-	"bimeron/internal/windowsnet"
 )
 
 type windowsPlatform struct{ killSwitch bool }
@@ -52,17 +52,14 @@ func (p windowsPlatform) Acquire(ctx context.Context) (func(), error) {
 			return nil, fault("kill_switch_pending_run_recover", false)
 		}
 	}
-	recoverCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	if err := windowsnet.Recover(recoverCtx); err != nil {
-		release()
-		return nil, fault("dns_recovery_failed", false)
-	}
 	return release, nil
 }
 func (windowsPlatform) Inspect(ctx context.Context, name string, startup bool) (networkPath, error) {
 	s, err := windowsnet.Observe(ctx, name, startup)
 	if err != nil {
+		if strings.Contains(err.Error(), "DNS recovery failed") {
+			return networkPath{}, fault("dns_recovery_failed", false)
+		}
 		if strings.Contains(err.Error(), "Tunnel adapter disappeared") {
 			return networkPath{}, fault("tunnel_adapter_lost", false)
 		}
