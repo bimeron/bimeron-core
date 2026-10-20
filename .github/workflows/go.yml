@@ -17,6 +17,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
+      - name: Linux TUN lifecycle
+        run: |
+          go test -c -o /tmp/bimeron-core.test ./core
+          sudo unshare -n env BIMERON_NETNS_TEST=1 /tmp/bimeron-core.test -test.run='TestLinuxTUN(HTTP|CleanupAndImmediateReopen)$' -test.v
 
   cli-dist:
     runs-on: ubuntu-latest
