@@ -40,6 +40,14 @@ type Config struct {
 	Index  int    `json:"index"`
 	MTU    int    `json:"mtu"`
 }
+type SetupTiming struct {
+	InterfaceMs int64 `json:"interfaceMs"`
+	AddressesMs int64 `json:"addressesMs"`
+	DNSMs       int64 `json:"dnsMs"`
+	RoutesMs    int64 `json:"routesMs"`
+	NRPTMs      int64 `json:"nrptMs"`
+	CacheMs     int64 `json:"cacheMs"`
+}
 
 func run(ctx context.Context, c Config) ([]byte, error) { return executeScript(ctx, c, script) }
 func executeScript(ctx context.Context, c Config, body string) ([]byte, error) {
@@ -104,17 +112,20 @@ func Observe(ctx context.Context, name string, startup bool) (Snapshot, error) {
 	}
 	return s, nil
 }
-func Configure(ctx context.Context, c Config) (int, error) {
+func Configure(ctx context.Context, c Config) (SetupTiming, error) {
 	c.Action = "setup"
 	out, err := run(ctx, c)
 	if err != nil {
-		return 0, err
+		return SetupTiming{}, err
 	}
-	var index int
-	if err := json.Unmarshal(out, &index); err != nil || index <= 0 {
-		return 0, fmt.Errorf("invalid tunnel interface index")
+	var result struct {
+		Index int `json:"index"`
+		SetupTiming
 	}
-	return index, nil
+	if err := json.Unmarshal(out, &result); err != nil || result.Index <= 0 {
+		return SetupTiming{}, fmt.Errorf("invalid tunnel interface index")
+	}
+	return result.SetupTiming, nil
 }
 func Cleanup(c Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

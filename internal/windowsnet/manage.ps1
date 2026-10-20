@@ -39,12 +39,16 @@ switch ($taskConfig.action) {
     $adapter = Get-NetAdapter -Name $taskConfig.name -ErrorAction Stop
     $index = [int]$adapter.ifIndex
     try {
+      $clock = [Diagnostics.Stopwatch]::StartNew()
       Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -Dhcp Disabled -NlMtuBytes $taskConfig.mtu -AutomaticMetric Disabled -InterfaceMetric 1 | Out-Null
       Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv6 -NlMtuBytes $taskConfig.mtu -AutomaticMetric Disabled -InterfaceMetric 1 | Out-Null
+      $interfaceMs = $clock.ElapsedMilliseconds
       New-NetIPAddress -InterfaceIndex $index -IPAddress '198.18.0.1' -PrefixLength 30 -AddressFamily IPv4 -PolicyStore ActiveStore | Out-Null
       New-NetIPAddress -InterfaceIndex $index -IPAddress 'fd69:726f:7574::1' -PrefixLength 128 -AddressFamily IPv6 -PolicyStore ActiveStore | Out-Null
+      $addressesMs = $clock.ElapsedMilliseconds - $interfaceMs
       Set-DnsClient -InterfaceIndex $index -RegisterThisConnectionsAddress $false | Out-Null
       Set-DnsClientServerAddress -InterfaceIndex $index -ServerAddresses '198.18.0.2' | Out-Null
+      $dnsMs = $clock.ElapsedMilliseconds - $interfaceMs - $addressesMs
       # More-specific routes leave original default routes intact.
       foreach ($prefix in @('0.0.0.0/1','128.0.0.0/1')) {
         New-NetRoute -InterfaceIndex $index -DestinationPrefix $prefix -NextHop '0.0.0.0' -RouteMetric 1 -PolicyStore ActiveStore | Out-Null
@@ -52,9 +56,11 @@ switch ($taskConfig.action) {
       foreach ($prefix in @('::/1','8000::/1')) {
         New-NetRoute -InterfaceIndex $index -DestinationPrefix $prefix -NextHop '::' -RouteMetric 1 -PolicyStore ActiveStore | Out-Null
       }
+      $routesMs = $clock.ElapsedMilliseconds - $interfaceMs - $addressesMs - $dnsMs
       Add-DnsClientNrptRule -Namespace '.' -NameServers '198.18.0.2' -Comment $taskConfig.tag | Out-Null
+      $nrptMs = $clock.ElapsedMilliseconds - $interfaceMs - $addressesMs - $dnsMs - $routesMs
       Clear-DnsClientCache
-      $index | ConvertTo-Json -Compress
+      @{index=$index;interfaceMs=$interfaceMs;addressesMs=$addressesMs;dnsMs=$dnsMs;routesMs=$routesMs;nrptMs=$nrptMs;cacheMs=($clock.ElapsedMilliseconds - $interfaceMs - $addressesMs - $dnsMs - $routesMs - $nrptMs)} | ConvertTo-Json -Compress
     } catch {
       $failure = $_
       Remove-OwnedDns $taskConfig.tag
