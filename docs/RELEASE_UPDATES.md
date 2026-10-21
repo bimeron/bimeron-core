@@ -40,8 +40,10 @@ List public releases from `bimeron/bimeron-core`. For each candidate, download
 both metadata assets, verify the signature using the GUI's pinned public keys,
 then check channel, OS/architecture, installed IPC protocol, GUI version, and
 profile format. Select a suitable version under the GUI's update policy.
-Download its named ZIP and verify the exact size and SHA-256. Extract its binary
-to a private temporary directory and compute the executable SHA-256. Pass that
+Download its named ZIP and verify the exact size and SHA-256. Extract only the
+expected `<os>-<arch>/bimeron[.exe]` entry to a private temporary directory;
+reject duplicate entries and paths that escape that directory. Compute the
+executable SHA-256. Pass that
 digest and `core_version` to elevated `service update`:
 
 ```text
