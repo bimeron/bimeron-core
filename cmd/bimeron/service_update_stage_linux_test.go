@@ -17,7 +17,11 @@ func TestLinuxSourceSwapBeforeElevationIsRejected(t *testing.T) {
 	if err := os.WriteFile(source, []byte("verified"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("swapped"), 0600); err != nil {
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte("swapped"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
 		t.Fatal(err)
 	}
 	if err := stageVerifiedUpdate(source, staged, hex.EncodeToString(want[:]), copyLinuxServiceFile); err == nil {
