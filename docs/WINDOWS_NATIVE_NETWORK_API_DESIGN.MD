@@ -1,6 +1,10 @@
 # Windows VPN network API migration study
 
-Status: proposal. This document does not authorize an implementation or claim a measured startup improvement.
+Status: hybrid prototype on `design/windows-native-network-api`. It is not deployed and no startup improvement has been measured.
+
+The prototype uses IP Helper for outbound-path inspection and for tunnel address and capture-route creation/removal. The startup NRPT conflict/recovery check and tunnel interface, DNS, NRPT, and DNS-cache settings still use PowerShell. It retains WFP when network cleanup fails. The committed `perf/windows-vpn-startup` timing work was merged into this branch without changing that branch.
+
+Windows unit tests and a read-only comparison with PowerShell on one connected host have passed. Native address/route writes, cleanup, crash recovery, DHCP interaction, and repeated connection timing have **not** been validated on an isolated Windows host. Do not install this prototype into the active service until those checks pass.
 
 ## Scope and baseline
 

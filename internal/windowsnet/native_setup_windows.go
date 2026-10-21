@@ -53,6 +53,12 @@ func ipSockaddr(ip netip.Addr) windows.RawSockaddrInet {
 	return raw
 }
 
+func sameSockaddr(a, b windows.RawSockaddrInet) bool {
+	left, leftOK := sockaddrAddr(a)
+	right, rightOK := sockaddrAddr(b)
+	return leftOK && rightOK && left == right
+}
+
 func nativeBegin(c Config) error {
 	if c.Index <= 0 || c.Tag == "" {
 		return fmt.Errorf("invalid native network owner")
@@ -134,12 +140,36 @@ func nativeCleanup(c Config) error {
 	var failed error
 	for i := len(resources.routes) - 1; i >= 0; i-- {
 		row := resources.routes[i]
+		current := row
+		if err := windows.GetIpForwardEntry2(&current); errors.Is(err, windows.ERROR_NOT_FOUND) {
+			continue
+		} else if err != nil {
+			failed = errors.Join(failed, err)
+			continue
+		}
+		if current.Metric != row.Metric || current.InterfaceIndex != resources.index || current.DestinationPrefix.PrefixLength != row.DestinationPrefix.PrefixLength || !sameSockaddr(current.DestinationPrefix.Prefix, row.DestinationPrefix.Prefix) || !sameSockaddr(current.NextHop, row.NextHop) {
+			failed = errors.Join(failed, fmt.Errorf("owned route changed before cleanup"))
+			continue
+		}
 		if err := callIPHelper(deleteRoute, unsafe.Pointer(&row)); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
 			failed = errors.Join(failed, err)
 		}
 	}
 	for i := len(resources.addresses) - 1; i >= 0; i-- {
 		row := resources.addresses[i]
+		current := row
+		if err := windows.GetUnicastIpAddressEntry(&current); errors.Is(err, windows.ERROR_NOT_FOUND) {
+			continue
+		} else if err != nil {
+			failed = errors.Join(failed, err)
+			continue
+		}
+		currentAddress := *(*windows.RawSockaddrInet)(unsafe.Pointer(&current.Address))
+		ownedAddress := *(*windows.RawSockaddrInet)(unsafe.Pointer(&row.Address))
+		if current.InterfaceIndex != resources.index || !sameSockaddr(currentAddress, ownedAddress) || current.OnLinkPrefixLength != row.OnLinkPrefixLength {
+			failed = errors.Join(failed, fmt.Errorf("owned address changed before cleanup"))
+			continue
+		}
 		if err := callIPHelper(deleteAddress, unsafe.Pointer(&row)); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
 			failed = errors.Join(failed, err)
 		}

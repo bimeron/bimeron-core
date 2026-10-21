@@ -126,6 +126,16 @@ func TestChoosePhysicalRoute(t *testing.T) {
 	}
 }
 
+func TestNativeSockaddrRoundTrip(t *testing.T) {
+	for _, value := range []string{"198.18.0.1", "fd69:726f:7574::1", "::"} {
+		want := netip.MustParseAddr(value)
+		got, ok := sockaddrAddr(ipSockaddr(want))
+		if !ok || got != want {
+			t.Fatalf("sockaddr round trip %s: %s", want, got)
+		}
+	}
+}
+
 func TestInspectRecoversOwnedDnsBeforeCheckingConflicts(t *testing.T) {
 	body := `
  $global:rules = @([pscustomobject]@{Name='stale-rule';Comment='BimeronCore:stale'})

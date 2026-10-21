@@ -106,6 +106,9 @@ func Observe(ctx context.Context, name string, startup bool) (Snapshot, error) {
 	return nativeObserve(ctx, name, startup)
 }
 func Configure(ctx context.Context, c Config) (SetupTiming, error) {
+	if err := ctx.Err(); err != nil {
+		return SetupTiming{}, err
+	}
 	if err := nativeBegin(c); err != nil {
 		return SetupTiming{}, err
 	}
@@ -125,6 +128,9 @@ func Configure(ctx context.Context, c Config) (SetupTiming, error) {
 	}
 	if err := json.Unmarshal(out, &result); err != nil || result.Index != c.Index {
 		return SetupTiming{}, errors.Join(fmt.Errorf("invalid tunnel interface index"), Cleanup(c))
+	}
+	if err := ctx.Err(); err != nil {
+		return SetupTiming{}, errors.Join(err, Cleanup(c))
 	}
 	routeStart := time.Now()
 	if err := nativeAddRoutes(c); err != nil {

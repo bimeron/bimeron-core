@@ -122,13 +122,19 @@ func nativeObserve(ctx context.Context, name string, startup bool) (Snapshot, er
 	}
 	var addresses []string
 	for a := adapters; a != nil; a = a.Next {
-		if int(a.IfIndex) != s.IPv4 && int(a.IfIndex) != s.IPv6 {
+		if int(a.IfIndex) != s.IPv4 && (s.IPv6 == 0 || int(a.Ipv6IfIndex) != s.IPv6) {
 			continue
 		}
 		for u := a.FirstUnicastAddress; u != nil; u = u.Next {
 			if u.DadState == windows.IpDadStatePreferred {
 				if ip := u.Address.IP(); ip != nil {
-					addresses = append(addresses, fmt.Sprintf("%d:%s/%d", a.IfIndex, ip.String(), u.OnLinkPrefixLength))
+					index := a.IfIndex
+					if ip.To4() == nil {
+						index = a.Ipv6IfIndex
+					}
+					if int(index) == s.IPv4 || s.IPv6 > 0 && int(index) == s.IPv6 {
+						addresses = append(addresses, fmt.Sprintf("%d:%s/%d", index, ip.String(), u.OnLinkPrefixLength))
+					}
 				}
 			}
 		}
