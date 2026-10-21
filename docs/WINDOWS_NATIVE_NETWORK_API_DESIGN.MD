@@ -6,6 +6,8 @@ Status: proposal. This document does not authorize an implementation or claim a 
 
 The reported startup time is about 8 seconds, including approximately 4.1 seconds in `manage.ps1 setup` and 1.7 seconds in `inspect`. These are observations for one environment, not an API performance estimate. Measure cold and warm runs, individual commands, adapter creation, transport checks, WFP installation, and time to `connected` before selecting a migration.
 
+On October 21, the installed service (revision `14ba35e`) exposed two complete, read-only event traces. The intervals from `network_inspect` to `connected` were 5.848 and 7.746 seconds. Their `network_setup` intervals were 2.744 and 4.080 seconds, while the sum of the six in-script setup timings was 1.075 and 1.025 seconds. The respective 1.669 and 3.055 second gaps include PowerShell process startup, module initialization, adapter lookup before the script stopwatch, serialization, and any other unmeasured work. The event trace does not separate those costs. The two startup inspections took 1.707 and 2.216 seconds; key resolution 0.330 and 0.355 seconds; transport checks 0.417 and 0.416 seconds; Wintun creation 0.651 and 0.679 seconds. These are two observations, not a performance comparison or evidence of a stable improvement.
+
 The current flow holds `Global\BimeronCoreConnect`, checks for retained kill-switch filters, recovers stale owned NRPT rules during startup inspection, selects a physical outbound path, prepares transport, opens Wintun, installs addresses/routes/DNS/NRPT, and finally arms WFP. A session owns the adapter, packet stack, routes, NRPT rule, and WFP guard. A crash may leave persistent WFP and NRPT state. Explicit `recover` removes owned NRPT and WFP objects. The code and tests at the time of this study are the reference for exact behavior; the startup optimization branch is active independently.
 
 ## Candidate API mapping
@@ -46,7 +48,7 @@ Do not project seconds saved from the reported totals. Accept migration only if 
 
 ## Windows validation plan
 
-1. Measure at least several dozen cold and warm runs on the same OS image and build. Record median and tail latency for `inspect`, `setup`, PowerShell startup, each cmdlet, Wintun, WFP, and total startup. Do not run simultaneous VPN managers during timing.
+1. Measure at least several dozen cold and warm runs on the same OS image and build. Instrument `executeScript` around process start/exit and instrument the script from its first statement, including adapter lookup and module loading where observable. Record median and tail latency for `inspect`, `setup`, each cmdlet group, Wintun, WFP, and total startup. Correlate every stage by attempt/session ID. Do not run simultaneous VPN managers during timing.
 2. Compare a read-only native snapshot with the script on Ethernet, Wi-Fi, dual-homed hosts, IPv4-only and dual-stack networks, a competing virtual adapter/VPN, and during route or DHCP changes.
 3. In disposable Windows VMs, verify addresses, DAD, route metrics, DNS resolution, NRPT effective policy, tunneled and `direct` traffic, and IPv6 behavior. Check supported Windows builds separately.
 4. Inject failure and cancellation after every setup and cleanup step. Verify preservation of foreign rules/routes, idempotent recovery, adapter index reuse, a conflicting NRPT rule, and DNS cache behavior.
