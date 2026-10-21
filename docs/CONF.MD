@@ -1,7 +1,7 @@
 # Bimeron configuration (.conf)
 
 The format uses WireGuard-style sections. This is a Bimeron configuration, not a
-WireGuard file. One file contains the Outline key source, tunnel settings, and
+WireGuard file. One file contains the upstream proxy source, tunnel settings, and
 split-routing rules.
 
 Lifecycle, automatic reconnection, and diagnostic codes are documented in
@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, or `SSConf`.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -53,8 +53,8 @@ sources is an error; neither takes automatic precedence.
 File = test.key
 ```
 
-`File` is the path to a UTF-8 file containing a complete `ss://...` or
-`ssconf://...` key. Relative paths are resolved against the `.conf` directory,
+`File` is the path to a UTF-8 file containing a complete `ss://...`,
+`ssconf://...`, or `socks5://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -91,6 +91,20 @@ There is no periodic refresh during a healthy connection: content is fetched
 again at the next start or reconnect, as described in [CORE.MD](CORE.MD).
 The `validate` command checks the URL without fetching it.
 
+### Inline SOCKS5 URI
+
+```ini
+[AccessKey]
+SOCKS5 = socks5://alice:secret@proxy.example.com:1080
+```
+
+Without authentication, use `socks5://proxy.example.com:1080`. The URI must
+have a host and port and no path, query, or fragment. Username and password
+must either both be present or both absent. Percent-encode reserved characters
+in credentials (for example `@` as `%40`). This is Bimeron's import syntax;
+SOCKS5 does not define a universal profile-link format. Credentials are stored
+as plaintext in the configuration file.
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -100,9 +114,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://` or `ssconf://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, or the explicit parameters below.
-Prefer explicit `SS` and `SSConf` in new configurations.
+It accepts `ss://`, `ssconf://`, or `socks5://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, or the explicit parameters below.
+Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters
 
@@ -110,6 +124,7 @@ Instead of a key or file, specify one parameter group:
 
 ```ini
 [AccessKey]
+Type = shadowsocks
 Server = server.example.com
 Port = 8388
 Method = chacha20-ietf-poly1305
@@ -118,6 +133,7 @@ Password = replace-me
 
 | Option | Required | Meaning |
 |---|---|---|
+| `Type` | Required for explicit parameters | `shadowsocks` (preferred) or its `ss` alias. |
 | `Server` | Required for the explicit group | Server name or IP address. The current system VPN requires the endpoint to resolve to IPv4. |
 | `Port` | Required for the explicit group | Server port, an integer from `1` to `65535`. |
 | `Method` | Required for the explicit group | Cipher: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`, or `aes-256-gcm`. |
@@ -126,6 +142,30 @@ Password = replace-me
 
 The group uses identical settings for TCP and UDP. Use a dynamic key for separate
 endpoints. This group cannot be combined with other sources.
+
+### Alternative: explicit SOCKS5 parameters
+
+```ini
+[AccessKey]
+Type = socks5
+Server = proxy.example.com
+Port = 1080
+Username = alice
+Password = secret
+```
+
+`Type`, `Server`, and `Port` are required. `Username` and `Password` must both
+be set for username/password authentication, or both omitted for no
+authentication. Credentials must be at most 255 bytes each. `Method` and
+`Prefix` do not apply. Explicit parameters without `Type` are rejected,
+including Shadowsocks parameters.
+
+In VPN mode the upstream SOCKS5 server must support `CONNECT` and `UDP
+ASSOCIATE`. Failure of either check prevents the VPN from starting. In local
+`proxy` mode, only `CONNECT` is needed because the local listener accepts TCP
+connections only. SOCKS5 does not encrypt the connection to the upstream
+server. DNS, MTU, and routing settings below use the same configuration as
+Shadowsocks; DNS and proxied UDP in VPN mode use `UDP ASSOCIATE`.
 
 `Prefix` accepts characters with codes `0..255` and escaped values, such as
 `Prefix = "GET \r\n"`. The implementation retains at least 16 random salt bytes:
@@ -144,12 +184,12 @@ This section is optional; missing options receive defaults.
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
 | `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. `false`: install no protection. Only for `Mode = vpn`. Rules survive core crashes; normal shutdown or explicit `recover` removes them. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). |
-| `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through Outline to these servers. Also used by preconnection checks and `check`. |
+| `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
 
 Values are validated even when unused in the selected mode.
 
-System VPN DNS always goes through Outline, regardless of `Default` and rules.
+System VPN DNS always goes through the selected upstream transport, regardless of `Default` and rules.
 
 Each query starts with the first server. A network error, timeout (2 seconds per
 server), or error response such as `SERVFAIL` or `REFUSED` causes a retry with

@@ -15,7 +15,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-// DNSResolver retries each DNS request in configured order, through Outline.
+// DNSResolver retries each DNS request in configured order through the upstream proxy.
 // A negative answer (NXDOMAIN) is definitive, not a reason to change resolver.
 type DNSResolver struct {
 	DisableIPv6 bool

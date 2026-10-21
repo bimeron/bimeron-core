@@ -11,8 +11,8 @@ import (
 	"bimeron/internal/accesskey"
 )
 
-// Only control-plane connections use this dialer: fetching ssconf and resolving
-// the Outline endpoint. User traffic continues to use the packet handler.
+// Control-plane connections use this resolver for ssconf and upstream endpoints.
+// SOCKS5 relay hostnames also use it; user traffic uses the packet handler.
 func bootstrapDialer(path networkPath, fallback []string) net.Dialer {
 	base := path.dialer
 	servers := path.dns

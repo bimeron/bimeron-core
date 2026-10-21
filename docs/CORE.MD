@@ -170,7 +170,7 @@ the Windows VPN process must still run with administrator privileges.
 | `network_changed`, `resume_detected` | The network changed or the process resumed after a long pause. |
 | `transport_suspend`, `transport_retry` | The tunnel is retained while the transport refreshes; `proxy` traffic does not go directly. |
 | `tunnel_adapter_lost` | The tunnel adapter disappeared; the session failed. |
-| `transport_check_failed`, `transport_unavailable` | Outline TCP/TLS or DNS checks are failing. |
+| `transport_check_failed`, `transport_unavailable` | Upstream TCP/TLS or UDP/DNS checks are failing. |
 | `tcp_dial_failed`, `tcp_read_failed`, `dns_failed` | An individual flow failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |

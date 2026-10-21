@@ -34,13 +34,16 @@ type File struct {
 	profile *accesskey.Profile
 }
 type Access struct {
-	SS          string
-	SSConf      string
-	Key         string
-	KeyFile     string
-	Shadowsocks *Shadowsocks
+	SS         string
+	SSConf     string
+	SOCKS5     string
+	Key        string
+	KeyFile    string
+	Type       string
+	Parameters *Parameters
+	Username   string
 }
-type Shadowsocks struct {
+type Parameters struct {
 	Server   string
 	Port     int
 	Method   string
@@ -177,15 +180,21 @@ func parse(b []byte) (*File, error) {
 				c.Access.SS = value
 			case "SSConf":
 				c.Access.SSConf = value
+			case "SOCKS5":
+				c.Access.SOCKS5 = value
+			case "Type":
+				c.Access.Type = value
+			case "Username":
+				c.Access.Username = value
 			case "Key":
 				c.Access.Key = value
 			case "File":
 				c.Access.KeyFile = value
 			case "Server", "Port", "Method", "Password", "Prefix":
-				if c.Access.Shadowsocks == nil {
-					c.Access.Shadowsocks = &Shadowsocks{}
+				if c.Access.Parameters == nil {
+					c.Access.Parameters = &Parameters{}
 				}
-				s := c.Access.Shadowsocks
+				s := c.Access.Parameters
 				switch key {
 				case "Server":
 					s.Server = value
@@ -295,11 +304,17 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SSConf != "" && !strings.HasPrefix(c.Access.SSConf, "ssconf://") {
 		return nil, fmt.Errorf("[AccessKey] SSConf must start with ssconf://")
 	}
+	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
+		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
 	}
 	if c.Access.SSConf != "" {
+		sources++
+	}
+	if c.Access.SOCKS5 != "" {
 		sources++
 	}
 	if c.Access.Key != "" {
@@ -311,14 +326,44 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		sources++
 	}
-	if c.Access.Shadowsocks != nil {
+	if c.Access.Parameters != nil || c.Access.Type != "" || c.Access.Username != "" {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, Key, or Server/Port/Method/Password")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, Key, or explicit parameters")
 	}
-	if c.Access.Shadowsocks != nil {
-		s := c.Access.Shadowsocks
+	if c.Access.Parameters != nil || c.Access.Type != "" || c.Access.Username != "" {
+		if c.Access.Type == "" {
+			return nil, fmt.Errorf("[AccessKey] Type is required when using explicit parameters")
+		}
+		if c.Access.Parameters == nil {
+			return nil, fmt.Errorf("[AccessKey] Server and Port are required")
+		}
+		s := c.Access.Parameters
+		if c.Access.Type == "socks5" {
+			if s.Method != "" || s.Prefix != "" {
+				return nil, fmt.Errorf("[AccessKey] Method and Prefix are only valid for shadowsocks")
+			}
+			if (c.Access.Username == "") != (s.Password == "") {
+				return nil, fmt.Errorf("[AccessKey] SOCKS5 Username and Password must both be set")
+			}
+			if len(c.Access.Username) > 255 || len(s.Password) > 255 {
+				return nil, fmt.Errorf("[AccessKey] SOCKS5 credentials are too long")
+			}
+			p, err := accesskey.ParseSOCKS5("socks5://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
+			if err != nil {
+				return nil, err
+			}
+			p.Username, p.TCP.Secret, p.UDP.Secret = c.Access.Username, s.Password, s.Password
+			c.profile = &p
+			return c, nil
+		}
+		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
+			return nil, fmt.Errorf("[AccessKey] unsupported Type")
+		}
+		if c.Access.Username != "" {
+			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5")
+		}
 		e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Cipher: s.Method, Secret: s.Password, Prefix: s.Prefix}
 		if err := e.Validate(); err != nil {
 			return nil, err
@@ -332,6 +377,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	}
 	if c.Access.SSConf != "" {
 		key = c.Access.SSConf
+	}
+	if c.Access.SOCKS5 != "" {
+		key = c.Access.SOCKS5
 	}
 	if c.Access.KeyFile != "" {
 		keyPath := c.Access.KeyFile
@@ -353,8 +401,16 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "socks5://") {
+		p, err := accesskey.ParseSOCKS5(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss:// or ssconf://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, or socks5://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

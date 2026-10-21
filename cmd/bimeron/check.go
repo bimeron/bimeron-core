@@ -7,15 +7,17 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"bimeron/internal/dnsconfig"
+	"time"
 
+	"bimeron/internal/dnsconfig"
 	"bimeron/internal/proxy"
 	"bimeron/internal/vpn"
+	"golang.getoutline.org/sdk/transport"
 )
 
 func check(args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
-	dns := flags.String("dns", "1.1.1.1", "Comma-separated IPv4 DNS resolvers to test through Outline")
+	dns := flags.String("dns", "1.1.1.1", "Comma-separated IPv4 DNS resolvers to test through the upstream proxy")
 	configPath := flags.String("config", "", "Bimeron config file")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -40,18 +42,33 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	tcp, err := proxy.Outline(p.TCP)
-	if err != nil {
-		return err
+	var tcp transport.StreamDialer
+	var udp transport.PacketListener
+	if p.Type == "socks5" {
+		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+		tcp, udp = s, s
+	} else {
+		tcp, err = proxy.Outline(p.TCP)
+		if err != nil {
+			return err
+		}
+		udp, err = proxy.OutlineUDP(p.UDP, net.Dialer{})
+		if err != nil {
+			return err
+		}
 	}
-	udp, err := proxy.OutlineUDP(p.UDP, net.Dialer{})
-	if err != nil {
-		return err
+	if cfg != nil && cfg.Tunnel.Mode == "proxy" && p.Type == "socks5" {
+		address, err := vpn.CheckTCP(ctx, tcp)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("TCP/TLS check passed. Proxy IP: %s\n", address)
+		return nil
 	}
 	address, err := vpn.Check(ctx, tcp, udp, resolvers)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("TCP/TLS and UDP/DNS checks passed. Outline IP: %s\n", address)
+	fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
 	return nil
 }
