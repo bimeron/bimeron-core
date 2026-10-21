@@ -5,7 +5,6 @@ package main
 import (
 	"debug/buildinfo"
 	"debug/pe"
-	"errors"
 	"fmt"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -161,14 +160,12 @@ func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 		}
 		return waitUpdatedService(expect.version)
 	}, func() error { return stopUpdateService(s) })
-	if errors.Is(err, errUpdateRolledBack) && wasRunning {
-		if restartErr := s.Start(); restartErr != nil {
-			return errors.Join(err, restartErr)
+	err = restorePreviousService(err, wasRunning, func() error {
+		if err := s.Start(); err != nil {
+			return err
 		}
-		if restartErr := waitServiceState(s, svc.Running); restartErr != nil {
-			return errors.Join(err, restartErr)
-		}
-	}
+		return waitServiceState(s, svc.Running)
+	})
 	if err != nil {
 		return err
 	}

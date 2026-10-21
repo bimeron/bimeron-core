@@ -5,7 +5,6 @@ package main
 import (
 	"debug/buildinfo"
 	"debug/elf"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -330,11 +329,7 @@ func updateLinuxService(expect updateExpectation) error {
 		}
 		return stopLinuxService()
 	})
-	if errors.Is(err, errUpdateRolledBack) && wasRunning {
-		if restartErr := startLinuxService(); restartErr != nil {
-			return errors.Join(err, restartErr)
-		}
-	}
+	err = restorePreviousService(err, wasRunning, startLinuxService)
 	if err != nil {
 		return err
 	}
