@@ -4,7 +4,7 @@ Status: hybrid prototype on `design/windows-native-network-api`. It has been ins
 
 The prototype uses IP Helper for outbound-path inspection and for tunnel address and capture-route creation/removal. The startup NRPT conflict/recovery check and tunnel interface, DNS, NRPT, and DNS-cache settings still use PowerShell. It retains WFP when network cleanup fails. The committed `perf/windows-vpn-startup` timing work was merged into this branch without changing that branch.
 
-Windows unit tests and a read-only comparison with PowerShell on one connected host have passed. The installed prototype disconnected and reconnected through the GUI, carried traffic, and reconnected after a service restart. The user verified stable approximately 6-second connections over many runs. Fault injection, forced-crash recovery, DHCP interaction, and broader Windows compatibility remain unvalidated.
+Windows unit tests and a read-only comparison with PowerShell on one connected host have passed. The installed prototype disconnected and reconnected through the GUI, carried traffic, and reconnected after a service restart. The user verified stable approximately 6-second connections over many runs and reports that emergency failure and recovery scenarios passed. The individual scenarios and results were not recorded in this document; broader Windows compatibility is not established by the local test.
 
 ## Scope and baseline
 
