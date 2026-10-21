@@ -59,12 +59,16 @@ func mocked(t *testing.T, c Config, extra string) map[string]any {
 	return result
 }
 func TestSetupOwnsOnlyDNS(t *testing.T) {
-	body := `$null = & {` + script + `}
- @{routes=@($global:routes | ForEach-Object {$_.DestinationPrefix});dns=@($global:rules | ForEach-Object {$_.Comment})} | ConvertTo-Json -Compress
+	body := `$result = & {` + script + `} | ConvertFrom-Json
+ @{routes=@($global:routes | ForEach-Object {$_.DestinationPrefix});dns=@($global:rules | ForEach-Object {$_.Comment});setup=$result} | ConvertTo-Json -Compress
  `
 	result := mocked(t, Config{Action: "setup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
 	if len(result["routes"].([]any)) != 1 || len(result["dns"].([]any)) != 2 {
 		t.Fatalf("unexpected setup: %v", result)
+	}
+	setup := result["setup"].(map[string]any)
+	if setup["index"] != float64(42) || setup["interfaceMs"] == nil || setup["dnsMs"] == nil {
+		t.Fatalf("missing setup timings: %v", setup)
 	}
 }
 func TestSetupFailureRollsBackOwnedDNS(t *testing.T) {

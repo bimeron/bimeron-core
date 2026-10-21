@@ -18,22 +18,22 @@ switch ($taskConfig.action) {
     if (@($rules | Where-Object { -not ($_.Comment -and $_.Comment.StartsWith($ownerPrefix)) }).Count -gt 0) { throw 'Existing NRPT rules detected. Run bimeron recover for stale Bimeron rules; other NRPT policies are not supported yet.' }
     $true | ConvertTo-Json -Compress
  }
- 'observe' {
-    if (-not (Get-NetAdapter -Name $taskConfig.name -ErrorAction SilentlyContinue)) { throw 'Tunnel adapter disappeared.' }
-    Get-OutboundPath
- }
  'setup' {
     if (-not $taskConfig.tag.StartsWith($ownerPrefix)) { throw 'Invalid session owner.' }
     $adapter = Get-NetAdapter -Name $taskConfig.name -ErrorAction Stop
     $index = [int]$adapter.ifIndex
     try {
+      $clock = [Diagnostics.Stopwatch]::StartNew()
       Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -Dhcp Disabled -NlMtuBytes $taskConfig.mtu -AutomaticMetric Disabled -InterfaceMetric 1 | Out-Null
       Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv6 -NlMtuBytes $taskConfig.mtu -AutomaticMetric Disabled -InterfaceMetric 1 | Out-Null
+      $interfaceMs = $clock.ElapsedMilliseconds
       Set-DnsClient -InterfaceIndex $index -RegisterThisConnectionsAddress $false | Out-Null
       Set-DnsClientServerAddress -InterfaceIndex $index -ServerAddresses '198.18.0.2' | Out-Null
+      $dnsMs = $clock.ElapsedMilliseconds - $interfaceMs
       Add-DnsClientNrptRule -Namespace '.' -NameServers '198.18.0.2' -Comment $taskConfig.tag | Out-Null
+      $nrptMs = $clock.ElapsedMilliseconds - $interfaceMs - $dnsMs
       Clear-DnsClientCache
-      $index | ConvertTo-Json -Compress
+      @{index=$index;interfaceMs=$interfaceMs;dnsMs=$dnsMs;nrptMs=$nrptMs;cacheMs=($clock.ElapsedMilliseconds - $interfaceMs - $dnsMs - $nrptMs)} | ConvertTo-Json -Compress
     } catch {
       $failure = $_
       Remove-OwnedDns $taskConfig.tag

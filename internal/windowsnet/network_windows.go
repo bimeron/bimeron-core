@@ -41,6 +41,14 @@ type Config struct {
 	Index  int    `json:"index"`
 	MTU    int    `json:"mtu"`
 }
+type SetupTiming struct {
+	InterfaceMs int64 `json:"interfaceMs"`
+	AddressesMs int64 `json:"addressesMs"`
+	DNSMs       int64 `json:"dnsMs"`
+	RoutesMs    int64 `json:"routesMs"`
+	NRPTMs      int64 `json:"nrptMs"`
+	CacheMs     int64 `json:"cacheMs"`
+}
 
 func run(ctx context.Context, c Config) ([]byte, error) { return executeScript(ctx, c, script) }
 func executeScript(ctx context.Context, c Config, body string) ([]byte, error) {
@@ -97,26 +105,34 @@ func Observe(ctx context.Context, name string, startup bool) (Snapshot, error) {
 	}
 	return nativeObserve(ctx, name, startup)
 }
-func Configure(ctx context.Context, c Config) (int, error) {
+func Configure(ctx context.Context, c Config) (SetupTiming, error) {
 	if err := nativeBegin(c); err != nil {
-		return 0, err
+		return SetupTiming{}, err
 	}
+	addressStart := time.Now()
 	if err := nativeAddAddresses(c); err != nil {
-		return 0, errors.Join(err, nativeCleanup(c))
+		return SetupTiming{}, errors.Join(err, nativeCleanup(c))
 	}
+	addressMs := time.Since(addressStart).Milliseconds()
 	c.Action = "setup"
 	out, err := run(ctx, c)
 	if err != nil {
-		return 0, errors.Join(err, nativeCleanup(c))
+		return SetupTiming{}, errors.Join(err, nativeCleanup(c))
 	}
-	var index int
-	if err := json.Unmarshal(out, &index); err != nil || index <= 0 {
-		return 0, errors.Join(fmt.Errorf("invalid tunnel interface index"), nativeCleanup(c))
+	var result struct {
+		Index int `json:"index"`
+		SetupTiming
 	}
+	if err := json.Unmarshal(out, &result); err != nil || result.Index != c.Index {
+		return SetupTiming{}, errors.Join(fmt.Errorf("invalid tunnel interface index"), Cleanup(c))
+	}
+	routeStart := time.Now()
 	if err := nativeAddRoutes(c); err != nil {
-		return 0, errors.Join(err, Cleanup(c))
+		return SetupTiming{}, errors.Join(err, Cleanup(c))
 	}
-	return index, nil
+	result.AddressesMs = addressMs
+	result.RoutesMs = time.Since(routeStart).Milliseconds()
+	return result.SetupTiming, nil
 }
 func Cleanup(c Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

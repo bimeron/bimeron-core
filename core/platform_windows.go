@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -125,12 +126,14 @@ func (windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter,
 	report("network_setup", "Configuring routes and tunnel DNS")
 	setupCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if _, err := windowsnet.Configure(setupCtx, nc); err != nil {
+	timing, err := windowsnet.Configure(setupCtx, nc)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, context.Canceled
 		}
 		return nil, fault("network_setup_failed", false)
 	}
+	report("network_setup_timing", fmt.Sprintf("Windows setup: interface %d ms, addresses %d ms, DNS %d ms, routes %d ms, NRPT %d ms, cache %d ms", timing.InterfaceMs, timing.AddressesMs, timing.DNSMs, timing.RoutesMs, timing.NRPTMs, timing.CacheMs))
 	if c.KillSwitch {
 		report("kill_switch_arm", "Installing persistent Windows protection")
 		guard, err = killswitch.Arm(iface.Index, c.Policy, c.DisableIPv6)
