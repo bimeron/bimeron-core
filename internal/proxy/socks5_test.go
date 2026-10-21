@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,7 +34,11 @@ func TestSOCKS5ConnectAndUDP(t *testing.T) {
 		}
 	}()
 	port := listener.Addr().(*net.TCPAddr).Port
-	s := &SOCKS5{Endpoint: accesskey.Endpoint{Host: "127.0.0.1", Port: port, Secret: "secret"}, Username: "alice", Dialer: net.Dialer{}}
+	boundNetworks := make(chan string, 8)
+	s := &SOCKS5{Endpoint: accesskey.Endpoint{Host: "127.0.0.1", Port: port, Secret: "secret"}, Username: "alice", Dialer: net.Dialer{Control: func(network, address string, raw syscall.RawConn) error {
+		boundNetworks <- network
+		return nil
+	}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	stream, err := s.DialStream(ctx, "example.com:443")
@@ -44,6 +49,15 @@ func TestSOCKS5ConnectAndUDP(t *testing.T) {
 	packet, err := s.ListenPacket(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	boundUDP := false
+	for len(boundNetworks) > 0 {
+		if network := <-boundNetworks; network == "udp4" {
+			boundUDP = true
+		}
+	}
+	if !boundUDP {
+		t.Fatal("SOCKS5 UDP socket must use the IPv4 bound dialer")
 	}
 	defer packet.Close()
 	_ = packet.SetDeadline(time.Now().Add(2 * time.Second))

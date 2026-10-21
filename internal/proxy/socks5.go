@@ -159,7 +159,7 @@ func (s *SOCKS5) DialStream(ctx context.Context, target string) (transport.Strea
 func (s *SOCKS5) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	// Apply the same interface-binding control as the TCP connection.
 	lc := net.ListenConfig{Control: s.Dialer.Control}
-	packet, err := lc.ListenPacket(ctx, "udp", "0.0.0.0:0")
+	packet, err := lc.ListenPacket(ctx, "udp4", "0.0.0.0:0")
 	if err != nil {
 		return nil, err
 	}
