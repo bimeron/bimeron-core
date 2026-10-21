@@ -1,10 +1,10 @@
 # Windows VPN network API migration study
 
-Status: hybrid prototype on `design/windows-native-network-api`. It is not deployed and no startup improvement has been measured.
+Status: hybrid prototype on `design/windows-native-network-api`. It has been installed and exercised locally, but no startup improvement has been demonstrated.
 
 The prototype uses IP Helper for outbound-path inspection and for tunnel address and capture-route creation/removal. The startup NRPT conflict/recovery check and tunnel interface, DNS, NRPT, and DNS-cache settings still use PowerShell. It retains WFP when network cleanup fails. The committed `perf/windows-vpn-startup` timing work was merged into this branch without changing that branch.
 
-Windows unit tests and a read-only comparison with PowerShell on one connected host have passed. Native address/route writes, cleanup, crash recovery, DHCP interaction, and repeated connection timing have **not** been validated on an isolated Windows host. Do not install this prototype into the active service until those checks pass.
+Windows unit tests and a read-only comparison with PowerShell on one connected host have passed. The installed prototype disconnected and reconnected through the GUI, carried traffic, and reconnected after a service restart. The user observed approximately 6-second connections across several runs. This is within the previously observed range and does not establish a speed improvement. Fault injection, forced-crash recovery, DHCP interaction, and broader Windows compatibility remain unvalidated.
 
 ## Scope and baseline
 
@@ -12,7 +12,7 @@ The reported startup time is about 8 seconds, including approximately 4.1 second
 
 On October 21, the installed service (revision `14ba35e`) exposed two complete, read-only event traces. The intervals from `network_inspect` to `connected` were 5.848 and 7.746 seconds. Their `network_setup` intervals were 2.744 and 4.080 seconds, while the sum of the six in-script setup timings was 1.075 and 1.025 seconds. The respective 1.669 and 3.055 second gaps include PowerShell process startup, module initialization, adapter lookup before the script stopwatch, serialization, and any other unmeasured work. The event trace does not separate those costs. The two startup inspections took 1.707 and 2.216 seconds; key resolution 0.330 and 0.355 seconds; transport checks 0.417 and 0.416 seconds; Wintun creation 0.651 and 0.679 seconds. These are two observations, not a performance comparison or evidence of a stable improvement.
 
-The current flow holds `Global\BimeronCoreConnect`, checks for retained kill-switch filters, recovers stale owned NRPT rules during startup inspection, selects a physical outbound path, prepares transport, opens Wintun, installs addresses/routes/DNS/NRPT, and finally arms WFP. A session owns the adapter, packet stack, routes, NRPT rule, and WFP guard. A crash may leave persistent WFP and NRPT state. Explicit `recover` removes owned NRPT and WFP objects. The code and tests at the time of this study are the reference for exact behavior; the startup optimization branch is active independently.
+The current flow holds `Global\BimeronCoreConnect`, checks for retained kill-switch filters, recovers stale owned NRPT rules during startup inspection, selects a physical outbound path, prepares transport, opens Wintun, installs addresses/routes/DNS/NRPT, and finally arms WFP. A session owns the adapter, packet stack, routes, NRPT rule, and WFP guard. A crash may leave persistent WFP and NRPT state. Explicit `recover` removes owned NRPT and WFP objects. The code and tests at the time of this study are the reference for exact behavior; the startup timing commits are included in this branch.
 
 ## Candidate API mapping
 
