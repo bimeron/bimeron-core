@@ -42,7 +42,7 @@ after the supported update window.
 The tag CI builds and tests distributions but never creates a release. Build
 the seven ZIPs once from a clean commit, calculate `SHA256SUMS` over those exact
 files, then generate and verify the signed manifest from the completed ZIPs.
-The Android build is separate from `build-dist.go`. Keep all nine assets in one
+The Android build is separate from `build-dist.go`. Keep all ten assets in one
 directory and do not change them after signing. With the matching public key in
 the environment, run the default dry-run:
 
@@ -57,7 +57,7 @@ wait for successful tag CI, and run the same command with `--publish`. It
 requires both local and remote tags to point to the prepared commit. It creates
 a draft release, uploads the prepared files without rebuilding, compares every
 remote asset's size and SHA-256 with the local file, and publishes the draft
-only if all nine match. An existing release is never overwritten. If upload
+only if all ten match. An existing release is never overwritten. If upload
 verification fails, the release stays a draft for investigation.
 
 ## GUI selection and installation
