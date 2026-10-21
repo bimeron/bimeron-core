@@ -22,6 +22,16 @@ jobs:
           go test -c -o /tmp/bimeron-core.test ./core
           sudo unshare -n env BIMERON_NETNS_TEST=1 /tmp/bimeron-core.test -test.run='TestLinuxTUN(HTTP|CleanupAndImmediateReopen)$' -test.v
 
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+
   cli-dist:
     runs-on: ubuntu-latest
     env:
@@ -80,12 +90,16 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, cli-dist, android-dist]
+    needs: [test, test-windows, cli-dist, android-dist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
       - uses: actions/download-artifact@v4
         with:
           name: cli-dist
@@ -105,6 +119,16 @@ jobs:
           done
           cd ../release
           sha256sum *.zip > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Create and verify signed update manifest
+        env:
+          BIMERON_RELEASE_ED25519_KEY: ${{ secrets.BIMERON_RELEASE_ED25519_KEY }}
+          BIMERON_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.BIMERON_RELEASE_ED25519_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release
+          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release -verify
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -116,7 +140,7 @@ jobs:
 
           The assets contain six CLI packages for Windows, Linux, and macOS (amd64 and arm64) and one Android AAR package for armeabi-v7a, arm64-v8a, x86, and x86_64. Each package includes LICENSE and THIRD_PARTY_NOTICES.txt. The Windows packages also include the matching Wintun 0.14.1 DLL and WINTUN-LICENSE.txt.
 
-          Verify downloaded archives with SHA256SUMS. Android is an AAR, not an installable app. Apple NetworkExtension is not included in this release.
+          Verify downloaded archives with SHA256SUMS. Windows/Linux service update clients can also verify update-manifest.json with update-manifest.json.sig and a separately trusted Ed25519 public key. Android is an AAR, not an installable app. Apple NetworkExtension is not included in this release.
           EOF
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             gh release create "$GITHUB_REF_NAME" release/* --title "Bimeron Core $GITHUB_REF_NAME" --notes-file release-notes.md --prerelease --verify-tag

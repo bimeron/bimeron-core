@@ -247,7 +247,18 @@ func installLinuxService(owner uint32, automatic bool) error {
 	return nil
 }
 
-func updateLinuxService() error {
+func updateLinuxService(expect updateExpectation) error {
+	if err := ensureLinuxServiceDir(); err != nil {
+		return err
+	}
+	installed, err := os.Lstat(linuxServiceExecutable)
+	if err != nil {
+		return err
+	}
+	owner, ok := installed.Sys().(*syscall.Stat_t)
+	if !ok || !installed.Mode().IsRegular() || owner.Uid != 0 || installed.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("unsafe installed service executable")
+	}
 	state, err := linuxServiceState()
 	if err != nil {
 		return err
@@ -292,6 +303,9 @@ func updateLinuxService() error {
 		return err
 	}
 	defer os.Remove(staged)
+	if err = verifyUpdateFile(staged, expect.sha256); err != nil {
+		return err
+	}
 	wasRunning := state == "active"
 	if wasRunning {
 		if err = stopLinuxService(); err != nil {
@@ -302,8 +316,18 @@ func updateLinuxService() error {
 		if !wasRunning {
 			return nil
 		}
-		return startLinuxService()
+		if err := startLinuxService(); err != nil {
+			return err
+		}
+		return waitUpdatedService(expect.version)
 	}, func() error {
+		state, err := linuxServiceState()
+		if err != nil {
+			return err
+		}
+		if state == "inactive" {
+			return nil
+		}
 		return stopLinuxService()
 	})
 	if errors.Is(err, errUpdateRolledBack) && wasRunning {
@@ -344,7 +368,7 @@ func uninstallLinuxService() error {
 
 func serviceCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bimeron service install [-automatic] [-owner uid] | update | describe | start | stop | status | uninstall")
+		return fmt.Errorf("usage: bimeron service install [-automatic] [-owner uid] | update -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
 	}
 	if args[0] == "status" {
 		if len(args) != 1 {
@@ -387,12 +411,17 @@ func serviceCommand(args []string) error {
 		}
 		return installLinuxService(owner, *automatic)
 	}
+	if args[0] == "update" {
+		expect, err := parseUpdateExpectation(args[1:])
+		if err != nil {
+			return err
+		}
+		return updateLinuxService(expect)
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("unexpected service arguments")
 	}
 	switch args[0] {
-	case "update":
-		return updateLinuxService()
 	case "start":
 		return startLinuxService()
 	case "stop":

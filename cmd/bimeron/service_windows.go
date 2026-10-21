@@ -12,13 +12,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"bimeron/core"
+	"bimeron/internal/control"
+	"bimeron/internal/windowsnet"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
-	"bimeron/core"
-	"bimeron/internal/control"
-	"bimeron/internal/windowsnet"
 )
 
 const serviceName = "BimeronCore"
@@ -126,7 +126,7 @@ func copyServiceFile(source, destination string) error {
 }
 func serviceCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bimeron service install [-automatic] | update | describe | start | stop | status | uninstall")
+		return fmt.Errorf("usage: bimeron service install [-automatic] | update -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
 	}
 	if args[0] == "run" {
 		if len(args) != 2 {
@@ -265,7 +265,11 @@ func serviceCommand(args []string) error {
 	defer s.Close()
 	switch args[0] {
 	case "update":
-		return updateWindowsService(s)
+		expect, err := parseUpdateExpectation(args[1:])
+		if err != nil {
+			return err
+		}
+		return updateWindowsService(s, expect)
 	case "describe":
 		config, err := s.Config()
 		if err != nil {

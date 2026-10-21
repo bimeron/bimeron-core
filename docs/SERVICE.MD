@@ -19,11 +19,14 @@ The root daemon creates `/run/bimeron/control.sock` with mode `0600`, owned by
 that UID, and checks every client's peer UID. Other local users cannot control
 the VPN.
 
-Run updates from a newly supplied binary. The updater checks ELF architecture and
-rolls back on startup failure, preserving the owner and automatic-start setting:
+Run updates from a newly supplied binary. Pass the expected core version and the
+SHA-256 of the extracted executable from a verified release manifest. The updater
+checks ELF architecture and the staged executable digest, then requires IPC `hello`
+with the expected version and protocol after restart. On failure it restores the old
+binary and prior running state, preserving the owner and automatic-start setting:
 
 ```sh
-sudo ./bimeron-linux-amd64 service update
+sudo ./bimeron-linux-amd64 service update -version 0.1.0-beta.2 -sha256 <executable-sha256>
 sudo ./bimeron-linux-amd64 service stop
 sudo ./bimeron-linux-amd64 service uninstall
 ```
@@ -102,11 +105,12 @@ architecture. WINTUN-LICENSE.txt is also required. Profiles and keys remain in p
 From an elevated CMD, run the new binary in the project directory:
 
 ```cmd
-dist\windows-amd64\bimeron.exe service update
+dist\windows-amd64\bimeron.exe service update -version 0.1.0-beta.2 -sha256 <executable-sha256>
 ```
 
 The command checks the installed path, owner, Go binary, and matching PE
-architecture. It first copies the new EXE into the protected directory, then
+architecture and expected SHA-256. It first copies the new EXE into the protected directory and
+checks the staged copy's digest, then
 stops the service, waits for cleanup, and replaces the EXE. If the service was
 running, it restarts, but the VPN remains disconnected; explicitly call
 start <config>. If it was stopped, it stays stopped.
@@ -114,7 +118,9 @@ The owner, automatic-start setting, and recovery settings are preserved.
 Wintun DLL and its license are not replaced: this updates the core, not the driver.
 
 If replacement or startup fails, the old EXE is restored; a previously running
-service restarts with the old EXE without automatically connecting the VPN.
+service restarts with the old EXE without automatically connecting the VPN. A
+running service also must answer IPC `hello` with the expected core version and
+protocol before the update is considered successful.
 If stopping the new process or restoring the backup fails, an error is returned
 and the backup is retained. Interrupting the updater may also leave a backup;
 another update will not overwrite it. Files bimeron.exe.update-old/update-new in

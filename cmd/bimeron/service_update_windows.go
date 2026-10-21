@@ -48,7 +48,7 @@ func stopUpdateService(s *mgr.Service) error {
 	}
 	return waitServiceState(s, svc.Stopped)
 }
-func updateWindowsService(s *mgr.Service) error {
+func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 	// Serialize installers without sharing the VPN session mutex.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -86,6 +86,13 @@ func updateWindowsService(s *mgr.Service) error {
 	if err = protectServiceDir(dir); err != nil {
 		return err
 	}
+	installed, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !installed.Mode().IsRegular() {
+		return fmt.Errorf("unsafe installed service executable")
+	}
 	source, err := os.Executable()
 	if err != nil {
 		return err
@@ -121,6 +128,9 @@ func updateWindowsService(s *mgr.Service) error {
 		return err
 	}
 	defer os.Remove(staged)
+	if err = verifyUpdateFile(staged, expect.sha256); err != nil {
+		return err
+	}
 	status, err := s.Query()
 	if err != nil {
 		return err
@@ -139,14 +149,6 @@ func updateWindowsService(s *mgr.Service) error {
 	if stopped.Win32ExitCode != 0 {
 		return fmt.Errorf("service cleanup failed; run doctor/recover before update")
 	}
-	// Update only the description through SCM; owner, start type and recovery settings stay intact.
-	config.Description = serviceDescription
-	if err = s.UpdateConfig(config); err != nil {
-		if wasRunning {
-			_ = s.Start()
-		}
-		return err
-	}
 	err = replaceServiceExecutable(target, staged, backup, func() error {
 		if !wasRunning {
 			return nil
@@ -154,7 +156,10 @@ func updateWindowsService(s *mgr.Service) error {
 		if err := s.Start(); err != nil {
 			return err
 		}
-		return waitServiceState(s, svc.Running)
+		if err := waitServiceState(s, svc.Running); err != nil {
+			return err
+		}
+		return waitUpdatedService(expect.version)
 	}, func() error { return stopUpdateService(s) })
 	if errors.Is(err, errUpdateRolledBack) && wasRunning {
 		if restartErr := s.Start(); restartErr != nil {

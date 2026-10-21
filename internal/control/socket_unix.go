@@ -3,12 +3,12 @@
 package control
 
 import (
+	"bimeron/internal/unixutil"
 	"context"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"bimeron/internal/unixutil"
 	"strconv"
 	"sync"
 )
@@ -116,3 +116,4 @@ func listenUnix(runtimeDir, path string, uid uint32, release func()) (net.Listen
 func Dial(ctx context.Context) (net.Conn, error) {
 	return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 }
+func DialService(ctx context.Context) (net.Conn, error) { return Dial(ctx) }

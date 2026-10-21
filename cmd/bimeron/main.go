@@ -20,7 +20,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("bimeron version [-daemon]")
 		fmt.Println("bimeron doctor [-output report.json] (read-only diagnostics)")
-		fmt.Println("bimeron service install [-automatic] | update | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
+		fmt.Println("bimeron service install [-automatic] | update -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
 		fmt.Println("bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
 		fmt.Println("bimeron run <config-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\nbimeron recover\nbimeron check [-dns 1.1.1.1] <key-file>")
 		return nil

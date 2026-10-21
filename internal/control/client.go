@@ -18,6 +18,14 @@ func Call(ctx context.Context, r Request) (Response, error) {
 	defer c.Close()
 	return exchange(ctx, c, r)
 }
+func CallService(ctx context.Context, r Request) (Response, error) {
+	c, err := DialService(ctx)
+	if err != nil {
+		return Response{}, err
+	}
+	defer c.Close()
+	return exchange(ctx, c, r)
+}
 func exchange(ctx context.Context, c net.Conn, r Request) (Response, error) {
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
