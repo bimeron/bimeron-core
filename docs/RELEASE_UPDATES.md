@@ -9,8 +9,8 @@ Android packages remain in the release but are outside this service updater.
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
 `gui_min`, `gui_max_exclusive`, and `profile_format`. The GUI implementation
-reports version 0.1.0, IPC 1, and profile format 1. The candidate GUI range is
-`>=0.1.0, <0.1.1`; it still needs review against a concrete signed core release
+reports versions 0.1.0 and 0.1.1, IPC 1, and profile format 1. The candidate GUI range is
+`>=0.1.0, <0.1.2`; it still needs review against a concrete signed core release
 and an end-to-end update. Set `gui_reviewed` to `true` only after those checks; release CI
 and backfill uploads refuse to publish while it is `false`. Dry-run remains
 available. These are explicit product
