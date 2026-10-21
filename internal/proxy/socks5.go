@@ -163,8 +163,8 @@ func (s *SOCKS5) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	local := packet.LocalAddr().(*net.UDPAddr)
-	c, relay, err := s.connect(ctx, 3, net.JoinHostPort("0.0.0.0", strconv.Itoa(local.Port)))
+	// NAT may change the UDP source port; let the server learn it from packets.
+	c, relay, err := s.connect(ctx, 3, "0.0.0.0:0")
 	if err != nil {
 		_ = packet.Close()
 		return nil, err

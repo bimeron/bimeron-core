@@ -115,6 +115,9 @@ func serveSOCKSTest(c net.Conn, udpPort int) error {
 	if request[1] == 1 && address != "example.com:443" {
 		return io.ErrUnexpectedEOF
 	}
+	if request[1] == 3 && address != "0.0.0.0:0" {
+		return io.ErrUnexpectedEOF
+	}
 	if request[1] != 1 && request[1] != 3 {
 		return io.ErrUnexpectedEOF
 	}
