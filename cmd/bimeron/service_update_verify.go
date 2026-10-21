@@ -9,28 +9,30 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"bimeron/internal/control"
 )
 
-type updateExpectation struct{ version, sha256 string }
+type updateExpectation struct{ source, version, sha256 string }
 
 func parseUpdateExpectation(args []string) (updateExpectation, error) {
 	f := flag.NewFlagSet("service update", flag.ContinueOnError)
 	version := f.String("version", "", "expected core version")
 	digest := f.String("sha256", "", "expected executable SHA-256")
+	source := f.String("source", "", "downloaded executable path")
 	if err := f.Parse(args); err != nil {
 		return updateExpectation{}, err
 	}
-	if f.NArg() != 0 || *version == "" || len(*digest) != 64 {
-		return updateExpectation{}, fmt.Errorf("usage: service update -version <version> -sha256 <executable-sha256>")
+	if f.NArg() != 0 || *version == "" || len(*digest) != 64 || !filepath.IsAbs(*source) {
+		return updateExpectation{}, fmt.Errorf("usage: service update -source <absolute-path> -version <version> -sha256 <executable-sha256>")
 	}
 	if _, err := hex.DecodeString(*digest); err != nil {
 		return updateExpectation{}, fmt.Errorf("invalid SHA-256: %w", err)
 	}
-	return updateExpectation{*version, strings.ToLower(*digest)}, nil
+	return updateExpectation{*source, *version, strings.ToLower(*digest)}, nil
 }
 
 func verifyUpdateFile(path, want string) error {
@@ -51,6 +53,13 @@ func verifyUpdateFile(path, want string) error {
 		return fmt.Errorf("staged executable SHA-256 mismatch")
 	}
 	return nil
+}
+
+func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string, string) error) error {
+	if err := copyFile(source, staged); err != nil {
+		return err
+	}
+	return verifyUpdateFile(staged, wantSHA256)
 }
 
 func waitUpdatedService(wantVersion string) error {

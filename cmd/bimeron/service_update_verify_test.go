@@ -18,8 +18,8 @@ func TestUpdateExpectationAndStagedDigest(t *testing.T) {
 	}
 	h := sha256.Sum256([]byte("new executable"))
 	want := hex.EncodeToString(h[:])
-	expect, err := parseUpdateExpectation([]string{"-version", "0.2.0", "-sha256", want})
-	if err != nil || expect.version != "0.2.0" {
+	expect, err := parseUpdateExpectation([]string{"-source", path, "-version", "0.2.0", "-sha256", want})
+	if err != nil || expect.version != "0.2.0" || expect.source != path {
 		t.Fatal(expect, err)
 	}
 	if err := verifyUpdateFile(path, expect.sha256); err != nil {
@@ -31,8 +31,11 @@ func TestUpdateExpectationAndStagedDigest(t *testing.T) {
 	if err := verifyUpdateFile(path, expect.sha256); err == nil {
 		t.Fatal("staged tampering accepted")
 	}
-	if _, err := parseUpdateExpectation([]string{"-version", "0.2.0"}); err == nil {
+	if _, err := parseUpdateExpectation([]string{"-source", path, "-version", "0.2.0"}); err == nil {
 		t.Fatal("missing digest accepted")
+	}
+	if _, err := parseUpdateExpectation([]string{"-source", "relative", "-version", "0.2.0", "-sha256", want}); err == nil {
+		t.Fatal("relative source accepted")
 	}
 }
 

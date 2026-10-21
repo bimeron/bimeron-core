@@ -8,10 +8,10 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. Both GUI bounds are `null`
-because no GUI updater exists yet. A preview manifest therefore declares no
-compatible GUI. Once the updater exists, set its actual supported version range
-and set `gui_reviewed` to `true` after checking that GUI project; release CI
+`gui_min`, `gui_max_exclusive`, and `profile_format`. The GUI implementation
+reports version 0.1.0, IPC 1, and profile format 1. The candidate GUI range is
+`>=0.1.0, <0.1.1`; it still needs review against a concrete signed core release
+and an end-to-end update. Set `gui_reviewed` to `true` only after those checks; release CI
 and backfill uploads refuse to publish while it is `false`. Dry-run remains
 available. These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
@@ -50,18 +50,28 @@ Select a suitable version under the GUI's update policy.
 Download its named ZIP and verify the exact size and SHA-256. Extract only the
 expected `<os>-<arch>/bimeron[.exe]` entry to a private temporary directory;
 reject duplicate entries and paths that escape that directory. Compute the
-executable SHA-256. Pass that
-digest and `core_version` to elevated `service update`:
+executable SHA-256. Elevate only the core executable bundled in an installed,
+administrator-owned GUI package, and pass it the downloaded file as data:
 
 ```text
-bimeron service update -version <core_version> -sha256 <executable-sha256>
+<trusted-bundled-core> service update -source <absolute-downloaded-executable-path> -version <core_version> -sha256 <executable-sha256>
 ```
 
-The elevated updater copies the binary into its protected installation directory,
-rechecks the digest, then changes the service. A running replacement must answer
+The bundled updater must be in a directory ordinary users cannot write. A
+portable GUI or a custom installation in a user-writable directory cannot safely
+elevate its adjacent core executable for this operation. The elevated updater
+opens the downloaded file only as data, copies it into the protected service
+directory, then checks the staged digest, Go identity, and architecture before
+stopping the old service. It never executes downloaded bytes before those checks.
+A running replacement must answer
 IPC `hello` with the expected core version and protocol. Failure triggers rollback
 and restoration of the prior running state. A stopped service stays stopped.
 Updating never reconnects VPN automatically.
+
+An already installed older service does not need to understand this new command:
+the trusted updater is the new core bundled by an updated GUI package. If that
+package still bundles a core without `-source`, update the GUI package first;
+do not elevate a downloaded release executable as a bootstrap shortcut.
 
 ## Backfill existing releases
 

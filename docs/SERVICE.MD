@@ -19,14 +19,16 @@ The root daemon creates `/run/bimeron/control.sock` with mode `0600`, owned by
 that UID, and checks every client's peer UID. Other local users cannot control
 the VPN.
 
-Run updates from a newly supplied binary. Pass the expected core version and the
-SHA-256 of the extracted executable from a verified release manifest. The updater
-checks ELF architecture and the staged executable digest, then requires IPC `hello`
+Run updates through the trusted core bundled in the installed GUI package. Pass
+the downloaded executable's absolute path, expected version, and SHA-256 from a
+verified release manifest. The updater copies it as data into the protected
+directory and checks staged ELF architecture, Go identity, and digest before
+stopping the old service. It then requires IPC `hello`
 with the expected version and protocol after restart. On failure it restores the old
 binary and prior running state, preserving the owner and automatic-start setting:
 
 ```sh
-sudo ./bimeron-linux-amd64 service update -version 0.1.0-beta.2 -sha256 <executable-sha256>
+sudo /usr/bin/bimeron-core service update -source /absolute/path/to/downloaded/bimeron -version 0.1.0-beta.2 -sha256 <executable-sha256>
 sudo ./bimeron-linux-amd64 service stop
 sudo ./bimeron-linux-amd64 service uninstall
 ```
@@ -102,15 +104,15 @@ architecture. WINTUN-LICENSE.txt is also required. Profiles and keys remain in p
 
 ## Updating
 
-From an elevated CMD, run the new binary in the project directory:
+From an elevated CMD, run the trusted core bundled in the installed GUI package:
 
 ```cmd
-dist\windows-amd64\bimeron.exe service update -version 0.1.0-beta.2 -sha256 <executable-sha256>
+"C:\Program Files\Bimeron\bimeron-core.exe" service update -source C:\absolute\path\to\downloaded\bimeron.exe -version 0.1.0-beta.2 -sha256 <executable-sha256>
 ```
 
-The command checks the installed path, owner, Go binary, and matching PE
-architecture and expected SHA-256. It first copies the new EXE into the protected directory and
-checks the staged copy's digest, then
+The command checks the installed path and owner. It first copies the downloaded
+EXE into the protected directory and checks the staged copy's digest, Go identity,
+and PE architecture, then
 stops the service, waits for cleanup, and replaces the EXE. If the service was
 running, it restarts, but the VPN remains disconnected; explicitly call
 start <config>. If it was stopped, it stays stopped.
