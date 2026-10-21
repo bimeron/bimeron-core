@@ -330,7 +330,8 @@ Action = direct
 ```
 
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
-exactly one source: File, SS=ss://..., SSConf=ssconf://.... File is allowed
+choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
+SOCKS5=socks5://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -343,8 +344,50 @@ Changing the file does not change the rules of the active session: you need to s
 SSConf is resolved again on reconnections. SYSTEM/root must have access
 to the profile and File key; custom mapped drives and EFS may not be available.
 Validation without a network: run CLI `validate <config>` and check the exit code.
-Full format help is available in the core repository, docs/CONF.MD; this example is not
-replaces it when developing a full-fledged editor for all settings.
+Full format help is available in the core repository, docs/CONF.MD; this example does not
+replace it when developing a full-fledged editor for all settings.
+
+### Remote SOCKS5 profile editor
+
+The profile's upstream protocol is independent of `[Interface] Mode`: `vpn`
+installs a system tunnel, while `proxy` opens a local TCP SOCKS5 listener.
+Use the following `[AccessKey]` fields when the user enters connection details:
+
+```ini
+[AccessKey]
+Type = socks5
+Server = proxy.example.com
+Port = 1080
+Username = alice
+Password = secret
+```
+
+`Username` and `Password` are both omitted for no authentication. For an
+imported URI, write exactly one source such as
+`Key = socks5://alice:secret@proxy.example.com:1080` or
+`SOCKS5 = socks5://proxy.example.com:1080`. Encode reserved credential
+characters in the URI. A `File` source may point to a UTF-8 file containing
+that URI. Do not write `Type` alongside a link source.
+
+For an explicit Shadowsocks profile, write `Type = shadowsocks` (the `ss`
+alias is accepted), plus `Server`, `Port`, `Method`, and `Password`; `Prefix`
+is optional. `Type` is required for all explicit parameter groups. An SS or
+SSConf link still uses `SS`, `SSConf`, or `Key` without `Type`. Do not infer
+`shadowsocks` when `Type` is missing.
+
+Run `bimeron validate <config-file>` for syntax and field checks without
+network access or system changes. `bimeron check -config <config-file>` tests
+the remote transport over the network without installing a VPN: TCP/TLS and
+UDP/DNS in VPN mode, TCP/TLS only for SOCKS5 in local `proxy` mode. In VPN mode,
+the remote SOCKS5 server must support both TCP `CONNECT` and UDP `ASSOCIATE`;
+failure to relay UDP/DNS prevents startup. Local `proxy` mode needs only TCP
+`CONNECT`. The current VPN implementation resolves the upstream host to IPv4.
+DNS settings, MTU, split rules, and direct/block actions use the same GUI
+controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
+encrypted by SOCKS5; explain this when users choose the protocol. Keep
+credentials out of status displays, logs, analytics, and crash reports.
+`bimeron inspect <key-file>` reports `type` as `socks5` or `shadowsocks`
+without reporting the username or password.
 
 ## Installation, update and diagnostics of Windows/Linux
 

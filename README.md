@@ -1,6 +1,6 @@
 # Bimeron Core
 
-Bimeron Core is an Outline-compatible VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` access keys, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules.
+Bimeron Core is a VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` Shadowsocks access keys, remote SOCKS5 upstreams, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules. See [configuration](docs/CONF.MD) and [GUI integration](docs/GUI_INTEGRATION.MD).
 
 Bimeron Core is licensed under the MIT License; see `LICENSE`. Third-party components retain their own licenses in `THIRD_PARTY_NOTICES.txt`, `third_party/wf/LICENSE`, and, for distributed Wintun DLLs, `WINTUN-LICENSE.txt`.
 

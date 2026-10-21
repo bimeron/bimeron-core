@@ -1,11 +1,11 @@
 package config
 
 import (
+	"bimeron/internal/routing"
 	"context"
 	"net/netip"
 	"os"
 	"path/filepath"
-	"bimeron/internal/routing"
 	"strings"
 	"testing"
 )
@@ -95,6 +95,7 @@ func TestStructuredCredentialsAndQuotedPrefix(t *testing.T) {
 	c, err := loadText(t, `[Profile]
 Version = 1
 [AccessKey]
+Type = shadowsocks
 Server = example.com
 Port = 8388
 Method = aes-256-gcm
@@ -178,7 +179,7 @@ func TestExplicitSSAndSSConf(t *testing.T) {
 	}
 }
 func TestAllKeySourcesAreMutuallyExclusive(t *testing.T) {
-	sources := []string{"File = test.key", "SS = ss://aes-256-gcm:secret@example.com:8388", "SSConf = ssconf://example.invalid/config", "Key = ss://aes-256-gcm:secret@example.com:8388", "Server = example.com\nPort = 8388\nMethod = aes-256-gcm\nPassword = secret"}
+	sources := []string{"File = test.key", "SS = ss://aes-256-gcm:secret@example.com:8388", "SSConf = ssconf://example.invalid/config", "SOCKS5 = socks5://example.com:1080", "Key = ss://aes-256-gcm:secret@example.com:8388", "Type = shadowsocks\nServer = example.com\nPort = 8388\nMethod = aes-256-gcm\nPassword = secret"}
 	for i := range sources {
 		for j := i + 1; j < len(sources); j++ {
 			_, err := loadText(t, "[Profile]\nVersion = 1\n[AccessKey]\n"+sources[i]+"\n"+sources[j]+"\n")
@@ -192,6 +193,69 @@ func TestExplicitSchemeValidation(t *testing.T) {
 	for _, option := range []string{"SS = ssconf://example.invalid/secret", "SSConf = ss://aes-256-gcm:secret@example.com:8388", "SS = secret", "SSConf = secret", "SS = "} {
 		if _, err := loadText(t, "[Profile]\nVersion = 1\n[AccessKey]\n"+option+"\n"); err == nil {
 			t.Fatal("wrong access key scheme accepted")
+		}
+	}
+}
+
+func TestSOCKS5SourcesAndRequiredType(t *testing.T) {
+	base := "[Profile]\nVersion = 1\n[AccessKey]\n"
+	for _, source := range []string{
+		"Key = socks5://alice:secret@proxy.example.com:1080",
+		"SOCKS5 = socks5://alice:secret@proxy.example.com:1080",
+		"Type = socks5\nServer = proxy.example.com\nPort = 1080\nUsername = alice\nPassword = secret",
+	} {
+		c, err := loadText(t, base+source+"\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.Resolve(context.Background())
+		if err != nil || p.Type != "socks5" || p.Username != "alice" || p.TCP.Secret != "secret" {
+			t.Fatalf("%s: %+v %v", source, p, err)
+		}
+	}
+	noAuth, err := loadText(t, base+"Type = socks5\nServer = proxy.example.com\nPort = 1080\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := noAuth.Resolve(context.Background())
+	if err != nil || profile.Type != "socks5" || profile.Username != "" {
+		t.Fatal("no-auth SOCKS5 profile", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "proxy.key"), []byte("socks5://proxy.example.com:1080"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "profile.conf")
+	if err := os.WriteFile(path, []byte(base+"File = proxy.key\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fromFile, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err = fromFile.Resolve(context.Background())
+	if err != nil || profile.Type != "socks5" {
+		t.Fatal("SOCKS5 File source", err)
+	}
+	for _, kind := range []string{"shadowsocks", "ss"} {
+		c, err := loadText(t, base+"Type = "+kind+"\nServer = example.com\nPort = 8388\nMethod = aes-256-gcm\nPassword = secret\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.Resolve(context.Background())
+		if err != nil || p.TCP.Cipher != "aes-256-gcm" {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+	for _, source := range []string{
+		"Server = example.com\nPort = 8388\nMethod = aes-256-gcm\nPassword = secret",
+		"Type = socks5\nServer = example.com\nPort = 1080\nUsername = alice",
+		"Type = socks5\nServer = example.com\nPort = 1080\nMethod = aes-256-gcm",
+		"Type = shadowsocks\nServer = example.com\nPort = 8388\nMethod = aes-256-gcm\nPassword = secret\nUsername = alice",
+		"SOCKS5 = ss://example.com",
+	} {
+		if _, err := loadText(t, base+source+"\n"); err == nil {
+			t.Fatalf("invalid source accepted: %s", source)
 		}
 	}
 }

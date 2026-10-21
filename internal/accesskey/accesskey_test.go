@@ -98,3 +98,20 @@ func TestDynamicHTTPS(t *testing.T) {
 		t.Fatal("ignored cancellation")
 	}
 }
+
+func TestSOCKS5URI(t *testing.T) {
+	for _, key := range []string{"socks5://proxy.example.com:1080", "socks5://alice:p%40ss@proxy.example.com:1080"} {
+		p, err := NewResolver().Resolve(context.Background(), key)
+		if err != nil || p.Type != "socks5" || p.TCP.Port != 1080 {
+			t.Fatalf("%s: %v", key, err)
+		}
+		if strings.Contains(key, "alice") && (p.Username != "alice" || p.TCP.Secret != "p@ss") {
+			t.Fatal("credentials decoded incorrectly")
+		}
+	}
+	for _, key := range []string{"socks5://proxy.example.com", "socks5://alice@proxy.example.com:1080", "socks5://alice:secret@proxy.example.com:1080/path", "socks5://proxy.example.com:0"} {
+		if _, err := ParseSOCKS5(key); err == nil {
+			t.Fatalf("invalid URI accepted: %s", key)
+		}
+	}
+}

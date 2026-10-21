@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bimeron/internal/accesskey"
+	"bimeron/internal/routing"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/netip"
 	"os"
-	"bimeron/internal/accesskey"
-	"bimeron/internal/routing"
 )
 
 func main() {
@@ -66,8 +66,12 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		// Never include the password, prefix, name or config URL in diagnostics.
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"tcp": map[string]any{"host": p.TCP.Host, "port": p.TCP.Port, "cipher": p.TCP.Cipher}, "udp": map[string]any{"host": p.UDP.Host, "port": p.UDP.Port, "cipher": p.UDP.Cipher}})
+		// Never include the password, username, prefix, name or config URL in diagnostics.
+		kind := p.Type
+		if kind == "" {
+			kind = "shadowsocks"
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"type": kind, "tcp": map[string]any{"host": p.TCP.Host, "port": p.TCP.Port, "cipher": p.TCP.Cipher}, "udp": map[string]any{"host": p.UDP.Host, "port": p.UDP.Port, "cipher": p.UDP.Cipher}})
 	case "route":
 		if len(args) < 3 || len(args) > 4 {
 			return fmt.Errorf("usage: bimeron route <policy-file> <destination-IP> [domain]")

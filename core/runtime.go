@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"golang.getoutline.org/sdk/transport"
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
 	"bimeron/internal/vpn"
+	"golang.getoutline.org/sdk/transport"
 )
 
 // platform isolates adapter, route and DNS operations. Transport, policy, DNS
@@ -77,19 +77,26 @@ func directHandler(ctx context.Context, c SessionConfig, path networkPath, repor
 }
 func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error) {
 	report("key_resolve", "Resolving access key through outbound interface")
-	p, _, endpoints, err := resolveOnPath(ctx, c, path)
+	p, outbound, endpoints, err := resolveOnPath(ctx, c, path)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	tcp, err := proxy.OutlineTCP(p.TCP, path.dialer)
-	if err != nil {
-		return nil, nil, nil, fault("invalid_tcp_transport", false)
+	var tcp transport.StreamDialer
+	var udp transport.PacketListener
+	if p.Type == "socks5" {
+		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
+		tcp, udp = s, s
+	} else {
+		tcp, err = proxy.OutlineTCP(p.TCP, path.dialer)
+		if err != nil {
+			return nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
+		if err != nil {
+			return nil, nil, nil, fault("invalid_udp_transport", false)
+		}
 	}
-	udp, err := proxy.OutlineUDP(p.UDP, path.dialer)
-	if err != nil {
-		return nil, nil, nil, fault("invalid_udp_transport", false)
-	}
-	report("transport_check", "Checking Outline TCP/TLS and UDP/DNS")
+	report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	if _, err := vpn.Check(ctx, tcp, udp, c.DNS); err != nil {
 		return nil, nil, nil, fault("transport_check_failed", true)
 	}
@@ -229,7 +236,7 @@ func (m *healthMonitor) step(ctx context.Context, now time.Time) error {
 		return nil
 	}
 	m.failures++
-	m.report("health_check_failed", "Outline health check failed")
+	m.report("health_check_failed", "Transport health check failed")
 	if m.failures >= 3 {
 		return fault("transport_unavailable", true)
 	}
@@ -270,9 +277,14 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		return nil, fault("access_key_resolve_failed", true)
 	}
-	d, err := proxy.Outline(p.TCP)
-	if err != nil {
-		return nil, fault("invalid_tcp_transport", false)
+	var d transport.StreamDialer
+	if p.Type == "socks5" {
+		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+	} else {
+		d, err = proxy.Outline(p.TCP)
+		if err != nil {
+			return nil, fault("invalid_tcp_transport", false)
+		}
 	}
 	l, err := net.Listen("tcp", c.Listen)
 	if err != nil {

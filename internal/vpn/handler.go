@@ -18,7 +18,7 @@ import (
 
 const DNSAddress = "198.18.0.2"
 
-// Handler turns netstack flows into Outline or interface-bound direct sockets.
+// Handler turns netstack flows into upstream proxy or interface-bound direct sockets.
 type Handler struct {
 	TCP         transport.StreamDialer
 	UDP         transport.PacketListener

@@ -26,9 +26,11 @@ type Endpoint struct {
 	Prefix string
 }
 type Profile struct {
-	Name string
-	TCP  Endpoint
-	UDP  Endpoint
+	Name     string
+	TCP      Endpoint
+	UDP      Endpoint
+	Type     string // Empty means Shadowsocks for existing API callers.
+	Username string // SOCKS5 only; Secret contains its password.
 }
 
 func (e Endpoint) Validate() error {
@@ -107,7 +109,36 @@ func ParseSS(raw string) (Profile, error) {
 	if err := e.Validate(); err != nil {
 		return Profile{}, err
 	}
-	return Profile{u.Fragment, e, e}, nil
+	return Profile{Name: u.Fragment, TCP: e, UDP: e}, nil
+}
+
+// ParseSOCKS5 accepts a SOCKS5 URI without leaking credentials in errors.
+func ParseSOCKS5(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "socks5" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return Profile{}, fmt.Errorf("invalid socks5 URI")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return Profile{}, fmt.Errorf("invalid socks5 port")
+	}
+	username, password := "", ""
+	if u.User != nil {
+		username = u.User.Username()
+		var ok bool
+		password, ok = u.User.Password()
+		if !ok || username == "" || password == "" {
+			return Profile{}, fmt.Errorf("socks5 username and password must both be set")
+		}
+	}
+	if len(username) > 255 || len(password) > 255 {
+		return Profile{}, fmt.Errorf("socks5 credentials are too long")
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port, Secret: password}
+	if e.Host == "" || strings.ContainsAny(e.Host, " /\t\r\n") {
+		return Profile{}, fmt.Errorf("invalid socks5 server endpoint")
+	}
+	return Profile{Type: "socks5", Username: username, TCP: e, UDP: e}, nil
 }
 
 type wireEndpoint struct {
@@ -221,8 +252,11 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "ss://") {
 		return ParseSS(key)
 	}
+	if strings.HasPrefix(key, "socks5://") {
+		return ParseSOCKS5(key)
+	}
 	if !strings.HasPrefix(key, "ssconf://") {
-		return Profile{}, fmt.Errorf("expected ss or ssconf key")
+		return Profile{}, fmt.Errorf("expected ss, ssconf, or socks5 key")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
