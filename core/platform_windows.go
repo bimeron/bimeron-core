@@ -7,17 +7,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"bimeron/internal/killswitch"
+	"bimeron/internal/windowsnet"
 	stack "github.com/xjasonlyu/tun2socks/v2/core"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/tun"
 	winTun "golang.zx2c4.com/wireguard/tun"
-	"bimeron/internal/killswitch"
-	"bimeron/internal/windowsnet"
 )
 
 type windowsPlatform struct{ killSwitch bool }
@@ -52,17 +53,14 @@ func (p windowsPlatform) Acquire(ctx context.Context) (func(), error) {
 			return nil, fault("kill_switch_pending_run_recover", false)
 		}
 	}
-	recoverCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	if err := windowsnet.Recover(recoverCtx); err != nil {
-		release()
-		return nil, fault("dns_recovery_failed", false)
-	}
 	return release, nil
 }
 func (windowsPlatform) Inspect(ctx context.Context, name string, startup bool) (networkPath, error) {
 	s, err := windowsnet.Observe(ctx, name, startup)
 	if err != nil {
+		if strings.Contains(err.Error(), "DNS recovery failed") {
+			return networkPath{}, fault("dns_recovery_failed", false)
+		}
 		if strings.Contains(err.Error(), "Tunnel adapter disappeared") {
 			return networkPath{}, fault("tunnel_adapter_lost", false)
 		}
@@ -108,25 +106,34 @@ func (windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter,
 	}
 	nc := windowsnet.Config{Name: d.Name(), Tag: "BimeronCore:" + hex.EncodeToString(random[:]), Index: iface.Index, MTU: c.MTU}
 	var guard *killswitch.Guard
+	networkCleaned := false
 	if c.KillSwitch {
 		owned.add(func() error {
-			if guard == nil {
+			if guard == nil || !networkCleaned {
 				return nil
 			}
 			return guard.Close()
 		})
 	}
 	// Register rollback BEFORE setup. It uses an independent timeout after Ctrl+C.
-	owned.add(func() error { return windowsnet.Cleanup(nc) })
+	owned.add(func() error {
+		if err := windowsnet.Cleanup(nc); err != nil {
+			return err
+		}
+		networkCleaned = true
+		return nil
+	})
 	report("network_setup", "Configuring routes and tunnel DNS")
 	setupCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if _, err := windowsnet.Configure(setupCtx, nc); err != nil {
+	timing, err := windowsnet.Configure(setupCtx, nc)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, context.Canceled
 		}
 		return nil, fault("network_setup_failed", false)
 	}
+	report("network_setup_timing", fmt.Sprintf("Windows setup: interface %d ms, addresses %d ms, DNS %d ms, routes %d ms, NRPT %d ms, cache %d ms", timing.InterfaceMs, timing.AddressesMs, timing.DNSMs, timing.RoutesMs, timing.NRPTMs, timing.CacheMs))
 	if c.KillSwitch {
 		report("kill_switch_arm", "Installing persistent Windows protection")
 		guard, err = killswitch.Arm(iface.Index, c.Policy, c.DisableIPv6)

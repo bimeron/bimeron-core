@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,6 +40,14 @@ type Config struct {
 	Tag    string `json:"tag"`
 	Index  int    `json:"index"`
 	MTU    int    `json:"mtu"`
+}
+type SetupTiming struct {
+	InterfaceMs int64 `json:"interfaceMs"`
+	AddressesMs int64 `json:"addressesMs"`
+	DNSMs       int64 `json:"dnsMs"`
+	RoutesMs    int64 `json:"routesMs"`
+	NRPTMs      int64 `json:"nrptMs"`
+	CacheMs     int64 `json:"cacheMs"`
 }
 
 func run(ctx context.Context, c Config) ([]byte, error) { return executeScript(ctx, c, script) }
@@ -89,39 +98,54 @@ func Inspect(ctx context.Context, name string) (Snapshot, error) {
 	return Observe(ctx, name, true)
 }
 func Observe(ctx context.Context, name string, startup bool) (Snapshot, error) {
-	action := "observe"
 	if startup {
-		action = "inspect"
+		if _, err := run(ctx, Config{Action: "inspect", Name: name}); err != nil {
+			return Snapshot{}, err
+		}
 	}
-	out, err := run(ctx, Config{Action: action, Name: name})
-	if err != nil {
-		return Snapshot{}, err
-	}
-	var s Snapshot
-	err = json.Unmarshal(out, &s)
-	if err != nil || s.IPv4 <= 0 {
-		return Snapshot{}, fmt.Errorf("could not discover physical IPv4 route")
-	}
-	return s, nil
+	return nativeObserve(ctx, name, startup)
 }
-func Configure(ctx context.Context, c Config) (int, error) {
+func Configure(ctx context.Context, c Config) (SetupTiming, error) {
+	if err := ctx.Err(); err != nil {
+		return SetupTiming{}, err
+	}
+	if err := nativeBegin(c); err != nil {
+		return SetupTiming{}, err
+	}
+	addressStart := time.Now()
+	if err := nativeAddAddresses(c); err != nil {
+		return SetupTiming{}, errors.Join(err, nativeCleanup(c))
+	}
+	addressMs := time.Since(addressStart).Milliseconds()
 	c.Action = "setup"
 	out, err := run(ctx, c)
 	if err != nil {
-		return 0, err
+		return SetupTiming{}, errors.Join(err, nativeCleanup(c))
 	}
-	var index int
-	if err := json.Unmarshal(out, &index); err != nil || index <= 0 {
-		return 0, fmt.Errorf("invalid tunnel interface index")
+	var result struct {
+		Index int `json:"index"`
+		SetupTiming
 	}
-	return index, nil
+	if err := json.Unmarshal(out, &result); err != nil || result.Index != c.Index {
+		return SetupTiming{}, errors.Join(fmt.Errorf("invalid tunnel interface index"), Cleanup(c))
+	}
+	if err := ctx.Err(); err != nil {
+		return SetupTiming{}, errors.Join(err, Cleanup(c))
+	}
+	routeStart := time.Now()
+	if err := nativeAddRoutes(c); err != nil {
+		return SetupTiming{}, errors.Join(err, Cleanup(c))
+	}
+	result.AddressesMs = addressMs
+	result.RoutesMs = time.Since(routeStart).Milliseconds()
+	return result.SetupTiming, nil
 }
 func Cleanup(c Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	c.Action = "cleanup"
-	_, err := run(ctx, c)
-	return err
+	_, dnsErr := run(ctx, c)
+	return errors.Join(dnsErr, nativeCleanup(c))
 }
 func Recover(ctx context.Context) error { _, err := run(ctx, Config{Action: "recover"}); return err }
 

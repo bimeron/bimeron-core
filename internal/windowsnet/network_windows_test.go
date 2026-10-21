@@ -5,6 +5,7 @@ package windowsnet
 import (
 	"context"
 	"encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -57,33 +58,31 @@ func mocked(t *testing.T, c Config, extra string) map[string]any {
 	}
 	return result
 }
-func TestSetupUsesOwnedRoutes(t *testing.T) {
-	body := `$null = & {` + script + `}
- @{routes=@($global:routes | ForEach-Object {$_.DestinationPrefix});dns=@($global:rules | ForEach-Object {$_.Comment})} | ConvertTo-Json -Compress
+func TestSetupOwnsOnlyDNS(t *testing.T) {
+	body := `$result = & {` + script + `} | ConvertFrom-Json
+ @{routes=@($global:routes | ForEach-Object {$_.DestinationPrefix});dns=@($global:rules | ForEach-Object {$_.Comment});setup=$result} | ConvertTo-Json -Compress
  `
 	result := mocked(t, Config{Action: "setup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
-	if len(result["routes"].([]any)) != 5 || len(result["dns"].([]any)) != 2 {
+	if len(result["routes"].([]any)) != 1 || len(result["dns"].([]any)) != 2 {
 		t.Fatalf("unexpected setup: %v", result)
 	}
+	setup := result["setup"].(map[string]any)
+	if setup["index"] != float64(42) || setup["interfaceMs"] == nil || setup["dnsMs"] == nil {
+		t.Fatalf("missing setup timings: %v", setup)
+	}
 }
-func TestSetupFailureRollsBackOnlyOwnRoutes(t *testing.T) {
-	body := `$global:failRoute=$true
+func TestSetupFailureRollsBackOwnedDNS(t *testing.T) {
+	body := `function Clear-DnsClientCache { throw 'simulated cache failure' }
  $caught=$false
  try { $null = & {` + script + `} } catch { $caught=$true }
- @{caught=$caught;removed=@($global:removedRoutes)} | ConvertTo-Json -Compress
+ @{caught=$caught;removed=@($global:removedDns)} | ConvertTo-Json -Compress
  `
 	result := mocked(t, Config{Action: "setup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
 	if result["caught"] != true {
 		t.Fatal("setup failure swallowed")
 	}
-	removed := result["removed"].([]any)
-	if len(removed) != 2 {
-		t.Fatalf("rollback did not remove both IPv4 routes: %v", result)
-	}
-	for _, p := range removed {
-		if p == "192.168.0.0/16" {
-			t.Fatal("removed preexisting route")
-		}
+	if len(result["removed"].([]any)) != 1 || result["removed"].([]any)[0] != "our-rule" {
+		t.Fatalf("rollback did not remove owned DNS: %v", result)
 	}
 }
 func TestCleanupPreservesOtherDnsRules(t *testing.T) {
@@ -106,38 +105,63 @@ func TestNetworkCancellation(t *testing.T) {
 	}
 }
 
-func TestCleanupContinuesAfterDNSFailure(t *testing.T) {
+func TestCleanupReportsDNSFailureAndClearsCache(t *testing.T) {
 	body := `function Remove-DnsClientNrptRule { throw 'simulated DNS error' }
+	$global:cacheClears=0
+	function Clear-DnsClientCache { $global:cacheClears++ }
  $global:rules += [pscustomobject]@{Name='our-rule';Comment='BimeronCore:test'}
- $global:routes += [pscustomobject]@{DestinationPrefix='0.0.0.0/1';InterfaceIndex=42}
  $caught=$false
  try { $null = & {` + script + `} } catch { $caught=$true }
- @{caught=$caught;removed=@($global:removedRoutes)} | ConvertTo-Json -Compress`
+	@{caught=$caught;cacheClears=$global:cacheClears} | ConvertTo-Json -Compress`
 	result := mocked(t, Config{Action: "cleanup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
-	if result["caught"] != true || len(result["removed"].([]any)) != 1 || result["removed"].([]any)[0] != "0.0.0.0/1" {
+	if result["caught"] != true || result["cacheClears"] != float64(1) {
 		t.Fatalf("cleanup stopped after DNS error: %v", result)
 	}
 }
 
-func TestObserveChoosesPhysicalDefaults(t *testing.T) {
+func TestChoosePhysicalRoute(t *testing.T) {
+	r, ok := choosePhysical([]physicalRoute{{index: 98, gateway: netip.MustParseAddr("10.0.0.1"), metric: 50}, {index: 29, gateway: netip.MustParseAddr("192.168.1.1"), metric: 50}})
+	if !ok || r.index != 29 {
+		t.Fatalf("wrong physical route: %v", r)
+	}
+}
+
+func TestNativeSockaddrRoundTrip(t *testing.T) {
+	for _, value := range []string{"198.18.0.1", "fd69:726f:7574::1", "::"} {
+		want := netip.MustParseAddr(value)
+		got, ok := sockaddrAddr(ipSockaddr(want))
+		if !ok || got != want {
+			t.Fatalf("sockaddr round trip %s: %s", want, got)
+		}
+	}
+}
+
+func TestInspectRecoversOwnedDnsBeforeCheckingConflicts(t *testing.T) {
 	body := `
- function Get-NetAdapter { param($Name,[switch]$Physical) if ($Physical) { [pscustomobject]@{ifIndex=29;Status='Up'} } else { [pscustomobject]@{ifIndex=42;Status='Up'} } }
- function Get-NetRoute { param($AddressFamily,$DestinationPrefix,$PolicyStore)
-   if ($AddressFamily -eq 'IPv4') {
-     [pscustomobject]@{InterfaceIndex=98;DestinationPrefix='0.0.0.0/0';NextHop='10.0.0.1';RouteMetric=0}
-     [pscustomobject]@{InterfaceIndex=29;DestinationPrefix='0.0.0.0/0';NextHop='192.168.1.1';RouteMetric=25}
-   } else {
-     [pscustomobject]@{InterfaceIndex=98;DestinationPrefix='::/0';NextHop='::';RouteMetric=0}
-   }
- }
+ $global:rules = @([pscustomobject]@{Name='stale-rule';Comment='BimeronCore:stale'})
+ $global:cacheClears = 0
+ function Clear-DnsClientCache { $global:cacheClears++ }
+ function Get-NetAdapter { param($Name,[switch]$Physical) if ($Physical) { [pscustomobject]@{ifIndex=29;Status='Up'} } }
+ function Get-NetRoute { param($AddressFamily) if ($AddressFamily -eq 'IPv4') { [pscustomobject]@{InterfaceIndex=29;DestinationPrefix='0.0.0.0/0';NextHop='192.168.1.1';RouteMetric=25} } }
  function Get-NetIPInterface { [pscustomobject]@{InterfaceMetric=25} }
- function Get-NetIPAddress {
-   [pscustomobject]@{InterfaceIndex=29;IPAddress='192.168.1.2';PrefixLength=24;AddressState='Preferred'}
-   [pscustomobject]@{InterfaceIndex=98;IPAddress='10.0.0.2';PrefixLength=24;AddressState='Preferred'}
- }
- ` + script
-	r := mocked(t, Config{Action: "observe", Name: "Bimeron"}, body)
-	if r["ipv4"] != float64(29) || r["ipv6"] != float64(0) || r["gateway4"] != "192.168.1.1" || r["addresses"] != "29:192.168.1.2/24" {
-		t.Fatalf("wrong outbound path: %v", r)
+ function Get-NetIPAddress { [pscustomobject]@{InterfaceIndex=29;IPAddress='192.168.1.2';PrefixLength=24;AddressState='Preferred'} }
+	$null = & {` + script + `}
+	@{removed=@($global:removedDns);cacheClears=$global:cacheClears} | ConvertTo-Json -Compress`
+	r := mocked(t, Config{Action: "inspect", Name: "Bimeron"}, body)
+	if r["cacheClears"] != float64(1) || len(r["removed"].([]any)) != 1 || r["removed"].([]any)[0] != "stale-rule" {
+		t.Fatalf("inspect did not recover owned DNS: %v", r)
+	}
+}
+
+func TestInspectKeepsForeignDnsPolicy(t *testing.T) {
+	body := `
+ $global:rules += [pscustomobject]@{Name='stale-rule';Comment='BimeronCore:stale'}
+ function Get-NetAdapter { $null }
+ $caught = $false
+ try { $null = & {` + script + `} } catch { $caught = $_.Exception.Message -like 'Existing NRPT rules*' }
+ @{caught=$caught;removed=@($global:removedDns)} | ConvertTo-Json -Compress`
+	r := mocked(t, Config{Action: "inspect", Name: "Bimeron"}, body)
+	if r["caught"] != true || len(r["removed"].([]any)) != 1 || r["removed"].([]any)[0] != "stale-rule" {
+		t.Fatalf("inspect changed foreign DNS policy: %v", r)
 	}
 }
