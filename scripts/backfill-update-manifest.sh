@@ -12,8 +12,10 @@ trap 'rm -rf "$tmp"' EXIT
 
 gh release download "$tag" --repo bimeron/bimeron-core --pattern '*.zip' --pattern SHA256SUMS --dir "$tmp"
 (cd "$tmp" && sha256sum --check SHA256SUMS)
-go run scripts/release-manifest.go -tag "$tag" -dir "$tmp"
-go run scripts/release-manifest.go -tag "$tag" -dir "$tmp" -verify
+review_flag=()
+if [[ "$mode" == '--upload' ]]; then review_flag=(-require-reviewed); fi
+go run scripts/release-manifest.go -tag "$tag" -dir "$tmp" "${review_flag[@]}"
+go run scripts/release-manifest.go -tag "$tag" -dir "$tmp" -verify "${review_flag[@]}"
 
 assets=$(gh release view "$tag" --repo bimeron/bimeron-core --json assets --jq '.assets[].name')
 has_manifest=0

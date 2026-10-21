@@ -107,6 +107,11 @@ func TestStableManifestRejectsWrongKeyAndMissingArchive(t *testing.T) {
 	if err := invoke(false, pub); err != nil {
 		t.Fatal(err)
 	}
+	review := exec.Command("go", append(append([]string(nil), args...), "-require-reviewed")...)
+	review.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key), "BIMERON_RELEASE_ED25519_PUBLIC_KEY="+pub)
+	if err := review.Run(); err == nil {
+		t.Fatal("provisional GUI compatibility accepted for publication")
+	}
 	data, err := os.ReadFile(filepath.Join(dir, "update-manifest.json"))
 	if err != nil || !strings.Contains(string(data), `"channel": "stable"`) {
 		t.Fatal(err, string(data))

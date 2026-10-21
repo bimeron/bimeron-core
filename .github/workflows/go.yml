@@ -127,8 +127,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release
-          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release -verify
+          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release -require-reviewed
+          go run scripts/release-manifest.go -tag "$GITHUB_REF_NAME" -dir release -verify -require-reviewed
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

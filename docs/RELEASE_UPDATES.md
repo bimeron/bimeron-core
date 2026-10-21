@@ -8,7 +8,11 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. These are explicit product
+`gui_min`, `gui_max_exclusive`, and `profile_format`. The GUI range is currently
+provisional because the separate GUI's version and supported API are unknown.
+Set `gui_reviewed` to `true` only after checking that GUI project; release CI
+and backfill uploads refuse to publish while it is `false`. Dry-run remains
+available. These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
 The tag supplies `core_version` and stable/beta channel. File names, sizes, and
 SHA-256 values come from completed ZIPs. A tag with a prerelease suffix uses
@@ -39,7 +43,8 @@ then retire the old key after the supported update window.
 List public releases from `bimeron/bimeron-core`. For each candidate, download
 both metadata assets, verify the signature using the GUI's pinned public keys,
 then check channel, OS/architecture, installed IPC protocol, GUI version, and
-profile format. Select a suitable version under the GUI's update policy.
+profile format. Reject `gui_reviewed: false`, which marks a local preview.
+Select a suitable version under the GUI's update policy.
 Download its named ZIP and verify the exact size and SHA-256. Extract only the
 expected `<os>-<arch>/bimeron[.exe]` entry to a private temporary directory;
 reject duplicate entries and paths that escape that directory. Compute the

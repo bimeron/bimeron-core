@@ -30,6 +30,7 @@ type compatibility struct {
 	IPCMax          int    `json:"ipc_max"`
 	GUIMin          string `json:"gui_min"`
 	GUIMaxExclusive string `json:"gui_max_exclusive"`
+	GUIReviewed     bool   `json:"gui_reviewed"`
 	ProfileFormat   int    `json:"profile_format"`
 }
 type archive struct {
@@ -54,8 +55,9 @@ func main() {
 	dir := flag.String("dir", "release", "directory containing completed ZIPs")
 	compat := flag.String("compat", "release/compatibility.json", "reviewed compatibility rules")
 	verify := flag.Bool("verify", false, "verify existing manifest and signature")
+	requireReviewed := flag.Bool("require-reviewed", false, "require confirmed GUI compatibility before publication")
 	flag.Parse()
-	if err := run(*tag, *dir, *compat, *verify); err != nil {
+	if err := run(*tag, *dir, *compat, *verify, *requireReviewed); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -83,7 +85,7 @@ func keyID(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func run(tag, dir, compatPath string, verify bool) error {
+func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	if !tagPattern.MatchString(tag) {
 		return fmt.Errorf("invalid release tag %q", tag)
 	}
@@ -120,6 +122,9 @@ func run(tag, dir, compatPath string, verify bool) error {
 	}
 	if c.Schema != 1 || c.IPCMin < 1 || c.IPCMax < c.IPCMin || c.GUIMin == "" || c.GUIMaxExclusive == "" || c.ProfileFormat < 1 {
 		return errors.New("invalid compatibility rules")
+	}
+	if requireReviewed && !c.GUIReviewed {
+		return errors.New("GUI compatibility is provisional; review release/compatibility.json before publication")
 	}
 	channel := "stable"
 	if strings.Contains(tag, "-") {
