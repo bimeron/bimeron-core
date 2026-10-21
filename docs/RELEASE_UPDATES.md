@@ -1,6 +1,6 @@
 # Signed service update releases
 
-The release workflow publishes the existing seven ZIPs and `SHA256SUMS`, plus
+The prepared release contains the existing seven ZIPs and `SHA256SUMS`, plus
 `update-manifest.json` and `update-manifest.json.sig`. The four desktop service
 targets in the manifest are Windows and Linux on amd64 and arm64. macOS and
 Android packages remain in the release but are outside this service updater.
@@ -12,7 +12,7 @@ Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
 their updater tests were reviewed with IPC 1 and profile format 1. The reviewed
 GUI range is `>=0.1.0, <0.1.2`; `gui_reviewed` is `true` for this release
 candidate. A live installed-service update remains a post-publication check.
-Release CI and backfill uploads refuse to publish if the review flag is `false`.
+The prepared-release publisher and backfill uploads refuse to publish if the review flag is `false`.
 These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
 The tag supplies `core_version` and stable/beta channel. File names, sizes, and
@@ -27,17 +27,38 @@ pinned public key selected by `key_id` before using any manifest values.
 It must reject unknown schema, missing or duplicate targets, unsafe asset names,
 unsupported compatibility, or a mismatch of downloaded ZIP size or SHA-256.
 
-The release job requires `BIMERON_RELEASE_ED25519_KEY`, a GitHub Actions secret
-containing standard base64 of the 64-byte Ed25519 private key. Generate and store
-it outside the repository. Export the matching 32-byte public key to the GUI's
-trusted key set and to the GitHub Actions variable
-`BIMERON_RELEASE_ED25519_PUBLIC_KEY` as standard base64. The signing step
-checks that the two keys match; the verification step uses only the public key.
-A key ID alone does not establish trust. The workflow fails if
-the secret is missing or signing/verification fails. Restrict who can edit release
-workflow files and who can manage that secret; protect release tags with GitHub
-rulesets. To rotate, first release GUI trusting both keys, then switch the secret,
-then retire the old key after the supported update window.
+Generate the Ed25519 key outside the repository. The local signing step reads
+`BIMERON_RELEASE_ED25519_KEY`, standard base64 of the 64-byte private key, and
+checks it against `BIMERON_RELEASE_ED25519_PUBLIC_KEY`, standard base64 of the
+32-byte public key pinned by the GUI. Keep the private key in a protected vault
+with an offline backup; do not commit it or place it in shell history or logs.
+The publisher verifies using only the public key. A key ID alone does not
+establish trust. Protect release tags with GitHub rulesets. To rotate, first
+release GUI trusting both keys, then switch the signer, then retire the old key
+after the supported update window.
+
+## Publish prepared bytes
+
+The tag CI builds and tests distributions but never creates a release. Build
+the seven ZIPs once from a clean commit, calculate `SHA256SUMS` over those exact
+files, then generate and verify the signed manifest from the completed ZIPs.
+The Android build is separate from `build-dist.go`. Keep all nine assets in one
+directory and do not change them after signing. With the matching public key in
+the environment, run the default dry-run:
+
+```sh
+scripts/publish-prepared-release.sh v0.1.0-beta.3 /absolute/path/to/release
+```
+
+The command checks the exact asset set, all seven ZIP checksums and ZIP
+structure, executable build revisions, signed manifest, archive sizes, and
+compatibility policy. After approval, push the reviewed commit and its tag,
+wait for successful tag CI, and run the same command with `--publish`. It
+requires both local and remote tags to point to the prepared commit. It creates
+a draft release, uploads the prepared files without rebuilding, compares every
+remote asset's size and SHA-256 with the local file, and publishes the draft
+only if all nine match. An existing release is never overwritten. If upload
+verification fails, the release stays a draft for investigation.
 
 ## GUI selection and installation
 

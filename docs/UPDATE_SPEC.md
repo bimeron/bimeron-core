@@ -24,7 +24,7 @@ An operator command reads each existing release's original ZIPs and SHA256SUMS, 
 
 ## Acceptance criteria
 
-1. Release CI builds all existing packages, hashes completed ZIPs, creates and verifies the signed manifest, and fails before publication if signing or verification fails.
+1. Tag CI builds and tests all existing packages without publishing. A separate prepared-release publisher checks the exact ZIPs, SHA256SUMS, signed manifest, and remote asset digests before making a draft public. Signing or verification failure stops publication.
 2. Tests cover deterministic manifest bytes, tag/channel parsing, compatibility configuration, missing/duplicate archives, signature tampering, and key rotation verification.
 3. Tests cover IPC version mismatch, wrong core version, unreachable service, successful update, and rollback to both prior running and stopped states.
 4. Service update rechecks staged executable identity and digest under elevation before stopping the old service. Existing owner and startup configuration is unchanged; VPN remains disconnected.
