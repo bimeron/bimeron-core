@@ -67,3 +67,6 @@ func Dial(ctx context.Context) (net.Conn, error) {
 	}
 	return winio.DialPipeContext(ctx, path)
 }
+func DialService(ctx context.Context) (net.Conn, error) {
+	return winio.DialPipeContext(ctx, ServicePipe)
+}

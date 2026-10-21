@@ -5,7 +5,6 @@ package main
 import (
 	"debug/buildinfo"
 	"debug/elf"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -247,7 +246,18 @@ func installLinuxService(owner uint32, automatic bool) error {
 	return nil
 }
 
-func updateLinuxService() error {
+func updateLinuxService(expect updateExpectation) error {
+	if err := ensureLinuxServiceDir(); err != nil {
+		return err
+	}
+	installed, err := os.Lstat(linuxServiceExecutable)
+	if err != nil {
+		return err
+	}
+	owner, ok := installed.Sys().(*syscall.Stat_t)
+	if !ok || !installed.Mode().IsRegular() || owner.Uid != 0 || installed.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("unsafe installed service executable")
+	}
 	state, err := linuxServiceState()
 	if err != nil {
 		return err
@@ -255,18 +265,18 @@ func updateLinuxService() error {
 	if state != "active" && state != "inactive" {
 		return fmt.Errorf("wait for stable service state before updating")
 	}
-	source, err := os.Executable()
+	updater, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	sourcePath, _ := filepath.EvalSymlinks(source)
+	updaterPath, _ := filepath.EvalSymlinks(updater)
 	targetPath, _ := filepath.EvalSymlinks(linuxServiceExecutable)
-	if sourcePath == targetPath {
-		return fmt.Errorf("run service update from the new project binary")
+	if updaterPath == targetPath {
+		return fmt.Errorf("run service update from the trusted GUI package core, not the installed service")
 	}
-	info, err := buildinfo.ReadFile(source)
-	if err != nil || info.Path != "bimeron/cmd/bimeron" {
-		return fmt.Errorf("invalid update binary")
+	sourcePath, _ := filepath.EvalSymlinks(expect.source)
+	if sourcePath == targetPath {
+		return fmt.Errorf("update source is the installed service")
 	}
 	currentELF, err := elf.Open(linuxServiceExecutable)
 	if err != nil {
@@ -274,24 +284,28 @@ func updateLinuxService() error {
 	}
 	machine := currentELF.Machine
 	currentELF.Close()
-	sourceELF, err := elf.Open(source)
-	if err != nil {
-		return err
-	}
-	newMachine := sourceELF.Machine
-	sourceELF.Close()
-	if machine != newMachine {
-		return fmt.Errorf("update architecture differs from installed service")
-	}
 	staged := linuxServiceExecutable + ".update-new"
 	backup := linuxServiceExecutable + ".update-old"
 	if _, err = os.Lstat(backup); !os.IsNotExist(err) {
 		return fmt.Errorf("previous update backup present; resolve it before retrying")
 	}
-	if err = copyLinuxServiceFile(source, staged); err != nil {
+	defer os.Remove(staged)
+	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyLinuxServiceFile); err != nil {
 		return err
 	}
-	defer os.Remove(staged)
+	info, err := buildinfo.ReadFile(staged)
+	if err != nil || info.Path != "bimeron/cmd/bimeron" {
+		return fmt.Errorf("invalid staged update binary")
+	}
+	newELF, err := elf.Open(staged)
+	if err != nil {
+		return err
+	}
+	newMachine := newELF.Machine
+	newELF.Close()
+	if machine != newMachine {
+		return fmt.Errorf("update architecture differs from installed service")
+	}
 	wasRunning := state == "active"
 	if wasRunning {
 		if err = stopLinuxService(); err != nil {
@@ -302,15 +316,21 @@ func updateLinuxService() error {
 		if !wasRunning {
 			return nil
 		}
-		return startLinuxService()
+		if err := startLinuxService(); err != nil {
+			return err
+		}
+		return waitUpdatedService(expect.version)
 	}, func() error {
+		state, err := linuxServiceState()
+		if err != nil {
+			return err
+		}
+		if state == "inactive" {
+			return nil
+		}
 		return stopLinuxService()
 	})
-	if errors.Is(err, errUpdateRolledBack) && wasRunning {
-		if restartErr := startLinuxService(); restartErr != nil {
-			return errors.Join(err, restartErr)
-		}
-	}
+	err = restorePreviousService(err, wasRunning, startLinuxService)
 	if err != nil {
 		return err
 	}
@@ -344,7 +364,7 @@ func uninstallLinuxService() error {
 
 func serviceCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bimeron service install [-automatic] [-owner uid] | update | describe | start | stop | status | uninstall")
+		return fmt.Errorf("usage: bimeron service install [-automatic] [-owner uid] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
 	}
 	if args[0] == "status" {
 		if len(args) != 1 {
@@ -387,12 +407,17 @@ func serviceCommand(args []string) error {
 		}
 		return installLinuxService(owner, *automatic)
 	}
+	if args[0] == "update" {
+		expect, err := parseUpdateExpectation(args[1:])
+		if err != nil {
+			return err
+		}
+		return updateLinuxService(expect)
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("unexpected service arguments")
 	}
 	switch args[0] {
-	case "update":
-		return updateLinuxService()
 	case "start":
 		return startLinuxService()
 	case "stop":

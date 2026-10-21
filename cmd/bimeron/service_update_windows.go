@@ -5,7 +5,6 @@ package main
 import (
 	"debug/buildinfo"
 	"debug/pe"
-	"errors"
 	"fmt"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -48,7 +47,7 @@ func stopUpdateService(s *mgr.Service) error {
 	}
 	return waitServiceState(s, svc.Stopped)
 }
-func updateWindowsService(s *mgr.Service) error {
+func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 	// Serialize installers without sharing the VPN session mutex.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -86,16 +85,22 @@ func updateWindowsService(s *mgr.Service) error {
 	if err = protectServiceDir(dir); err != nil {
 		return err
 	}
-	source, err := os.Executable()
+	installed, err := os.Lstat(target)
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(filepath.Clean(source), target) {
-		return fmt.Errorf("run service update from the new project binary")
+	if !installed.Mode().IsRegular() {
+		return fmt.Errorf("unsafe installed service executable")
 	}
-	info, err := buildinfo.ReadFile(source)
-	if err != nil || info.Path != "bimeron/cmd/bimeron" {
-		return fmt.Errorf("invalid update binary")
+	updater, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(filepath.Clean(updater), target) {
+		return fmt.Errorf("run service update from the trusted GUI package core, not the installed service")
+	}
+	if strings.EqualFold(filepath.Clean(expect.source), target) {
+		return fmt.Errorf("update source is the installed service")
 	}
 	currentPE, err := pe.Open(target)
 	if err != nil {
@@ -103,24 +108,28 @@ func updateWindowsService(s *mgr.Service) error {
 	}
 	machine := currentPE.Machine
 	currentPE.Close()
-	sourcePE, err := pe.Open(source)
-	if err != nil {
-		return err
-	}
-	newMachine := sourcePE.Machine
-	sourcePE.Close()
-	if machine != newMachine {
-		return fmt.Errorf("update architecture differs from installed service")
-	}
 	staged := target + ".update-new"
 	backup := target + ".update-old"
 	if _, err = os.Lstat(backup); !os.IsNotExist(err) {
 		return fmt.Errorf("previous update backup present; resolve it before retrying")
 	}
-	if err = copyServiceFile(source, staged); err != nil {
+	defer os.Remove(staged)
+	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyServiceFile); err != nil {
 		return err
 	}
-	defer os.Remove(staged)
+	info, err := buildinfo.ReadFile(staged)
+	if err != nil || info.Path != "bimeron/cmd/bimeron" {
+		return fmt.Errorf("invalid staged update binary")
+	}
+	newPE, err := pe.Open(staged)
+	if err != nil {
+		return err
+	}
+	newMachine := newPE.Machine
+	newPE.Close()
+	if machine != newMachine {
+		return fmt.Errorf("update architecture differs from installed service")
+	}
 	status, err := s.Query()
 	if err != nil {
 		return err
@@ -139,14 +148,6 @@ func updateWindowsService(s *mgr.Service) error {
 	if stopped.Win32ExitCode != 0 {
 		return fmt.Errorf("service cleanup failed; run doctor/recover before update")
 	}
-	// Update only the description through SCM; owner, start type and recovery settings stay intact.
-	config.Description = serviceDescription
-	if err = s.UpdateConfig(config); err != nil {
-		if wasRunning {
-			_ = s.Start()
-		}
-		return err
-	}
 	err = replaceServiceExecutable(target, staged, backup, func() error {
 		if !wasRunning {
 			return nil
@@ -154,16 +155,17 @@ func updateWindowsService(s *mgr.Service) error {
 		if err := s.Start(); err != nil {
 			return err
 		}
-		return waitServiceState(s, svc.Running)
+		if err := waitServiceState(s, svc.Running); err != nil {
+			return err
+		}
+		return waitUpdatedService(expect.version)
 	}, func() error { return stopUpdateService(s) })
-	if errors.Is(err, errUpdateRolledBack) && wasRunning {
-		if restartErr := s.Start(); restartErr != nil {
-			return errors.Join(err, restartErr)
+	err = restorePreviousService(err, wasRunning, func() error {
+		if err := s.Start(); err != nil {
+			return err
 		}
-		if restartErr := waitServiceState(s, svc.Running); restartErr != nil {
-			return errors.Join(err, restartErr)
-		}
-	}
+		return waitServiceState(s, svc.Running)
+	})
 	if err != nil {
 		return err
 	}

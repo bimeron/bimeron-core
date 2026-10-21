@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "ipc_min": 1,
+  "ipc_max": 1,
+  "gui_min": "0.1.0",
+  "gui_max_exclusive": "0.1.2",
+  "gui_reviewed": true,
+  "profile_format": 1
+}

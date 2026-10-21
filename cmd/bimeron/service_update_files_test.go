@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"bimeron/core"
+	"bimeron/internal/control"
 )
 
 func TestServiceExecutableUpdateAndRollback(t *testing.T) {
@@ -70,5 +73,49 @@ func TestMissingStagedExecutableRestoresOriginal(t *testing.T) {
 	data, e := os.ReadFile(target)
 	if !errors.Is(err, errUpdateRolledBack) || e != nil || string(data) != "old" {
 		t.Fatal(err, e, string(data))
+	}
+}
+
+func TestFailedIPCHealthCheckRestoresOldExecutable(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "core")
+	staged := target + ".new"
+	backup := target + ".old"
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	running := false // old service has been stopped before the executable swap
+	err := replaceServiceExecutable(target, staged, backup, func() error {
+		running = true
+		return validateUpdatedHello(control.Response{Version: control.Version, Core: &core.BuildDetails{Version: "wrong"}}, "expected")
+	}, func() error { running = false; return nil })
+	if !errors.Is(err, errUpdateRolledBack) || running {
+		t.Fatal("new service not stopped for rollback", err)
+	}
+	err = restorePreviousService(err, true, func() error { running = true; return nil })
+	data, readErr := os.ReadFile(target)
+	if !errors.Is(err, errUpdateRolledBack) || readErr != nil || string(data) != "old" || !running {
+		t.Fatal("previous running state not restored", err, readErr)
+	}
+}
+
+func TestStoppedServiceUpdateRemainsStopped(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "core")
+	staged := target + ".new"
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	running := false
+	err := replaceServiceExecutable(target, staged, target+".old", func() error { return nil }, func() error { running = false; return nil })
+	data, readErr := os.ReadFile(target)
+	if err != nil || readErr != nil || string(data) != "new" || running {
+		t.Fatal("stopped service state changed", err, readErr)
 	}
 }

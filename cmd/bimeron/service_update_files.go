@@ -8,6 +8,15 @@ import (
 
 var errUpdateRolledBack = errors.New("previous executable restored")
 
+func restorePreviousService(err error, wasRunning bool, restart func() error) error {
+	if errors.Is(err, errUpdateRolledBack) && wasRunning {
+		if restartErr := restart(); restartErr != nil {
+			return errors.Join(err, restartErr)
+		}
+	}
+	return err
+}
+
 // All paths are checked by the Windows caller and remain in the protected install directory.
 // Keep the backup if restoration fails; never silently delete the last working executable.
 func replaceServiceExecutable(target, staged, backup string, activate, deactivate func() error) error {
