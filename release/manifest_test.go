@@ -46,7 +46,7 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.1.0"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.1.2"`) {
+	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.1.0"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.1.2"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
 		t.Fatal(string(data))
 	}
 	signature, err := os.ReadFile(filepath.Join(dir, "update-manifest.json.sig"))
@@ -107,9 +107,24 @@ func TestStableManifestRejectsWrongKeyAndMissingArchive(t *testing.T) {
 	if err := invoke(false, pub); err != nil {
 		t.Fatal(err)
 	}
-	review := exec.Command("go", append(append([]string(nil), args...), "-require-reviewed")...)
-	review.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key), "BIMERON_RELEASE_ED25519_PUBLIC_KEY="+pub)
-	if err := review.Run(); err == nil {
+	reviewed := exec.Command("go", append(append([]string(nil), args...), "-require-reviewed")...)
+	reviewed.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key), "BIMERON_RELEASE_ED25519_PUBLIC_KEY="+pub)
+	if output, err := reviewed.CombinedOutput(); err != nil {
+		t.Fatalf("reviewed GUI compatibility rejected: %s: %v", output, err)
+	}
+	provisional, err := os.ReadFile("compatibility.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisional = []byte(strings.Replace(string(provisional), `"gui_reviewed": true`, `"gui_reviewed": false`, 1))
+	provisionalPath := filepath.Join(dir, "provisional-compatibility.json")
+	if err := os.WriteFile(provisionalPath, provisional, 0600); err != nil {
+		t.Fatal(err)
+	}
+	unreviewedArgs := append(append([]string(nil), args...), "-compat", provisionalPath, "-require-reviewed")
+	unreviewed := exec.Command("go", unreviewedArgs...)
+	unreviewed.Env = reviewed.Env
+	if err := unreviewed.Run(); err == nil {
 		t.Fatal("provisional GUI compatibility accepted for publication")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "update-manifest.json"))
