@@ -105,16 +105,23 @@ func (windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter,
 	}
 	nc := windowsnet.Config{Name: d.Name(), Tag: "BimeronCore:" + hex.EncodeToString(random[:]), Index: iface.Index, MTU: c.MTU}
 	var guard *killswitch.Guard
+	networkCleaned := false
 	if c.KillSwitch {
 		owned.add(func() error {
-			if guard == nil {
+			if guard == nil || !networkCleaned {
 				return nil
 			}
 			return guard.Close()
 		})
 	}
 	// Register rollback BEFORE setup. It uses an independent timeout after Ctrl+C.
-	owned.add(func() error { return windowsnet.Cleanup(nc) })
+	owned.add(func() error {
+		if err := windowsnet.Cleanup(nc); err != nil {
+			return err
+		}
+		networkCleaned = true
+		return nil
+	})
 	report("network_setup", "Configuring routes and tunnel DNS")
 	setupCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
