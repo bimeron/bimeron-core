@@ -128,6 +128,18 @@ func copyServiceFile(source, destination string) error {
 	}
 	return err
 }
+
+func parseWindowsUpdateAction(args []string) (updateExpectation, bool, error) {
+	if args[0] == "update" {
+		expect, err := parseUpdateExpectation(args[1:])
+		return expect, true, err
+	}
+	if args[0] != "install" && len(args) != 1 {
+		return updateExpectation{}, false, fmt.Errorf("unexpected service arguments")
+	}
+	return updateExpectation{}, false, nil
+}
+
 func serviceCommand(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
@@ -169,6 +181,10 @@ func serviceCommand(args []string) error {
 		}
 		fmt.Printf("Service state: %d\n", status.CurrentState)
 		return nil
+	}
+	expect, updating, err := parseWindowsUpdateAction(args)
+	if err != nil {
+		return err
 	}
 	if !windowsnet.Elevated() {
 		return fmt.Errorf("service management requires Administrator")
@@ -259,21 +275,15 @@ func serviceCommand(args []string) error {
 		fmt.Println("Service installed. Start it with bimeron service start. VPN stays disconnected until start <config>.")
 		return nil
 	}
-	if len(args) != 1 {
-		return fmt.Errorf("unexpected service arguments")
-	}
 	s, err := m.OpenService(serviceName)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	switch args[0] {
-	case "update":
-		expect, err := parseUpdateExpectation(args[1:])
-		if err != nil {
-			return err
-		}
+	if updating {
 		return updateWindowsService(s, expect)
+	}
+	switch args[0] {
 	case "describe":
 		config, err := s.Config()
 		if err != nil {
