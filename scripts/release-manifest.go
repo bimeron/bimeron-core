@@ -25,13 +25,13 @@ const manifestName = "update-manifest.json"
 var tagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
 type compatibility struct {
-	Schema          int    `json:"schema"`
-	IPCMin          int    `json:"ipc_min"`
-	IPCMax          int    `json:"ipc_max"`
-	GUIMin          string `json:"gui_min"`
-	GUIMaxExclusive string `json:"gui_max_exclusive"`
-	GUIReviewed     bool   `json:"gui_reviewed"`
-	ProfileFormat   int    `json:"profile_format"`
+	Schema          int     `json:"schema"`
+	IPCMin          int     `json:"ipc_min"`
+	IPCMax          int     `json:"ipc_max"`
+	GUIMin          *string `json:"gui_min"`
+	GUIMaxExclusive *string `json:"gui_max_exclusive"`
+	GUIReviewed     bool    `json:"gui_reviewed"`
+	ProfileFormat   int     `json:"profile_format"`
 }
 type archive struct {
 	OS     string `json:"os"`
@@ -120,11 +120,14 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return err
 	}
-	if c.Schema != 1 || c.IPCMin < 1 || c.IPCMax < c.IPCMin || c.GUIMin == "" || c.GUIMaxExclusive == "" || c.ProfileFormat < 1 {
+	if c.Schema != 1 || c.IPCMin < 1 || c.IPCMax < c.IPCMin || (c.GUIMin == nil) != (c.GUIMaxExclusive == nil) || c.ProfileFormat < 1 {
 		return errors.New("invalid compatibility rules")
 	}
-	if requireReviewed && !c.GUIReviewed {
-		return errors.New("GUI compatibility is provisional; review release/compatibility.json before publication")
+	if c.GUIMin != nil && (*c.GUIMin == "" || *c.GUIMaxExclusive == "") {
+		return errors.New("empty GUI compatibility bound")
+	}
+	if requireReviewed && (!c.GUIReviewed || c.GUIMin == nil) {
+		return errors.New("GUI update compatibility is unavailable; review release/compatibility.json before publication")
 	}
 	channel := "stable"
 	if strings.Contains(tag, "-") {

@@ -8,9 +8,10 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. The GUI range is currently
-provisional because the separate GUI's version and supported API are unknown.
-Set `gui_reviewed` to `true` only after checking that GUI project; release CI
+`gui_min`, `gui_max_exclusive`, and `profile_format`. Both GUI bounds are `null`
+because no GUI updater exists yet. A preview manifest therefore declares no
+compatible GUI. Once the updater exists, set its actual supported version range
+and set `gui_reviewed` to `true` after checking that GUI project; release CI
 and backfill uploads refuse to publish while it is `false`. Dry-run remains
 available. These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
@@ -43,7 +44,8 @@ then retire the old key after the supported update window.
 List public releases from `bimeron/bimeron-core`. For each candidate, download
 both metadata assets, verify the signature using the GUI's pinned public keys,
 then check channel, OS/architecture, installed IPC protocol, GUI version, and
-profile format. Reject `gui_reviewed: false`, which marks a local preview.
+profile format. Reject `gui_reviewed: false` or null GUI bounds, which mark a
+local preview without an available GUI updater.
 Select a suitable version under the GUI's update policy.
 Download its named ZIP and verify the exact size and SHA-256. Extract only the
 expected `<os>-<arch>/bimeron[.exe]` entry to a private temporary directory;
