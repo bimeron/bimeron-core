@@ -8,10 +8,10 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. GUI 0.1.1 packages and
-their updater tests were reviewed with IPC 1 and profile format 1. The reviewed
-GUI range is `>=0.1.0, <0.1.2`; `gui_reviewed` is `true` for this release
-candidate. A live installed-service update remains a post-publication check.
+`gui_min`, `gui_max_exclusive`, and `profile_format`. GUI 0.1.2 and its updater
+tests were reviewed with IPC 1 and profile format 1. The reviewed GUI range for
+`v0.1.0-beta.4` is `>=0.1.0, <0.1.3`; `gui_reviewed` is `true`. A live
+installed-service update remains a post-publication check.
 The prepared-release publisher and backfill uploads refuse to publish if the review flag is `false`.
 These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
@@ -87,7 +87,10 @@ stopping the old service. It never executes downloaded bytes before those checks
 A running replacement must answer
 IPC `hello` with the expected core version and protocol. Failure triggers rollback
 and restoration of the prior running state. A stopped service stays stopped.
-Updating never reconnects VPN automatically.
+The core updater itself does not reconnect VPN. After a successful update,
+GUI 0.1.2 verifies the new service through IPC and reconnects the same profile
+if a VPN connection was active before the update. It does not reconnect after
+failure or rollback, or if the profile was removed.
 
 An already installed older service does not need to understand this new command:
 the trusted updater is the new core bundled by an updated GUI package. If that
