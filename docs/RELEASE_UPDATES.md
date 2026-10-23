@@ -8,10 +8,14 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. GUI 0.1.2 and its updater
-tests were reviewed with IPC 1 and profile format 1. The reviewed GUI range for
-`v0.1.0-beta.4` is `>=0.1.0, <0.1.3`; `gui_reviewed` is `true`. A live
-installed-service update remains a post-publication check.
+`gui_min`, `gui_max_exclusive`, and `profile_format`. Published `v0.1.0-beta.4`
+supports GUI `[0.1.0, 0.1.3)`. For `v0.1.0-beta.5`, GUI 0.1.5 was reviewed
+with IPC 1 and profile format 1; the range is `[0.1.5, 0.1.6)` and
+`gui_reviewed` is `true`. The Windows amd64 VM verified the GUI package upgrade,
+an existing VPN connection, the trusted `service update -source` helper,
+IPC health after update, profile validation and reconnection through the Core CLI, and rejection of
+a wrong digest before service stop. The GUI's signed release discovery and
+installation of `beta.5` remains a post-publication check.
 The prepared-release publisher and backfill uploads refuse to publish if the review flag is `false`.
 These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
