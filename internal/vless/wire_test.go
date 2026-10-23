@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"bimeron/internal/accesskey"
 )
 
 func TestVLESSAndXUDPFrames(t *testing.T) {
@@ -18,6 +20,10 @@ func TestVLESSAndXUDPFrames(t *testing.T) {
 	header, err := requestHeader(id, 1, "[2001:db8::1]:443", "xtls-rprx-vision")
 	if err != nil || len(header) < 43 || header[0] != 0 || header[17] != 18 || header[18] != 10 || header[36] != 1 || header[39] != 3 {
 		t.Fatalf("invalid VLESS header: len=%d err=%v", len(header), err)
+	}
+	plain, err := requestHeader(id, 1, "example.com:443", "")
+	if err != nil || plain[17] != 0 || plain[18] != 1 {
+		t.Fatalf("invalid plain VLESS header: %v", err)
 	}
 	frame, err := xudpFrame("1.1.1.1:53", []byte("dns"), true)
 	if err != nil {
@@ -46,6 +52,19 @@ func TestPacketDeadlineAndClose(t *testing.T) {
 	_ = p.Close()
 	if _, _, err := p.ReadFrom(b[:]); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("expected closed packet socket: %v", err)
+	}
+}
+
+func TestUDP443RestrictedOnlyByVision(t *testing.T) {
+	owner := &Client{settings: accesskey.VLESS{Flow: ""}}
+	packet := &packetConn{owner: owner, closed: true}
+	address := &net.UDPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 443}
+	if _, err := packet.WriteTo([]byte("test"), address); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("plain VLESS incorrectly restricted UDP/443: %v", err)
+	}
+	owner.settings.Flow = "xtls-rprx-vision"
+	if _, err := packet.WriteTo([]byte("test"), address); err == nil || errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Vision failed to restrict UDP/443: %v", err)
 	}
 }
 

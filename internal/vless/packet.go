@@ -84,7 +84,7 @@ func (p *packetConn) WriteTo(b []byte, address net.Addr) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(encoded) >= 2 && binary.BigEndian.Uint16(encoded[:2]) == 443 && p.owner.settings.Flow != "xtls-rprx-vision-udp443" {
+	if len(encoded) >= 2 && binary.BigEndian.Uint16(encoded[:2]) == 443 && p.owner.settings.Flow == "xtls-rprx-vision" {
 		return 0, errors.New("Vision requires explicit udp443 flow for UDP/443")
 	}
 	p.mu.Lock()

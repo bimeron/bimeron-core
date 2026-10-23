@@ -2,16 +2,21 @@ package vless
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bimeron/internal/accesskey"
+	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
+	"golang.org/x/net/websocket"
 )
 
 // Client owns all connections opened for one upstream generation.
@@ -38,8 +43,10 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	if err := v.Validate(profile.TCP.Host, profile.TCP.Port); err != nil {
 		return nil, err
 	}
-	if _, err := fingerprint(v.Fingerprint); err != nil {
-		return nil, err
+	if v.Fingerprint != "" {
+		if _, err := fingerprint(v.Fingerprint); err != nil {
+			return nil, err
+		}
 	}
 	id, err := userID(v.ID)
 	if err != nil {
@@ -57,7 +64,7 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 	if closed {
 		return nil, net.ErrClosed
 	}
-	header, err := requestHeader(c.id, command, destination, "xtls-rprx-vision")
+	header, err := requestHeader(c.id, command, destination, c.settings.Flow)
 	if err != nil {
 		return nil, err
 	}
@@ -79,31 +86,125 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 	stop := context.AfterFunc(setup, func() { _ = raw.Close() })
 	defer stop()
 	_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
-	secure, err := realityHandshake(setup, raw, c.settings, c.publicKey, c.shortID)
+	var conn net.Conn
+	if c.settings.Security == "reality" {
+		conn, err = realityHandshake(setup, raw, c.settings, c.publicKey, c.shortID)
+	} else {
+		conn, err = c.tlsHandshake(setup, raw)
+	}
 	if err != nil {
 		if setup.Err() != nil {
 			return nil, setup.Err()
 		}
 		return nil, err
 	}
-	v, err := newVisionConn(secure, raw, c.id)
-	if err != nil {
-		return nil, err
+	if c.settings.Network == "ws" {
+		conn, err = c.webSocket(conn)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := v.start(header); err != nil {
+	var stream transport.StreamConn
+	if c.settings.Flow != "" {
+		v, visionErr := newVisionConn(conn.(*utls.UConn), raw, c.id)
+		if visionErr != nil {
+			return nil, visionErr
+		}
+		if err = v.start(header); err == nil {
+			stream = v
+		}
+	} else {
+		var written int
+		written, err = conn.Write(header)
+		if err == nil && written != len(header) {
+			err = io.ErrShortWrite
+		}
+		if err == nil {
+			stream = &plainConn{Conn: conn}
+		}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("VLESS request failed")
 	}
 	_ = raw.SetDeadline(time.Time{})
-	conn := &streamConn{visionConn: v, owner: c}
+	owned := &streamConn{StreamConn: stream, owner: c}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, net.ErrClosed
 	}
-	c.connections[conn] = struct{}{}
+	c.connections[owned] = struct{}{}
 	c.mu.Unlock()
 	ok = true
+	return owned, nil
+}
+
+func (c *Client) tlsHandshake(ctx context.Context, raw net.Conn) (net.Conn, error) {
+	name := c.settings.ServerName
+	if name == "" {
+		name = c.endpoint.Host
+	}
+	protocols := []string(nil)
+	if c.settings.ALPN != "" {
+		protocols = strings.Split(c.settings.ALPN, ",")
+	} else if c.settings.Network == "ws" {
+		protocols = []string{"http/1.1"}
+	}
+	if c.settings.Fingerprint != "" {
+		id, _ := fingerprint(c.settings.Fingerprint)
+		conn := utls.UClient(raw, &utls.Config{ServerName: name, NextProtos: protocols, MinVersion: tls.VersionTLS12}, id)
+		if len(protocols) > 0 {
+			if err := conn.BuildHandshakeState(); err != nil {
+				return nil, fmt.Errorf("VLESS TLS client hello failed")
+			}
+			found := false
+			for _, extension := range conn.Extensions {
+				if alpn, ok := extension.(*utls.ALPNExtension); ok {
+					alpn.AlpnProtocols = protocols
+					found = true
+				}
+			}
+			if !found {
+				conn.Extensions = append(conn.Extensions, &utls.ALPNExtension{AlpnProtocols: protocols})
+			}
+			if err := conn.BuildHandshakeState(); err != nil {
+				return nil, fmt.Errorf("VLESS TLS client hello failed")
+			}
+		}
+		if err := conn.HandshakeContext(ctx); err != nil {
+			return nil, fmt.Errorf("VLESS TLS handshake failed: %w", err)
+		}
+		return conn, nil
+	}
+	conn := tls.Client(raw, &tls.Config{ServerName: name, NextProtos: protocols, MinVersion: tls.VersionTLS12})
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return nil, fmt.Errorf("VLESS TLS handshake failed: %w", err)
+	}
 	return conn, nil
+}
+
+func (c *Client) webSocket(conn net.Conn) (net.Conn, error) {
+	host := c.settings.WSHost
+	if host == "" {
+		host = c.settings.ServerName
+	}
+	if host == "" {
+		host = c.endpoint.Host
+	}
+	path := c.settings.WSPath
+	if path == "" {
+		path = "/"
+	}
+	config, err := websocket.NewConfig("wss://"+host+path, "https://"+host)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VLESS WebSocket settings")
+	}
+	ws, err := websocket.NewClient(config, conn)
+	if err != nil {
+		return nil, fmt.Errorf("VLESS WebSocket handshake failed")
+	}
+	ws.PayloadType = websocket.BinaryFrame
+	return ws, nil
 }
 
 func (c *Client) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {
@@ -132,7 +233,7 @@ func (c *Client) Close() error {
 }
 
 type streamConn struct {
-	*visionConn
+	transport.StreamConn
 	owner *Client
 	once  sync.Once
 }
@@ -140,7 +241,7 @@ type streamConn struct {
 func (s *streamConn) Close() error {
 	var err error
 	s.once.Do(func() {
-		err = s.visionConn.Close()
+		err = s.StreamConn.Close()
 		s.owner.mu.Lock()
 		delete(s.owner.connections, s)
 		s.owner.mu.Unlock()

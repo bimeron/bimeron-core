@@ -36,3 +36,15 @@ func TestVLESSConfigSources(t *testing.T) {
 		t.Fatalf("mixed sources accepted: %v", err)
 	}
 }
+
+func TestVLESSWSParameters(t *testing.T) {
+	data := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nNetwork = ws\nSecurity = tls\nServerName = example.com\nWSPath = /chat\nWSHost = front.example.com\nALPN = http/1.1\n"
+	c, err := ParseData([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Resolve(t.Context())
+	if err != nil || p.VLESS.WSPath != "/chat" || p.VLESS.WSHost != "front.example.com" {
+		t.Fatalf("invalid WS parameters: %v", err)
+	}
+}

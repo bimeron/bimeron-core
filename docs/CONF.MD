@@ -112,12 +112,18 @@ as plaintext in the configuration file.
 VLESS = vless://123e4567-e89b-12d3-a456-426614174000@server.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=example.com&fp=firefox&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp
 ```
 
-This example uses placeholder credentials and will not connect. The supported
-combination is TCP, REALITY, and `xtls-rprx-vision`. `encryption=none`,
-`type=tcp`, `security=reality`, `flow`, `sni`, `fp`, and `pbk` are required.
+This example uses placeholder credentials and will not connect. Supported
+combinations are TCP + REALITY + Vision, TCP + TLS, and WebSocket + TLS.
+`encryption=none` and `type` are required. REALITY requires `flow`, `sni`,
+`fp`, and `pbk`; TLS requires an empty `flow` and verifies the server
+certificate and name. TLS uses the server address as the name when `sni` is
+omitted. `fp` optionally selects a uTLS fingerprint for TLS.
 `sid` and `spx` are optional. Supported fingerprints are `chrome`, `firefox`,
 `safari`, `ios`, `android`, and `edge`. Use brackets around an IPv6 server
 address, as in `@[2001:db8::1]:443`. The fragment is the profile label.
+For WebSocket, set `type=ws` and optionally `path` (default `/`) and `host`
+(default `sni` or the server address). `alpn` is optional; WebSocket requires
+`http/1.1` when specified. WebSocket early data (`ed`) is not supported.
 Unknown or duplicate URI options are rejected. Subscriptions are not supported.
 `spx` is accepted for link compatibility; Bimeron rejects failed REALITY
 authentication and does not run Xray's decoy-site crawler.
@@ -129,10 +135,15 @@ traffic through the VLESS server.
 
 ### Explicit VLESS parameters
 
-See [`examples/vless.conf`](../examples/vless.conf). Set `Type = vless`,
+See [`examples/vless.conf`](../examples/vless.conf),
+[`examples/vless-tls.conf`](../examples/vless-tls.conf), and
+[`examples/vless-ws.conf`](../examples/vless-ws.conf). Set `Type = vless`,
 `Server`, `Port`, `ID`, `Encryption`, `Flow`, `Network`, `Security`,
-`ServerName`, `PublicKey`, and `Fingerprint`. `ShortID` and `SpiderX` are
-optional. A link in `VLESS` or `Key`, or a file containing a link in `File`,
+`ServerName`, `PublicKey`, and `Fingerprint` for REALITY. TLS needs `Server`,
+`Port`, `ID`, `Encryption`, `Network`, and `Security`; `ServerName`,
+`Fingerprint`, and `ALPN` are optional. WebSocket additionally accepts
+`WSPath` and `WSHost`. `ShortID` and `SpiderX` are optional REALITY fields.
+A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.
 
 ### Compatibility: Key
@@ -335,7 +346,7 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
 reads `File` when specified. Makes no network requests or Windows settings changes.
-`check`: test real TCP/TLS and UDP/DNS through Outline and print the external IP;
+`check`: test real TCP/TLS and UDP/DNS through the selected upstream and print the external IP;
 does not change system settings.
 `run`: start the mode selected by `[Interface] Mode`. For `vpn`, use an
 administrator CMD; stop with `Ctrl+C`. `proxy` needs no administrator privileges.

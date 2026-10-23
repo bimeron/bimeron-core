@@ -62,8 +62,12 @@ func requestHeader(id [16]byte, command byte, target, flow string) ([]byte, erro
 	b := make([]byte, 0, 24+len(address)+len(flow))
 	b = append(b, 0)
 	b = append(b, id[:]...)
-	b = append(b, byte(len(flow)+2), 0x0a, byte(len(flow)))
-	b = append(b, flow...)
+	if flow == "" {
+		b = append(b, 0)
+	} else {
+		b = append(b, byte(len(flow)+2), 0x0a, byte(len(flow)))
+		b = append(b, flow...)
+	}
 	b = append(b, command)
 	if command == 3 {
 		return b, nil

@@ -36,10 +36,11 @@ type Profile struct {
 	VLESS    VLESS
 }
 
-// VLESS contains only the TCP/REALITY/Vision combination supported by Bimeron.
+// VLESS contains the supported VLESS security and transport settings.
 type VLESS struct {
 	ID, Flow, Network, Security, Encryption              string
 	ServerName, PublicKey, ShortID, Fingerprint, SpiderX string
+	ALPN, WSPath, WSHost                                 string
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -51,26 +52,63 @@ func (v VLESS) Validate(host string, port int) error {
 	if !uuidPattern.MatchString(v.ID) {
 		return fmt.Errorf("invalid VLESS user ID")
 	}
-	if v.Network != "tcp" || v.Security != "reality" || v.Encryption != "none" || (v.Flow != "xtls-rprx-vision" && v.Flow != "xtls-rprx-vision-udp443") {
+	if v.Encryption != "none" {
 		return fmt.Errorf("unsupported VLESS transport, security, encryption or flow")
 	}
-	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") || v.Fingerprint == "" {
-		return fmt.Errorf("invalid VLESS REALITY settings")
+	vision := v.Flow == "xtls-rprx-vision" || v.Flow == "xtls-rprx-vision-udp443"
+	if !((v.Network == "tcp" && v.Security == "reality" && vision) || (v.Network == "tcp" && v.Security == "tls" && v.Flow == "") || (v.Network == "ws" && v.Security == "tls" && v.Flow == "")) {
+		return fmt.Errorf("unsupported VLESS transport, security or flow")
 	}
-	switch v.Fingerprint {
-	case "chrome", "firefox", "safari", "ios", "android", "edge":
-	default:
-		return fmt.Errorf("unsupported VLESS fingerprint")
+	if strings.ContainsAny(v.ServerName, " /\t\r\n") {
+		return fmt.Errorf("invalid VLESS server name")
 	}
-	key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
-	if err != nil || len(key) != 32 {
-		return fmt.Errorf("invalid VLESS REALITY public key")
+	if v.Fingerprint != "" {
+		switch v.Fingerprint {
+		case "chrome", "firefox", "safari", "ios", "android", "edge":
+		default:
+			return fmt.Errorf("unsupported VLESS fingerprint")
+		}
 	}
-	if len(v.ShortID) > 16 || len(v.ShortID)%2 != 0 {
-		return fmt.Errorf("invalid VLESS REALITY short ID")
+	if v.Security == "reality" {
+		if v.ServerName == "" || v.Fingerprint == "" || v.ALPN != "" || v.WSPath != "" || v.WSHost != "" {
+			return fmt.Errorf("invalid VLESS REALITY settings")
+		}
+		key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
+		if err != nil || len(key) != 32 {
+			return fmt.Errorf("invalid VLESS REALITY public key")
+		}
+		if len(v.ShortID) > 16 || len(v.ShortID)%2 != 0 {
+			return fmt.Errorf("invalid VLESS REALITY short ID")
+		}
+		if _, err := hex.DecodeString(v.ShortID); err != nil {
+			return fmt.Errorf("invalid VLESS REALITY short ID")
+		}
+	} else if v.PublicKey != "" || v.ShortID != "" || v.SpiderX != "" {
+		return fmt.Errorf("REALITY options require security=reality")
 	}
-	if _, err := hex.DecodeString(v.ShortID); err != nil {
-		return fmt.Errorf("invalid VLESS REALITY short ID")
+	if v.Network == "tcp" && (v.WSPath != "" || v.WSHost != "") {
+		return fmt.Errorf("WebSocket options require type=ws")
+	}
+	if v.Network == "ws" {
+		if v.WSPath != "" {
+			path, err := url.ParseRequestURI(v.WSPath)
+			if err != nil || path.IsAbs() || !strings.HasPrefix(v.WSPath, "/") || strings.ContainsAny(v.WSPath, "#\\\r\n") || path.Query().Has("ed") {
+				return fmt.Errorf("invalid or unsupported VLESS WebSocket path")
+			}
+		}
+		if v.WSHost != "" {
+			host, err := url.Parse("https://" + v.WSHost)
+			if err != nil || host.Hostname() == "" || host.User != nil || host.Path != "" || host.RawQuery != "" || host.Fragment != "" {
+				return fmt.Errorf("invalid VLESS WebSocket host")
+			}
+		}
+	}
+	if v.ALPN != "" {
+		for _, protocol := range strings.Split(v.ALPN, ",") {
+			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") {
+				return fmt.Errorf("invalid VLESS ALPN")
+			}
+		}
 	}
 	return nil
 }
@@ -92,13 +130,13 @@ func ParseVLESS(raw string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("invalid VLESS options")
 	}
-	allowed := map[string]bool{"encryption": true, "flow": true, "type": true, "security": true, "sni": true, "pbk": true, "sid": true, "fp": true, "spx": true}
+	allowed := map[string]bool{"encryption": true, "flow": true, "type": true, "security": true, "sni": true, "pbk": true, "sid": true, "fp": true, "spx": true, "alpn": true, "path": true, "host": true}
 	for k, values := range q {
 		if !allowed[k] || len(values) != 1 {
 			return Profile{}, fmt.Errorf("unsupported or duplicate VLESS option")
 		}
 	}
-	v := VLESS{ID: u.User.Username(), Flow: q.Get("flow"), Network: q.Get("type"), Security: q.Get("security"), Encryption: q.Get("encryption"), ServerName: q.Get("sni"), PublicKey: q.Get("pbk"), ShortID: q.Get("sid"), Fingerprint: q.Get("fp"), SpiderX: q.Get("spx")}
+	v := VLESS{ID: u.User.Username(), Flow: q.Get("flow"), Network: q.Get("type"), Security: q.Get("security"), Encryption: q.Get("encryption"), ServerName: q.Get("sni"), PublicKey: q.Get("pbk"), ShortID: q.Get("sid"), Fingerprint: q.Get("fp"), SpiderX: q.Get("spx"), ALPN: q.Get("alpn"), WSPath: q.Get("path"), WSHost: q.Get("host")}
 	if err := v.Validate(u.Hostname(), port); err != nil {
 		return Profile{}, err
 	}
