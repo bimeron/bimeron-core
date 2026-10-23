@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, or `socks5://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, or `vless://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -105,6 +105,66 @@ in credentials (for example `@` as `%40`). This is Bimeron's import syntax;
 SOCKS5 does not define a universal profile-link format. Credentials are stored
 as plaintext in the configuration file.
 
+### Inline VLESS URI
+
+```ini
+[AccessKey]
+VLESS = vless://123e4567-e89b-12d3-a456-426614174000@server.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=example.com&fp=firefox&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp
+```
+
+This example uses placeholder credentials and will not connect. Supported
+combinations include TCP + REALITY with or without Vision, TCP + TLS,
+WebSocket + TLS, gRPC + TLS/REALITY, and XHTTP over TLS/REALITY. The exact matrix and
+GUI import contract are in [VLESS_TRANSPORTS.MD](VLESS_TRANSPORTS.MD).
+`encryption=none` and `type` are required. REALITY requires `sni`, `fp`, and
+`pbk`; TCP + REALITY accepts an empty or Vision `flow`, while gRPC and XHTTP +
+REALITY require an empty `flow`. TLS also requires an empty `flow` and verifies the server
+certificate and name. TLS uses the server address as the name when `sni` is
+omitted. `fp` optionally selects a uTLS fingerprint for TLS.
+`sid` and `spx` are optional. Supported fingerprints are `chrome`, `firefox`,
+`safari`, `ios`, `android`, and `edge`. Use brackets around an IPv6 server
+address, as in `@[2001:db8::1]:443`. The fragment is the profile label.
+For WebSocket, set `type=ws` and optionally `path` (default `/`) and `host`
+(default `sni` or the server address). `alpn` is optional; WebSocket requires
+`http/1.1` when specified. Early data accepts `ed=1..8192`, either as a link
+query option or inside the encoded `path` query. For gRPC, set `type=grpc` and
+`serviceName`; optional `mode=multi` selects `TunMulti`. For XHTTP, set
+`type=xhttp` and `mode=packet-up`, `stream-up` or `auto` with TLS, or
+`mode=stream-one`, `stream-up` or `auto` with REALITY. gRPC uses HTTP/2;
+XHTTP uses HTTP/2 by default and `alpn=h3` selects HTTP/3 with TLS.
+Extended XHTTP settings can be supplied as a percent-encoded JSON `extra`
+query value. The supported JSON fields and restrictions are listed in
+[`VLESS_TRANSPORTS.MD`](VLESS_TRANSPORTS.MD). Download settings use the nested
+Xray stream format; xmux is available over HTTP/2.
+Unknown or duplicate URI options are rejected. Subscriptions are not supported.
+`spx` is accepted for link compatibility; Bimeron rejects failed REALITY
+authentication and does not run Xray's decoy-site crawler.
+
+Use `flow=xtls-rprx-vision-udp443` only when the server explicitly permits
+UDP/443. The normal Vision flow rejects that destination. In `proxy` mode the
+local SOCKS5 listener supports TCP CONNECT; in `vpn` mode XUDP carries UDP
+traffic through the VLESS server.
+
+### Explicit VLESS parameters
+
+See [`examples/vless.conf`](../examples/vless.conf),
+[`examples/vless-tls.conf`](../examples/vless-tls.conf), and
+[`examples/vless-ws.conf`](../examples/vless-ws.conf),
+[`examples/vless-grpc.conf`](../examples/vless-grpc.conf), and
+[`examples/vless-xhttp.conf`](../examples/vless-xhttp.conf), plus
+[`examples/vless-xhttp-reality.conf`](../examples/vless-xhttp-reality.conf). Set `Type = vless`,
+`Server`, `Port`, `ID`, `Encryption`, `Flow`, `Network`, `Security`,
+`ServerName`, `PublicKey`, and `Fingerprint` for REALITY. TLS needs `Server`,
+`Port`, `ID`, `Encryption`, `Network`, and `Security`; `ServerName`,
+`Fingerprint`, and `ALPN` are optional. WebSocket additionally accepts
+`WSPath`, `WSHost`, and `WSEarlyData`. gRPC requires `GRPCServiceName` and accepts
+`GRPCAuthority` and `GRPCMultiMode`; XHTTP requires `XHTTPMode` and accepts
+`XHTTPPath`, `XHTTPHost`, `XHTTPExtra`, or separate extended `XHTTP` fields.
+`ShortID` and
+`SpiderX` are optional REALITY fields.
+A link in `VLESS` or `Key`, or a file containing a link in `File`,
+is an alternative to these fields.
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -114,8 +174,8 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, or `socks5://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, or `vless://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters
@@ -305,7 +365,7 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
 reads `File` when specified. Makes no network requests or Windows settings changes.
-`check`: test real TCP/TLS and UDP/DNS through Outline and print the external IP;
+`check`: test real TCP/TLS and UDP/DNS through the selected upstream and print the external IP;
 does not change system settings.
 `run`: start the mode selected by `[Interface] Mode`. For `vpn`, use an
 administrator CMD; stop with `Ctrl+C`. `proxy` needs no administrator privileges.

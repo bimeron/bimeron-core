@@ -1,8 +1,13 @@
 # Bimeron Core: integration of individual GUI projects
 
-Current as of October 8, 2026. This document can be copied into a separate project:
+Current as of October 23, 2026. This document can be copied into a separate project:
 it describes the implemented contract without requiring access to other repository
 files. Recheck the contract against core changes made after this date.
+
+For VLESS profile editors and importers, read [VLESS_TRANSPORTS.MD](VLESS_TRANSPORTS.MD).
+It lists the supported link and `.conf` fields, transport combinations,
+validation behavior and current interoperability limits. A GUI should write a
+profile file and use the existing `start` RPC; no new VLESS RPC is required.
 
 ## Project separation
 

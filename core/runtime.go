@@ -11,6 +11,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
+	"bimeron/internal/vless"
 	"bimeron/internal/vpn"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -49,7 +50,7 @@ func (b *vpnBackend) Open(ctx context.Context, c SessionConfig, report func(stri
 	if err != nil {
 		return nil, err
 	}
-	h, tcp, udp, err := prepareVPN(ctx, setupCtx, c, path, report, b.metadata)
+	h, tcp, udp, closeTransport, err := prepareVPN(ctx, setupCtx, c, path, report, b.metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +59,12 @@ func (b *vpnBackend) Open(ctx context.Context, c SessionConfig, report func(stri
 	l, err := b.platform.Open(setupCtx, c, router, report)
 	if err != nil {
 		router.Close()
+		if closeTransport != nil {
+			_ = closeTransport()
+		}
 		return nil, err
 	}
-	return &vpnSession{link: l, router: router, platform: b.platform, path: path, cfg: c, tcp: tcp, udp: udp, report: report, ctx: ctx, metadata: b.metadata, prepare: prepareVPN}, nil
+	return &vpnSession{link: l, router: router, platform: b.platform, path: path, cfg: c, tcp: tcp, udp: udp, closeTransport: closeTransport, report: report, ctx: ctx, metadata: b.metadata, prepare: prepareVPN}, nil
 }
 
 func directHandler(ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) *vpn.Handler {
@@ -75,30 +79,40 @@ func directHandler(ctx context.Context, c SessionConfig, path networkPath, repor
 	h.Report = report
 	return h
 }
-func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error) {
+func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, func() error, error) {
 	report("key_resolve", "Resolving access key through outbound interface")
 	p, outbound, endpoints, err := resolveOnPath(ctx, c, path)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var tcp transport.StreamDialer
 	var udp transport.PacketListener
+	var closeTransport func() error
 	if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
+	} else if p.Type == "vless" {
+		client, clientErr := vless.New(p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		tcp, udp, closeTransport = client, client, client.Close
 	} else {
 		tcp, err = proxy.OutlineTCP(p.TCP, path.dialer)
 		if err != nil {
-			return nil, nil, nil, fault("invalid_tcp_transport", false)
+			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
 		}
 		udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
 		if err != nil {
-			return nil, nil, nil, fault("invalid_udp_transport", false)
+			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
 		}
 	}
 	report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	if _, err := vpn.Check(ctx, tcp, udp, c.DNS); err != nil {
-		return nil, nil, nil, fault("transport_check_failed", true)
+		if closeTransport != nil {
+			_ = closeTransport()
+		}
+		return nil, nil, nil, nil, fault("transport_check_failed", true)
 	}
 	if c.endpointChanged != nil {
 		c.endpointChanged(endpoints)
@@ -106,24 +120,32 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	h := directHandler(lifetime, c, path, report, metadata)
 	h.TCP = tcp
 	h.UDP = udp
-	return h, tcp, udp, nil
+	return h, tcp, udp, closeTransport, nil
 }
 
 type vpnSession struct {
-	link     link
-	router   *flowRouter
-	platform platform
-	path     networkPath
-	cfg      SessionConfig
-	tcp      transport.StreamDialer
-	udp      transport.PacketListener
-	report   func(string, string)
-	ctx      context.Context
-	metadata *vpn.DNSMetadata
-	prepare  func(context.Context, context.Context, SessionConfig, networkPath, func(string, string), *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error)
+	link           link
+	router         *flowRouter
+	platform       platform
+	path           networkPath
+	cfg            SessionConfig
+	tcp            transport.StreamDialer
+	udp            transport.PacketListener
+	closeTransport func() error
+	report         func(string, string)
+	ctx            context.Context
+	metadata       *vpn.DNSMetadata
+	prepare        func(context.Context, context.Context, SessionConfig, networkPath, func(string, string), *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, func() error, error)
 }
 
-func (s *vpnSession) Close() error { err := s.link.Close(); s.router.Close(); return err }
+func (s *vpnSession) Close() error {
+	err := s.link.Close()
+	s.router.Close()
+	if s.closeTransport != nil {
+		_ = s.closeTransport()
+	}
+	return err
+}
 
 // Suspend replaces the failed generation with direct-only policy handling.
 // The adapter, routes, NRPT and packet stack stay owned by this session.
@@ -141,7 +163,7 @@ func (s *vpnSession) Reconnect(ctx context.Context) error {
 		s.router.replace(directHandler(s.ctx, s.cfg, path, s.report, s.metadata))
 		s.path = path
 	}
-	h, tcp, udp, err := s.prepare(s.ctx, attempt, s.cfg, path, s.report, s.metadata)
+	h, tcp, udp, closeTransport, err := s.prepare(s.ctx, attempt, s.cfg, path, s.report, s.metadata)
 	if err != nil {
 		return err
 	}
@@ -152,11 +174,18 @@ func (s *vpnSession) Reconnect(ctx context.Context) error {
 	}
 	if ctx.Err() != nil {
 		h.Close()
+		if closeTransport != nil {
+			_ = closeTransport()
+		}
 		return ctx.Err()
 	}
 	s.router.replace(h)
+	if s.closeTransport != nil {
+		_ = s.closeTransport()
+	}
 	s.tcp = tcp
 	s.udp = udp
+	s.closeTransport = closeTransport
 	s.path = path
 	return nil
 }
@@ -278,8 +307,15 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("access_key_resolve_failed", true)
 	}
 	var d transport.StreamDialer
+	var closeTransport func() error
 	if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+	} else if p.Type == "vless" {
+		client, clientErr := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_tcp_transport", false)
+		}
+		d, closeTransport = client, client.Close
 	} else {
 		d, err = proxy.Outline(p.TCP)
 		if err != nil {
@@ -288,13 +324,16 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	l, err := net.Listen("tcp", c.Listen)
 	if err != nil {
+		if closeTransport != nil {
+			_ = closeTransport()
+		}
 		return nil, fault("proxy_listener_failed", false)
 	}
 	serveCtx, stop := context.WithCancel(ctx)
 	if c.endpointChanged != nil {
 		c.endpointChanged(sessionEndpoints{tcp: net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))})
 	}
-	s := &proxySession{cancel: stop, done: make(chan struct{}), listener: l}
+	s := &proxySession{cancel: stop, done: make(chan struct{}), listener: l, closeTransport: closeTransport}
 	report("proxy_listen", fmt.Sprintf("SOCKS5 TCP listening on %s", l.Addr()))
 	go func() {
 		s.err = (&proxy.Server{Proxy: d, Policy: c.Policy, Stats: c.stats}).Serve(serveCtx, l)
@@ -304,10 +343,11 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 }
 
 type proxySession struct {
-	cancel   context.CancelFunc
-	done     chan struct{}
-	listener net.Listener
-	err      error
+	cancel         context.CancelFunc
+	done           chan struct{}
+	listener       net.Listener
+	err            error
+	closeTransport func() error
 }
 
 func (s *proxySession) Wait(ctx context.Context) error {
@@ -321,4 +361,12 @@ func (s *proxySession) Wait(ctx context.Context) error {
 		return nil
 	}
 }
-func (s *proxySession) Close() error { s.cancel(); _ = s.listener.Close(); <-s.done; return nil }
+func (s *proxySession) Close() error {
+	s.cancel()
+	_ = s.listener.Close()
+	<-s.done
+	if s.closeTransport != nil {
+		return s.closeTransport()
+	}
+	return nil
+}

@@ -28,7 +28,7 @@ func CheckTCP(ctx context.Context, tcp transport.StreamDialer) (string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("TCP/TLS check failed")
+		return "", fmt.Errorf("TCP/TLS check failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {

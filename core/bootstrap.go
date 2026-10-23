@@ -56,12 +56,42 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		return Profile{}, d, sessionEndpoints{}, fault("access_key_resolve_failed", true)
 	}
 	original := p
-	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
-		ips, err := d.Resolver.LookupNetIP(ctx, "ip4", ep.Host)
+	if p.Type == "vless" && p.VLESS.XHTTPOptions != nil && p.VLESS.XHTTPOptions.DownloadSettings != nil {
+		options := *p.VLESS.XHTTPOptions
+		downloadCopy := *options.DownloadSettings
+		options.DownloadSettings = &downloadCopy
+		p.VLESS.XHTTPOptions = &options
+		download := options.DownloadSettings
+		ips, err := d.Resolver.LookupNetIP(ctx, "ip", download.Address)
 		if err != nil || len(ips) == 0 {
 			return Profile{}, d, sessionEndpoints{}, fault("endpoint_dns_failed", true)
 		}
-		ep.Host = ips[0].Unmap().String()
+		chosen := ips[0]
+		for _, ip := range ips {
+			if ip.Is4() {
+				chosen = ip
+				break
+			}
+		}
+		download.ResolvedAddress = chosen.Unmap().String()
+	}
+	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
+		family := "ip4"
+		if p.Type == "vless" {
+			family = "ip"
+		}
+		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
+		if err != nil || len(ips) == 0 {
+			return Profile{}, d, sessionEndpoints{}, fault("endpoint_dns_failed", true)
+		}
+		chosen := ips[0]
+		for _, ip := range ips {
+			if ip.Is4() {
+				chosen = ip
+				break
+			}
+		}
+		ep.Host = chosen.Unmap().String()
 	}
 	domain := func(host string) string {
 		if _, err := netip.ParseAddr(host); err == nil {

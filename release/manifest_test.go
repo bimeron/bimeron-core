@@ -46,7 +46,7 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.1.5"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.1.6"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
+	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.2.0"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.2.1"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
 		t.Fatal(string(data))
 	}
 	signature, err := os.ReadFile(filepath.Join(dir, "update-manifest.json.sig"))
@@ -125,7 +125,10 @@ func TestStableManifestRejectsWrongKeyAndMissingArchive(t *testing.T) {
 	unreviewed := exec.Command("go", unreviewedArgs...)
 	unreviewed.Env = reviewed.Env
 	if err := unreviewed.Run(); err == nil {
-		t.Fatal("provisional GUI compatibility accepted for publication")
+		t.Fatal("unreviewed GUI compatibility accepted for publication")
+	}
+	if err := invoke(false, pub); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "update-manifest.json"))
 	if err != nil || !strings.Contains(string(data), `"channel": "stable"`) {
