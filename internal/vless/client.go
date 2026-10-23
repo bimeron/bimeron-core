@@ -16,7 +16,9 @@ import (
 	"bimeron/internal/accesskey"
 	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
+	"golang.org/x/net/http2"
 	"golang.org/x/net/websocket"
+	"google.golang.org/grpc"
 )
 
 // Client owns all connections opened for one upstream generation.
@@ -30,6 +32,8 @@ type Client struct {
 	closed             bool
 	connections        map[*streamConn]struct{}
 	packets            map[*packetConn]struct{}
+	grpcConn           *grpc.ClientConn
+	xhttpTransport     *http2.Transport
 }
 
 var _ transport.StreamDialer = (*Client)(nil)
@@ -68,6 +72,33 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 	if err != nil {
 		return nil, err
 	}
+	if c.settings.Network == "grpc" || c.settings.Network == "xhttp" {
+		var conn net.Conn
+		if c.settings.Network == "grpc" {
+			conn, err = c.grpcStream(ctx)
+		} else {
+			conn, err = c.xhttpStream(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+		if n, writeErr := conn.Write(header); writeErr != nil || n != len(header) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("VLESS request failed")
+		}
+		_ = conn.SetWriteDeadline(time.Time{})
+		owned := &streamConn{StreamConn: &plainConn{Conn: conn}, owner: c}
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			_ = owned.Close()
+			return nil, net.ErrClosed
+		}
+		c.connections[owned] = struct{}{}
+		c.mu.Unlock()
+		return owned, nil
+	}
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
@@ -99,9 +130,16 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 		return nil, err
 	}
 	if c.settings.Network == "ws" {
-		conn, err = c.webSocket(conn)
+		early := []byte(nil)
+		if c.settings.WSEarlyData > 0 && len(header) <= c.settings.WSEarlyData {
+			early = header
+		}
+		conn, err = c.webSocket(conn, early)
 		if err != nil {
 			return nil, err
+		}
+		if early != nil {
+			header = nil
 		}
 	}
 	var stream transport.StreamConn
@@ -149,6 +187,8 @@ func (c *Client) tlsHandshake(ctx context.Context, raw net.Conn) (net.Conn, erro
 		protocols = strings.Split(c.settings.ALPN, ",")
 	} else if c.settings.Network == "ws" {
 		protocols = []string{"http/1.1"}
+	} else if c.settings.Network == "grpc" || c.settings.Network == "xhttp" {
+		protocols = []string{"h2"}
 	}
 	if c.settings.Fingerprint != "" {
 		id, _ := fingerprint(c.settings.Fingerprint)
@@ -183,7 +223,7 @@ func (c *Client) tlsHandshake(ctx context.Context, raw net.Conn) (net.Conn, erro
 	return conn, nil
 }
 
-func (c *Client) webSocket(conn net.Conn) (net.Conn, error) {
+func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
 	host := c.settings.WSHost
 	if host == "" {
 		host = c.settings.ServerName
@@ -198,6 +238,9 @@ func (c *Client) webSocket(conn net.Conn) (net.Conn, error) {
 	config, err := websocket.NewConfig("wss://"+host+path, "https://"+host)
 	if err != nil {
 		return nil, fmt.Errorf("invalid VLESS WebSocket settings")
+	}
+	if early != nil {
+		config.Protocol = []string{base64.RawURLEncoding.EncodeToString(early)}
 	}
 	ws, err := websocket.NewClient(config, conn)
 	if err != nil {
@@ -222,12 +265,22 @@ func (c *Client) Close() error {
 	for packet := range c.packets {
 		packets = append(packets, packet)
 	}
+	grpcConn := c.grpcConn
+	c.grpcConn = nil
+	xhttpTransport := c.xhttpTransport
+	c.xhttpTransport = nil
 	c.mu.Unlock()
 	for _, packet := range packets {
 		_ = packet.Close()
 	}
 	for _, conn := range connections {
 		_ = conn.Close()
+	}
+	if grpcConn != nil {
+		_ = grpcConn.Close()
+	}
+	if xhttpTransport != nil {
+		xhttpTransport.CloseIdleConnections()
 	}
 	return nil
 }

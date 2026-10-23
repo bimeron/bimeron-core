@@ -22,6 +22,14 @@ jobs:
             echo 'A GPL/LGPL-dependent VLESS module entered the build graph' >&2
             exit 1
           fi
+      - name: Verify compiled dependency notices
+        run: |
+          go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./... | sort -u | while read -r module; do
+            if [ -n "$module" ] && [ "$module" != bimeron ] && ! grep -Fq "$module " THIRD_PARTY_NOTICES.txt; then
+              echo "Missing third-party notice for $module" >&2
+              exit 1
+            fi
+          done
       - run: go test ./...
       - name: Linux TUN lifecycle
         run: |

@@ -38,13 +38,30 @@ func TestVLESSConfigSources(t *testing.T) {
 }
 
 func TestVLESSWSParameters(t *testing.T) {
-	data := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nNetwork = ws\nSecurity = tls\nServerName = example.com\nWSPath = /chat\nWSHost = front.example.com\nALPN = http/1.1\n"
+	data := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nNetwork = ws\nSecurity = tls\nServerName = example.com\nWSPath = /chat\nWSHost = front.example.com\nWSEarlyData = 2048\nALPN = http/1.1\n"
 	c, err := ParseData([]byte(data))
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, err := c.Resolve(t.Context())
-	if err != nil || p.VLESS.WSPath != "/chat" || p.VLESS.WSHost != "front.example.com" {
+	if err != nil || p.VLESS.WSPath != "/chat" || p.VLESS.WSHost != "front.example.com" || p.VLESS.WSEarlyData != 2048 {
 		t.Fatalf("invalid WS parameters: %v", err)
+	}
+}
+
+func TestVLESSHTTPParameters(t *testing.T) {
+	base := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nSecurity = tls\nServerName = example.com\n"
+	for _, tc := range []struct{ fields, network string }{
+		{"Network = grpc\nGRPCServiceName = proxy\nALPN = h2\n", "grpc"},
+		{"Network = xhttp\nXHTTPMode = packet-up\nXHTTPPath = /stream\nXHTTPHost = front.example.com\nALPN = h2\n", "xhttp"},
+	} {
+		c, err := ParseData([]byte(base + tc.fields))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.Resolve(t.Context())
+		if err != nil || p.VLESS.Network != tc.network {
+			t.Fatalf("%s parameters: %v", tc.network, err)
+		}
 	}
 }

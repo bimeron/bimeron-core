@@ -113,9 +113,12 @@ VLESS = vless://123e4567-e89b-12d3-a456-426614174000@server.example.com:443?encr
 ```
 
 This example uses placeholder credentials and will not connect. Supported
-combinations are TCP + REALITY + Vision, TCP + TLS, and WebSocket + TLS.
-`encryption=none` and `type` are required. REALITY requires `flow`, `sni`,
-`fp`, and `pbk`; TLS requires an empty `flow` and verifies the server
+combinations are TCP + REALITY + Vision, TCP + TLS, WebSocket + TLS, gRPC + TLS,
+XHTTP `packet-up` + TLS, and XHTTP `stream-one` + REALITY. The exact matrix and
+GUI import contract are in [VLESS_TRANSPORTS.MD](VLESS_TRANSPORTS.MD).
+`encryption=none` and `type` are required. REALITY requires `sni`, `fp`, and
+`pbk`; TCP + REALITY additionally requires a Vision `flow`, while XHTTP +
+REALITY requires an empty `flow`. TLS also requires an empty `flow` and verifies the server
 certificate and name. TLS uses the server address as the name when `sni` is
 omitted. `fp` optionally selects a uTLS fingerprint for TLS.
 `sid` and `spx` are optional. Supported fingerprints are `chrome`, `firefox`,
@@ -123,7 +126,10 @@ omitted. `fp` optionally selects a uTLS fingerprint for TLS.
 address, as in `@[2001:db8::1]:443`. The fragment is the profile label.
 For WebSocket, set `type=ws` and optionally `path` (default `/`) and `host`
 (default `sni` or the server address). `alpn` is optional; WebSocket requires
-`http/1.1` when specified. WebSocket early data (`ed`) is not supported.
+`http/1.1` when specified. Early data accepts `ed=1..8192`, either as a link
+query option or inside the encoded `path` query. For gRPC, set `type=grpc` and
+`serviceName`; for XHTTP, set `type=xhttp` and `mode=packet-up` with TLS or
+`mode=stream-one` with REALITY. gRPC and XHTTP require HTTP/2.
 Unknown or duplicate URI options are rejected. Subscriptions are not supported.
 `spx` is accepted for link compatibility; Bimeron rejects failed REALITY
 authentication and does not run Xray's decoy-site crawler.
@@ -137,12 +143,17 @@ traffic through the VLESS server.
 
 See [`examples/vless.conf`](../examples/vless.conf),
 [`examples/vless-tls.conf`](../examples/vless-tls.conf), and
-[`examples/vless-ws.conf`](../examples/vless-ws.conf). Set `Type = vless`,
+[`examples/vless-ws.conf`](../examples/vless-ws.conf),
+[`examples/vless-grpc.conf`](../examples/vless-grpc.conf), and
+[`examples/vless-xhttp.conf`](../examples/vless-xhttp.conf), plus
+[`examples/vless-xhttp-reality.conf`](../examples/vless-xhttp-reality.conf). Set `Type = vless`,
 `Server`, `Port`, `ID`, `Encryption`, `Flow`, `Network`, `Security`,
 `ServerName`, `PublicKey`, and `Fingerprint` for REALITY. TLS needs `Server`,
 `Port`, `ID`, `Encryption`, `Network`, and `Security`; `ServerName`,
 `Fingerprint`, and `ALPN` are optional. WebSocket additionally accepts
-`WSPath` and `WSHost`. `ShortID` and `SpiderX` are optional REALITY fields.
+`WSPath`, `WSHost`, and `WSEarlyData`. gRPC requires `GRPCServiceName`; XHTTP
+requires `XHTTPMode` and accepts `XHTTPPath` and `XHTTPHost`. `ShortID` and
+`SpiderX` are optional REALITY fields.
 A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.
 

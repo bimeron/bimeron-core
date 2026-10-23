@@ -51,6 +51,9 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	var authKey []byte
 	verified := false
 	config := &utls.Config{ServerName: settings.ServerName, InsecureSkipVerify: true, SessionTicketsDisabled: true}
+	if settings.Network == "xhttp" {
+		config.NextProtos = []string{"h2"}
+	}
 	config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
 			return errors.New("REALITY certificate missing")
@@ -74,6 +77,21 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	secure := utls.UClient(raw, config, helloID)
 	if err := secure.BuildHandshakeState(); err != nil {
 		return nil, fmt.Errorf("REALITY client hello failed")
+	}
+	if settings.Network == "xhttp" {
+		found := false
+		for _, extension := range secure.Extensions {
+			if alpn, ok := extension.(*utls.ALPNExtension); ok {
+				alpn.AlpnProtocols = []string{"h2"}
+				found = true
+			}
+		}
+		if !found {
+			secure.Extensions = append(secure.Extensions, &utls.ALPNExtension{AlpnProtocols: []string{"h2"}})
+		}
+		if err := secure.BuildHandshakeState(); err != nil {
+			return nil, fmt.Errorf("REALITY client hello failed")
+		}
 	}
 	hello := secure.HandshakeState.Hello
 	if len(hello.Raw) < 71 || len(hello.Random) != 32 {
@@ -117,6 +135,9 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	}
 	if !verified {
 		return nil, fmt.Errorf("REALITY authentication failed")
+	}
+	if settings.Network == "xhttp" && secure.ConnectionState().NegotiatedProtocol != "h2" {
+		return nil, fmt.Errorf("REALITY HTTP/2 negotiation failed")
 	}
 	return secure, nil
 }

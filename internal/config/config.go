@@ -194,7 +194,7 @@ func parse(b []byte) (*File, error) {
 				c.Access.Key = value
 			case "File":
 				c.Access.KeyFile = value
-			case "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost":
+			case "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "XHTTPPath", "XHTTPHost", "XHTTPMode":
 				if c.Access.VLESSParameters == nil {
 					c.Access.VLESSParameters = &accesskey.VLESS{}
 				}
@@ -226,6 +226,16 @@ func parse(b []byte) (*File, error) {
 					v.WSPath = value
 				case "WSHost":
 					v.WSHost = value
+				case "WSEarlyData":
+					v.WSEarlyData, err = number()
+				case "GRPCServiceName":
+					v.GRPCServiceName = value
+				case "XHTTPPath":
+					v.XHTTPPath = value
+				case "XHTTPHost":
+					v.XHTTPHost = value
+				case "XHTTPMode":
+					v.XHTTPMode = value
 				}
 			case "Server", "Port", "Method", "Password", "Prefix":
 				if c.Access.Parameters == nil {
