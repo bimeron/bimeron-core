@@ -84,7 +84,7 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 		if setup.Err() != nil {
 			return nil, setup.Err()
 		}
-		return nil, fmt.Errorf("REALITY handshake failed")
+		return nil, err
 	}
 	v, err := newVisionConn(secure, raw, c.id)
 	if err != nil {
