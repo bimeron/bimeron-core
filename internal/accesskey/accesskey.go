@@ -146,7 +146,7 @@ func (v VLESS) Validate(host string, port int) error {
 	}
 	if v.ALPN != "" {
 		for _, protocol := range strings.Split(v.ALPN, ",") {
-			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && protocol != "h2" && protocol != "h3") || (v.Network == "xhttp" && strings.Contains(v.ALPN, ",")) {
+			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && protocol != "h2" && protocol != "h3" && protocol != "http/1.1") || (v.Network == "xhttp" && strings.Contains(v.ALPN, ",") && v.ALPN != "h2,http/1.1") {
 				return fmt.Errorf("invalid VLESS ALPN")
 			}
 		}

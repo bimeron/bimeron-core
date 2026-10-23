@@ -15,7 +15,7 @@ requires control profiles.
 | `tcp` | `tls` | Empty | Optional `sni`, `fp`, `alpn` |
 | `ws` | `tls` | Empty | Optional `path`, `host`, `ed`; `alpn` must be `http/1.1` if supplied |
 | `grpc` | `tls` or `reality` | Empty | Required `serviceName`; optional `authority`, `mode=multi`; REALITY requires `sni`, `fp`, `pbk`; `alpn` must be `h2` if supplied |
-| `xhttp` | `tls` | Empty | Required `mode=packet-up`, `stream-up` or `auto`; optional `path`, `host`; `alpn` may be `h2` or `h3` |
+| `xhttp` | `tls` | Empty | Required `mode=packet-up`, `stream-up` or `auto`; optional `path`, `host`; `alpn` may be `h2`, `h2,http/1.1`, or `h3` |
 | `xhttp` | `reality` | Empty | Required `mode=stream-one`, `stream-up` or `auto`, `sni`, `fp`, `pbk`; optional `path`, `host`, `sid`, `spx`; `alpn` must be `h2` if supplied |
 
 `encryption=none` is required for every VLESS link. Explicit parameters use
@@ -149,7 +149,7 @@ XHTTPXmux = {"maxConnections":2}
 Do not combine `XHTTPExtra` with separate extended fields. Each separate
 field uses the JSON name with an `XHTTP` prefix, for example
 `XHTTPXPaddingBytes`, `XHTTPSessionPlacement`, and `XHTTPDownloadSettings`.
-Ranges accept an integer or a quoted `from-to` range in JSON; a separate
+Ranges accept an integer, a quoted integer, or a quoted `from-to` range in JSON; a separate
 `.conf` range accepts `from-to` without quotes. Protect values containing
 credentials in files and GUI output.
 `noSSEHeader`, `scStreamUpServerSecs`, and `serverMaxHeaderBytes` describe

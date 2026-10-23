@@ -26,6 +26,10 @@ func (r *XHTTPRange) UnmarshalJSON(b []byte) error {
 	if json.Unmarshal(b, &s) != nil {
 		return fmt.Errorf("invalid XHTTP range")
 	}
+	if n, err := strconv.Atoi(s); err == nil {
+		r.From, r.To = n, n
+		return nil
+	}
 	a, z, ok := strings.Cut(s, "-")
 	if !ok {
 		return fmt.Errorf("invalid XHTTP range")

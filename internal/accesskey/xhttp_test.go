@@ -47,3 +47,17 @@ func TestXHTTPExtraLink(t *testing.T) {
 		t.Fatal("duplicate extra accepted")
 	}
 }
+
+func TestXHTTPStringIntegerRange(t *testing.T) {
+	options, err := ParseXHTTPExtra(`{"scMaxEachPostBytes":"1000000"}`)
+	if err != nil || options.ScMaxEachPostBytes.From != 1000000 || options.ScMaxEachPostBytes.To != 1000000 {
+		t.Fatalf("string integer range: %+v %v", options, err)
+	}
+}
+
+func TestXHTTPH2AndHTTP11ALPN(t *testing.T) {
+	link := "vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?encryption=none&security=tls&type=xhttp&mode=packet-up&alpn=h2%2Chttp%2F1.1"
+	if _, err := ParseVLESS(link); err != nil {
+		t.Fatal(err)
+	}
+}
