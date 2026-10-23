@@ -113,12 +113,12 @@ VLESS = vless://123e4567-e89b-12d3-a456-426614174000@server.example.com:443?encr
 ```
 
 This example uses placeholder credentials and will not connect. Supported
-combinations are TCP + REALITY + Vision, TCP + TLS, WebSocket + TLS, gRPC + TLS,
-XHTTP `packet-up` + TLS, and XHTTP `stream-one` + REALITY. The exact matrix and
+combinations include TCP + REALITY with or without Vision, TCP + TLS,
+WebSocket + TLS, gRPC + TLS/REALITY, and XHTTP over TLS/REALITY. The exact matrix and
 GUI import contract are in [VLESS_TRANSPORTS.MD](VLESS_TRANSPORTS.MD).
 `encryption=none` and `type` are required. REALITY requires `sni`, `fp`, and
-`pbk`; TCP + REALITY additionally requires a Vision `flow`, while XHTTP +
-REALITY requires an empty `flow`. TLS also requires an empty `flow` and verifies the server
+`pbk`; TCP + REALITY accepts an empty or Vision `flow`, while gRPC and XHTTP +
+REALITY require an empty `flow`. TLS also requires an empty `flow` and verifies the server
 certificate and name. TLS uses the server address as the name when `sni` is
 omitted. `fp` optionally selects a uTLS fingerprint for TLS.
 `sid` and `spx` are optional. Supported fingerprints are `chrome`, `firefox`,
@@ -128,8 +128,14 @@ For WebSocket, set `type=ws` and optionally `path` (default `/`) and `host`
 (default `sni` or the server address). `alpn` is optional; WebSocket requires
 `http/1.1` when specified. Early data accepts `ed=1..8192`, either as a link
 query option or inside the encoded `path` query. For gRPC, set `type=grpc` and
-`serviceName`; for XHTTP, set `type=xhttp` and `mode=packet-up` with TLS or
-`mode=stream-one` with REALITY. gRPC and XHTTP require HTTP/2.
+`serviceName`; optional `mode=multi` selects `TunMulti`. For XHTTP, set
+`type=xhttp` and `mode=packet-up`, `stream-up` or `auto` with TLS, or
+`mode=stream-one`, `stream-up` or `auto` with REALITY. gRPC uses HTTP/2;
+XHTTP uses HTTP/2 by default and `alpn=h3` selects HTTP/3 with TLS.
+Extended XHTTP settings can be supplied as a percent-encoded JSON `extra`
+query value. The supported JSON fields and restrictions are listed in
+[`VLESS_TRANSPORTS.MD`](VLESS_TRANSPORTS.MD). Download settings use the nested
+Xray stream format; xmux is available over HTTP/2.
 Unknown or duplicate URI options are rejected. Subscriptions are not supported.
 `spx` is accepted for link compatibility; Bimeron rejects failed REALITY
 authentication and does not run Xray's decoy-site crawler.
@@ -151,8 +157,10 @@ See [`examples/vless.conf`](../examples/vless.conf),
 `ServerName`, `PublicKey`, and `Fingerprint` for REALITY. TLS needs `Server`,
 `Port`, `ID`, `Encryption`, `Network`, and `Security`; `ServerName`,
 `Fingerprint`, and `ALPN` are optional. WebSocket additionally accepts
-`WSPath`, `WSHost`, and `WSEarlyData`. gRPC requires `GRPCServiceName`; XHTTP
-requires `XHTTPMode` and accepts `XHTTPPath` and `XHTTPHost`. `ShortID` and
+`WSPath`, `WSHost`, and `WSEarlyData`. gRPC requires `GRPCServiceName` and accepts
+`GRPCAuthority` and `GRPCMultiMode`; XHTTP requires `XHTTPMode` and accepts
+`XHTTPPath`, `XHTTPHost`, `XHTTPExtra`, or separate extended `XHTTP` fields.
+`ShortID` and
 `SpiderX` are optional REALITY fields.
 A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.

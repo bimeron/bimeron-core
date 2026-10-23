@@ -44,6 +44,8 @@ type Access struct {
 	Parameters      *Parameters
 	Username        string
 	VLESSParameters *accesskey.VLESS
+	xhttpExtraUsed  bool
+	xhttpFieldsUsed bool
 }
 type Parameters struct {
 	Server   string
@@ -194,7 +196,7 @@ func parse(b []byte) (*File, error) {
 				c.Access.Key = value
 			case "File":
 				c.Access.KeyFile = value
-			case "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "XHTTPPath", "XHTTPHost", "XHTTPMode":
+			case "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode":
 				if c.Access.VLESSParameters == nil {
 					c.Access.VLESSParameters = &accesskey.VLESS{}
 				}
@@ -230,6 +232,13 @@ func parse(b []byte) (*File, error) {
 					v.WSEarlyData, err = number()
 				case "GRPCServiceName":
 					v.GRPCServiceName = value
+				case "GRPCAuthority":
+					v.GRPCAuthority = value
+				case "GRPCMultiMode":
+					if value != "true" && value != "false" {
+						return nil, fmt.Errorf("[AccessKey] GRPCMultiMode must be true or false")
+					}
+					v.GRPCMultiMode = value == "true"
 				case "XHTTPPath":
 					v.XHTTPPath = value
 				case "XHTTPHost":
@@ -255,7 +264,24 @@ func parse(b []byte) (*File, error) {
 					s.Prefix = value
 				}
 			default:
-				recognized = false
+				if key == "XHTTPExtra" || strings.HasPrefix(key, "XHTTP") {
+					if c.Access.VLESSParameters == nil {
+						c.Access.VLESSParameters = &accesskey.VLESS{}
+					}
+					v := c.Access.VLESSParameters
+					if key == "XHTTPExtra" {
+						c.Access.xhttpExtraUsed = true
+						v.XHTTPOptions, err = accesskey.ParseXHTTPExtra(value)
+					} else {
+						c.Access.xhttpFieldsUsed = true
+						if v.XHTTPOptions == nil {
+							v.XHTTPOptions = &accesskey.XHTTPOptions{}
+						}
+						err = v.XHTTPOptions.SetXHTTPConfField(key, value)
+					}
+				} else {
+					recognized = false
+				}
 			}
 		case "Routing":
 			if key == "Default" {
@@ -380,6 +406,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" {
+		if c.Access.xhttpExtraUsed && c.Access.xhttpFieldsUsed {
+			return nil, fmt.Errorf("[AccessKey] XHTTPExtra cannot be combined with separate XHTTP options")
+		}
 		sources++
 	}
 	if sources != 1 {

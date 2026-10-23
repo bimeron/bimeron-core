@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/http2"
@@ -34,6 +36,11 @@ type Client struct {
 	packets            map[*packetConn]struct{}
 	grpcConn           *grpc.ClientConn
 	xhttpTransport     *http2.Transport
+	xhttpPool          *xhttpMuxPool
+	xhttpH3Transport   *http3.Transport
+	xhttpQUIC          *quic.Transport
+	xhttpPacket        net.PacketConn
+	xhttpDownload      *Client
 }
 
 var _ transport.StreamDialer = (*Client)(nil)
@@ -269,6 +276,16 @@ func (c *Client) Close() error {
 	c.grpcConn = nil
 	xhttpTransport := c.xhttpTransport
 	c.xhttpTransport = nil
+	xhttpPool := c.xhttpPool
+	c.xhttpPool = nil
+	xhttpH3Transport := c.xhttpH3Transport
+	c.xhttpH3Transport = nil
+	xhttpQUIC := c.xhttpQUIC
+	c.xhttpQUIC = nil
+	xhttpPacket := c.xhttpPacket
+	c.xhttpPacket = nil
+	xhttpDownload := c.xhttpDownload
+	c.xhttpDownload = nil
 	c.mu.Unlock()
 	for _, packet := range packets {
 		_ = packet.Close()
@@ -281,6 +298,21 @@ func (c *Client) Close() error {
 	}
 	if xhttpTransport != nil {
 		xhttpTransport.CloseIdleConnections()
+	}
+	if xhttpPool != nil {
+		xhttpPool.Close()
+	}
+	if xhttpH3Transport != nil {
+		_ = xhttpH3Transport.Close()
+	}
+	if xhttpQUIC != nil {
+		_ = xhttpQUIC.Close()
+	}
+	if xhttpPacket != nil {
+		_ = xhttpPacket.Close()
+	}
+	if xhttpDownload != nil {
+		_ = xhttpDownload.Close()
 	}
 	return nil
 }

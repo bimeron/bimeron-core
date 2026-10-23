@@ -43,7 +43,10 @@ type VLESS struct {
 	ALPN, WSPath, WSHost                                 string
 	WSEarlyData                                          int
 	GRPCServiceName                                      string
+	GRPCAuthority                                        string
+	GRPCMultiMode                                        bool
 	XHTTPPath, XHTTPHost, XHTTPMode                      string
+	XHTTPOptions                                         *XHTTPOptions
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -59,7 +62,7 @@ func (v VLESS) Validate(host string, port int) error {
 		return fmt.Errorf("unsupported VLESS transport, security, encryption or flow")
 	}
 	vision := v.Flow == "xtls-rprx-vision" || v.Flow == "xtls-rprx-vision-udp443"
-	if !((v.Network == "tcp" && v.Security == "reality" && vision) || (v.Network == "tcp" && v.Security == "tls" && v.Flow == "") || (v.Network == "ws" && v.Security == "tls" && v.Flow == "") || (v.Network == "grpc" && v.Security == "tls" && v.Flow == "") || (v.Network == "xhttp" && v.Security == "tls" && v.Flow == "" && v.XHTTPMode == "packet-up") || (v.Network == "xhttp" && v.Security == "reality" && v.Flow == "" && v.XHTTPMode == "stream-one")) {
+	if !((v.Network == "tcp" && v.Security == "reality" && (vision || v.Flow == "")) || (v.Network == "tcp" && v.Security == "tls" && v.Flow == "") || (v.Network == "ws" && v.Security == "tls" && v.Flow == "") || (v.Network == "grpc" && (v.Security == "tls" || v.Security == "reality") && v.Flow == "") || (v.Network == "xhttp" && v.Security == "tls" && v.Flow == "" && (v.XHTTPMode == "packet-up" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "auto")) || (v.Network == "xhttp" && v.Security == "reality" && v.Flow == "" && (v.XHTTPMode == "stream-one" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "auto"))) {
 		return fmt.Errorf("unsupported VLESS transport, security or flow")
 	}
 	if strings.ContainsAny(v.ServerName, " /\t\r\n") {
@@ -73,7 +76,7 @@ func (v VLESS) Validate(host string, port int) error {
 		}
 	}
 	if v.Security == "reality" {
-		if v.ServerName == "" || v.Fingerprint == "" || v.WSPath != "" || v.WSHost != "" || (v.Network == "tcp" && v.ALPN != "") || (v.Network == "xhttp" && v.ALPN != "" && v.ALPN != "h2") {
+		if v.ServerName == "" || v.Fingerprint == "" || v.WSPath != "" || v.WSHost != "" || (v.Network == "tcp" && v.ALPN != "") || ((v.Network == "xhttp" || v.Network == "grpc") && v.ALPN != "" && v.ALPN != "h2") {
 			return fmt.Errorf("invalid VLESS REALITY settings")
 		}
 		key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
@@ -109,16 +112,25 @@ func (v VLESS) Validate(host string, port int) error {
 	if v.WSEarlyData < 0 || v.WSEarlyData > 8192 || (v.Network != "ws" && v.WSEarlyData != 0) {
 		return fmt.Errorf("invalid VLESS WebSocket early data")
 	}
-	if v.Network != "grpc" && v.GRPCServiceName != "" {
+	if v.Network != "grpc" && (v.GRPCServiceName != "" || v.GRPCAuthority != "" || v.GRPCMultiMode) {
 		return fmt.Errorf("gRPC options require type=grpc")
 	}
-	if v.Network == "grpc" && (v.GRPCServiceName == "" || strings.ContainsAny(v.GRPCServiceName, "/?\\# \t\r\n")) {
+	if v.Network == "grpc" && (v.GRPCServiceName == "" || strings.ContainsAny(v.GRPCServiceName, "?\\# \t\r\n") || (strings.Contains(v.GRPCServiceName, "/") && (!strings.HasPrefix(v.GRPCServiceName, "/") || strings.HasSuffix(v.GRPCServiceName, "/") || strings.Contains(v.GRPCServiceName, "//")))) {
 		return fmt.Errorf("invalid VLESS gRPC service name")
 	}
-	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "") {
+	if v.GRPCAuthority != "" && (strings.ContainsAny(v.GRPCAuthority, " /\\@?#\t\r\n") || strings.HasPrefix(v.GRPCAuthority, ":")) {
+		return fmt.Errorf("invalid VLESS gRPC authority")
+	}
+	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "" || v.XHTTPOptions != nil) {
 		return fmt.Errorf("XHTTP options require type=xhttp")
 	}
 	if v.Network == "xhttp" {
+		if err := v.XHTTPOptions.Validate(v.XHTTPMode, v.Security, v.ALPN); err != nil {
+			return err
+		}
+		if v.ALPN == "h3" && (v.Security != "tls" || v.Fingerprint != "") {
+			return fmt.Errorf("HTTP/3 requires TLS without a TLS fingerprint")
+		}
 		if v.XHTTPPath != "" {
 			path, err := url.ParseRequestURI(v.XHTTPPath)
 			if err != nil || path.IsAbs() || !strings.HasPrefix(v.XHTTPPath, "/") || strings.ContainsAny(v.XHTTPPath, "#\\\r\n") {
@@ -134,7 +146,7 @@ func (v VLESS) Validate(host string, port int) error {
 	}
 	if v.ALPN != "" {
 		for _, protocol := range strings.Split(v.ALPN, ",") {
-			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || ((v.Network == "grpc" || v.Network == "xhttp") && protocol != "h2") {
+			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && protocol != "h2" && protocol != "h3") || (v.Network == "xhttp" && strings.Contains(v.ALPN, ",")) {
 				return fmt.Errorf("invalid VLESS ALPN")
 			}
 		}
@@ -159,13 +171,13 @@ func ParseVLESS(raw string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("invalid VLESS options")
 	}
-	allowed := map[string]bool{"encryption": true, "flow": true, "type": true, "security": true, "sni": true, "pbk": true, "sid": true, "fp": true, "spx": true, "alpn": true, "path": true, "host": true, "ed": true, "serviceName": true, "mode": true}
+	allowed := map[string]bool{"encryption": true, "flow": true, "type": true, "security": true, "sni": true, "pbk": true, "sid": true, "fp": true, "spx": true, "alpn": true, "path": true, "host": true, "ed": true, "serviceName": true, "authority": true, "mode": true, "extra": true}
 	for k, values := range q {
 		if !allowed[k] || len(values) != 1 {
 			return Profile{}, fmt.Errorf("unsupported or duplicate VLESS option")
 		}
 	}
-	if (q.Has("serviceName") && q.Get("type") != "grpc") || (q.Has("mode") && q.Get("type") != "xhttp") || ((q.Has("path") || q.Has("host")) && q.Get("type") != "ws" && q.Get("type") != "xhttp") {
+	if ((q.Has("serviceName") || q.Has("authority")) && q.Get("type") != "grpc") || (q.Has("mode") && q.Get("type") != "xhttp" && q.Get("type") != "grpc") || (q.Has("extra") && q.Get("type") != "xhttp") || ((q.Has("path") || q.Has("host")) && q.Get("type") != "ws" && q.Get("type") != "xhttp") {
 		return Profile{}, fmt.Errorf("VLESS option does not match transport")
 	}
 	v := VLESS{ID: u.User.Username(), Flow: q.Get("flow"), Network: q.Get("type"), Security: q.Get("security"), Encryption: q.Get("encryption"), ServerName: q.Get("sni"), PublicKey: q.Get("pbk"), ShortID: q.Get("sid"), Fingerprint: q.Get("fp"), SpiderX: q.Get("spx"), ALPN: q.Get("alpn"), WSPath: q.Get("path"), WSHost: q.Get("host")}
@@ -187,8 +199,21 @@ func ParseVLESS(raw string) (Profile, error) {
 	}
 	if v.Network == "grpc" {
 		v.GRPCServiceName = q.Get("serviceName")
+		v.GRPCAuthority = q.Get("authority")
+		if q.Has("mode") {
+			if q.Get("mode") != "multi" {
+				return Profile{}, fmt.Errorf("unsupported VLESS gRPC mode")
+			}
+			v.GRPCMultiMode = true
+		}
 	} else if v.Network == "xhttp" {
 		v.XHTTPPath, v.XHTTPHost, v.XHTTPMode = q.Get("path"), q.Get("host"), q.Get("mode")
+		if q.Has("extra") {
+			v.XHTTPOptions, err = ParseXHTTPExtra(q.Get("extra"))
+			if err != nil {
+				return Profile{}, err
+			}
+		}
 		v.WSPath, v.WSHost = "", ""
 	}
 	if q.Has("ed") {

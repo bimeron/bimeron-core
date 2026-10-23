@@ -8,17 +8,22 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding"
 )
 
 // A gRPC Hunk has one protobuf bytes field. Keeping the codec here avoids
 // importing generated Xray types and their dependency graph.
 type hunk struct{ data []byte }
 type hunkCodec struct{}
+type multiHunkCodec struct{ hunkCodec }
+
+func (multiHunkCodec) Name() string { return "proto" }
 
 func (hunkCodec) Name() string { return "proto" }
 func (hunkCodec) Marshal(v any) ([]byte, error) {
@@ -50,6 +55,26 @@ func (hunkCodec) Unmarshal(b []byte, v any) error {
 	return nil
 }
 
+func (multiHunkCodec) Unmarshal(b []byte, v any) error {
+	h, ok := v.(*hunk)
+	if !ok {
+		return errors.New("invalid gRPC multi hunk")
+	}
+	h.data = h.data[:0]
+	for len(b) > 0 {
+		if b[0] != 0x0a {
+			return errors.New("invalid gRPC multi hunk")
+		}
+		n, used := binary.Uvarint(b[1:])
+		if used <= 0 || n > uint64(len(b)-1-used) {
+			return errors.New("invalid gRPC multi hunk")
+		}
+		h.data = append(h.data, b[1+used:1+used+int(n)]...)
+		b = b[1+used+int(n):]
+	}
+	return nil
+}
+
 func (c *Client) grpcStream(ctx context.Context) (net.Conn, error) {
 	conn, err := c.grpcClient()
 	if err != nil {
@@ -60,13 +85,28 @@ func (c *Client) grpcStream(ctx context.Context) (net.Conn, error) {
 	// The stream therefore has its own lifetime, ended by Close.
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	setupTimer := time.AfterFunc(15*time.Second, cancel)
-	stream, err := conn.NewStream(streamCtx, &grpc.StreamDesc{ClientStreams: true, ServerStreams: true}, "/"+url.PathEscape(c.settings.GRPCServiceName)+"/Tun")
+	stream, err := conn.NewStream(streamCtx, &grpc.StreamDesc{ClientStreams: true, ServerStreams: true}, grpcMethod(c.settings.GRPCServiceName, c.settings.GRPCMultiMode))
 	setupTimer.Stop()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	return &grpcStreamConn{stream: stream, cancel: cancel, remote: grpcAddr(address)}, nil
+}
+
+func grpcMethod(serviceName string, multi bool) string {
+	if strings.HasPrefix(serviceName, "/") {
+		parts := strings.Split(strings.TrimPrefix(serviceName, "/"), "/")
+		for i := range parts {
+			parts[i] = url.PathEscape(parts[i])
+		}
+		return "/" + strings.Join(parts, "/")
+	}
+	method := "Tun"
+	if multi {
+		method = "TunMulti"
+	}
+	return "/" + url.PathEscape(serviceName) + "/" + method
 }
 
 func (c *Client) grpcClient() (*grpc.ClientConn, error) {
@@ -83,6 +123,13 @@ func (c *Client) grpcClient() (*grpc.ClientConn, error) {
 	if name == "" {
 		name = c.endpoint.Host
 	}
+	if c.settings.GRPCAuthority != "" {
+		name = c.settings.GRPCAuthority
+	}
+	var codec encoding.Codec = hunkCodec{}
+	if c.settings.GRPCMultiMode {
+		codec = multiHunkCodec{}
+	}
 	conn, err := grpc.NewClient("passthrough:///"+address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithAuthority(name),
@@ -91,14 +138,19 @@ func (c *Client) grpcClient() (*grpc.ClientConn, error) {
 			if err != nil {
 				return nil, err
 			}
-			secure, err := c.tlsHandshake(dialCtx, raw)
+			var secure net.Conn
+			if c.settings.Security == "reality" {
+				secure, err = realityHandshake(dialCtx, raw, c.settings, c.publicKey, c.shortID)
+			} else {
+				secure, err = c.tlsHandshake(dialCtx, raw)
+			}
 			if err != nil {
 				_ = raw.Close()
 				return nil, err
 			}
 			return secure, nil
 		}),
-		grpc.WithDefaultCallOptions(grpc.ForceCodec(hunkCodec{})),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(codec)),
 	)
 	if err != nil {
 		return nil, err

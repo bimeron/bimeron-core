@@ -4,6 +4,7 @@ go 1.26.9
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/quic-go/quic-go v0.64.1
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	github.com/xjasonlyu/tun2socks/v2 v2.6.0
@@ -20,6 +21,7 @@ require (
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
 	go4.org/netipx v0.0.0-20220725152314-7e7bdc8411bf // indirect
 	golang.org/x/mobile v0.0.0-20261011034528-197770444867 // indirect
 	golang.org/x/mod v0.42.0 // indirect

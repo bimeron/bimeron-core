@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -16,6 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/accesskey"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 )
 
@@ -40,7 +44,7 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 	if path == "" {
 		path = "/"
 	}
-	u, err := url.Parse("https://" + host + path)
+	u, err := url.Parse("https://" + xhttpURLHost(host) + path)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("invalid XHTTP URL")
@@ -48,8 +52,53 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 	if !strings.HasSuffix(u.Path, "/") {
 		u.Path += "/"
 	}
+	mode := c.settings.XHTTPMode
+	if mode == "auto" {
+		if c.settings.Security == "reality" {
+			mode = "stream-one"
+		} else {
+			mode = "packet-up"
+		}
+	}
 	x := &xhttpConn{ctx: streamCtx, cancel: cancel, client: &http.Client{Transport: transport}, base: *u,
-		remote: grpcAddr(net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))), ready: make(chan struct{}), mode: c.settings.XHTTPMode}
+		remote: grpcAddr(net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))), ready: make(chan struct{}), mode: mode, options: c.settings.XHTTPOptions}
+	if x.options != nil && x.options.DownloadSettings != nil {
+		download := x.options.DownloadSettings
+		client, err := c.xhttpDownloadClient(download)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		separate, err := client.xhttpClientTransport()
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		x.downloadClient = &http.Client{Transport: separate}
+		host := download.Host
+		if host == "" {
+			host = download.ServerName
+		}
+		if host == "" {
+			host = download.Address
+		}
+		path := download.Path
+		if path == "" {
+			path = c.settings.XHTTPPath
+		}
+		if path == "" {
+			path = "/"
+		}
+		downloadURL, err := url.Parse("https://" + xhttpURLHost(host) + path)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("invalid XHTTP download URL")
+		}
+		if !strings.HasSuffix(downloadURL.Path, "/") {
+			downloadURL.Path += "/"
+		}
+		x.downloadBase = *downloadURL
+	}
 	if x.mode == "stream-one" {
 		x.reader, x.writer = io.Pipe()
 		go x.download(x.base, x.reader)
@@ -60,96 +109,214 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 			return nil, fmt.Errorf("XHTTP session creation failed")
 		}
 		x.session = hex.EncodeToString(id[:])
-		x.upload = make(chan []byte, 8)
-		go x.download(x.sessionURL(""), nil)
-		go x.uploadPackets()
+		if mode == "stream-up" {
+			x.reader, x.writer = io.Pipe()
+		} else {
+			buffered := 8
+			if x.options != nil && x.options.ScMaxBufferedPosts > 0 {
+				buffered = x.options.ScMaxBufferedPosts
+			}
+			x.upload = make(chan []byte, buffered)
+		}
+		go x.download(x.downloadURL(), nil)
+		if mode == "stream-up" {
+			go x.uploadStream()
+		} else {
+			go x.uploadPackets()
+		}
 	}
 	return x, nil
 }
 
-func (c *Client) xhttpClientTransport() (*http2.Transport, error) {
+func xhttpURLHost(host string) string {
+	if strings.Contains(host, ":") && net.ParseIP(host) != nil {
+		return "[" + host + "]"
+	}
+	return host
+}
+
+func (c *Client) xhttpDownloadClient(d *accesskey.XHTTPDownloadSettings) (*Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, net.ErrClosed
 	}
+	if c.xhttpDownload != nil {
+		return c.xhttpDownload, nil
+	}
+	settings := c.settings
+	settings.Security, settings.ServerName, settings.ALPN, settings.Fingerprint = d.Security, d.ServerName, d.ALPN, d.Fingerprint
+	settings.PublicKey, settings.ShortID, settings.XHTTPOptions = d.PublicKey, d.ShortID, nil
+	address := d.ResolvedAddress
+	if address == "" {
+		address = d.Address
+	}
+	key, _ := base64.RawURLEncoding.DecodeString(d.PublicKey)
+	sid, _ := hex.DecodeString(d.ShortID)
+	client := &Client{endpoint: accesskey.Endpoint{Host: address, Port: d.Port}, settings: settings, publicKey: key, shortID: sid, dialer: c.dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
+	c.xhttpDownload = client
+	return client, nil
+}
+
+func (c *Client) xhttpClientTransport() (http.RoundTripper, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, net.ErrClosed
+	}
+	if c.settings.ALPN == "h3" {
+		if c.xhttpH3Transport != nil {
+			return c.xhttpH3Transport, nil
+		}
+		family, bind := "udp4", "0.0.0.0:0"
+		if strings.Contains(c.endpoint.Host, ":") {
+			family, bind = "udp6", "[::]:0"
+		}
+		lc := net.ListenConfig{Control: c.dialer.Control}
+		packet, err := lc.ListenPacket(context.Background(), family, bind)
+		if err != nil {
+			return nil, fmt.Errorf("XHTTP HTTP/3 socket unavailable: %w", err)
+		}
+		address := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
+		if net.ParseIP(c.endpoint.Host) == nil {
+			_ = packet.Close()
+			return nil, fmt.Errorf("XHTTP HTTP/3 requires a resolved server address")
+		}
+		remote, err := net.ResolveUDPAddr(family, address)
+		if err != nil {
+			_ = packet.Close()
+			return nil, fmt.Errorf("XHTTP HTTP/3 endpoint unavailable")
+		}
+		qt := &quic.Transport{Conn: packet}
+		name := c.settings.ServerName
+		if name == "" {
+			name = c.endpoint.Host
+		}
+		h3 := &http3.Transport{TLSClientConfig: &tls.Config{ServerName: name, NextProtos: []string{"h3"}, MinVersion: tls.VersionTLS13}, Dial: func(ctx context.Context, _ string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			return qt.DialEarly(ctx, remote, tlsCfg, cfg)
+		}}
+		c.xhttpPacket, c.xhttpQUIC, c.xhttpH3Transport = packet, qt, h3
+		return h3, nil
+	}
 	if c.xhttpTransport != nil {
 		return c.xhttpTransport, nil
 	}
-	c.xhttpTransport = &http2.Transport{DialTLSContext: func(dialCtx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
-		address := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
-		raw, err := c.dialer.DialContext(dialCtx, "tcp", address)
-		if err != nil {
-			return nil, err
-		}
-		var secure net.Conn
-		if c.settings.Security == "reality" {
-			secure, err = realityHandshake(dialCtx, raw, c.settings, c.publicKey, c.shortID)
-		} else {
-			secure, err = c.tlsHandshake(dialCtx, raw)
-		}
-		if err != nil {
-			_ = raw.Close()
-			return nil, err
-		}
-		return secure, nil
-	}}
+	if c.xhttpPool != nil {
+		return c.xhttpPool, nil
+	}
+	if c.settings.XHTTPOptions != nil && c.settings.XHTTPOptions.Xmux != nil {
+		c.xhttpPool = newXHTTPMuxPool(c.xhttpDial, c.settings.XHTTPOptions.Xmux)
+		return c.xhttpPool, nil
+	}
+	c.xhttpTransport = &http2.Transport{DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) { return c.xhttpDial(ctx) }}
 	return c.xhttpTransport, nil
 }
 
+func (c *Client) xhttpDial(ctx context.Context) (net.Conn, error) {
+	address := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
+	raw, err := c.dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	if options := c.settings.XHTTPOptions; options != nil && options.Xmux != nil && options.Xmux.HKeepAlivePeriod > 0 {
+		if tcp, ok := raw.(*net.TCPConn); ok {
+			_ = tcp.SetKeepAlive(true)
+			_ = tcp.SetKeepAlivePeriod(time.Duration(options.Xmux.HKeepAlivePeriod) * time.Second)
+		}
+	}
+	var secure net.Conn
+	if c.settings.Security == "reality" {
+		secure, err = realityHandshake(ctx, raw, c.settings, c.publicKey, c.shortID)
+	} else {
+		secure, err = c.tlsHandshake(ctx, raw)
+	}
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return secure, nil
+}
+
 type xhttpConn struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	client        *http.Client
-	base          url.URL
-	remote        net.Addr
-	mode, session string
-	reader        *io.PipeReader
-	writer        *io.PipeWriter
-	upload        chan []byte
-	ready         chan struct{}
-	mu            sync.Mutex
-	body          io.ReadCloser
-	readErr       error
-	uploadErr     error
-	writeClosed   bool
-	deadline      *time.Timer
-	once          sync.Once
+	ctx            context.Context
+	cancel         context.CancelFunc
+	client         *http.Client
+	downloadClient *http.Client
+	base           url.URL
+	downloadBase   url.URL
+	remote         net.Addr
+	mode, session  string
+	options        *accesskey.XHTTPOptions
+	reader         *io.PipeReader
+	writer         *io.PipeWriter
+	upload         chan []byte
+	ready          chan struct{}
+	mu             sync.Mutex
+	body           io.ReadCloser
+	readErr        error
+	uploadErr      error
+	writeClosed    bool
+	deadline       *time.Timer
+	once           sync.Once
 }
 
 func (x *xhttpConn) sessionURL(seq string) url.URL {
 	u := x.base
-	u.Path += x.session
-	if seq != "" {
+	if x.session != "" && (x.options == nil || x.options.SessionPlacement == "" || x.options.SessionPlacement == "path") {
+		u.Path += x.session
+	}
+	if seq != "" && (x.options == nil || x.options.SeqPlacement == "" || x.options.SeqPlacement == "path") {
 		u.Path += "/" + seq
 	}
 	return u
 }
-func (x *xhttpConn) request(method string, u url.URL, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(x.ctx, method, u.String(), body)
+func (x *xhttpConn) downloadURL() url.URL {
+	if x.downloadClient == nil {
+		return x.sessionURL("")
+	}
+	u := x.downloadBase
+	if x.session != "" && (x.options.SessionPlacement == "" || x.options.SessionPlacement == "path") {
+		u.Path += x.session
+	}
+	return u
+}
+func (x *xhttpConn) request(method string, u url.URL, body io.Reader, seq string) (*http.Request, error) {
+	return xhttpRequest(x.ctx, method, u, body, x.session, seq, x.mode, x.options)
+}
+func (x *xhttpConn) uploadStream() {
+	u := x.sessionURL("")
+	req, err := x.request(x.uplinkMethod(), u, x.reader, "")
+	if err == nil {
+		var resp *http.Response
+		resp, err = x.client.Do(req)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				err = fmt.Errorf("XHTTP upload status %d", resp.StatusCode)
+			}
+		}
+	}
 	if err != nil {
-		return nil, err
+		x.mu.Lock()
+		x.uploadErr = err
+		x.mu.Unlock()
+		x.cancel()
 	}
-	// Xray's default XHTTP server validates a 100..1000 byte x_padding value.
-	referer := u
-	q := referer.Query()
-	q.Set("x_padding", strings.Repeat("X", 100))
-	referer.RawQuery = q.Encode()
-	req.Header.Set("Referer", referer.String())
-	if body != nil && x.mode == "stream-one" {
-		req.Header.Set("Content-Type", "application/grpc")
-	}
-	return req, nil
 }
 func (x *xhttpConn) download(u url.URL, body io.Reader) {
 	method := http.MethodGet
 	if body != nil {
 		method = http.MethodPost
 	}
-	req, err := x.request(method, u, body)
+	req, err := x.request(method, u, body, "")
 	if err == nil {
 		var resp *http.Response
-		resp, err = x.client.Do(req)
+		client := x.client
+		if x.downloadClient != nil {
+			client = x.downloadClient
+		}
+		resp, err = client.Do(req)
 		if err == nil {
 			if resp.StatusCode == http.StatusOK {
 				x.mu.Lock()
@@ -168,21 +335,44 @@ func (x *xhttpConn) download(u url.URL, body io.Reader) {
 }
 func (x *xhttpConn) uploadPackets() {
 	var seq uint64
+	var pending []byte
 	for {
-		select {
-		case <-x.ctx.Done():
-			return
-		case first, ok := <-x.upload:
-			if !ok {
+		first := pending
+		pending = nil
+		if first == nil {
+			select {
+			case <-x.ctx.Done():
 				return
+			case chunk, ok := <-x.upload:
+				if !ok {
+					return
+				}
+				first = chunk
 			}
+		}
+		{
 			buf := append([]byte(nil), first...)
-			timer := time.NewTimer(10 * time.Millisecond)
+			maxBytes, interval := 64*1024, 10*time.Millisecond
+			if x.options != nil {
+				if x.options.ScMaxEachPostBytes.To > 0 {
+					maxBytes = xhttpRangeValue(x.options.ScMaxEachPostBytes, maxBytes)
+				}
+				if x.options.ScMinPostsIntervalMs.To > 0 {
+					interval = time.Duration(xhttpRangeValue(x.options.ScMinPostsIntervalMs, 10)) * time.Millisecond
+				}
+			}
+			timer := time.NewTimer(interval)
 		collect:
-			for len(buf) < 64*1024 {
+			for len(buf) < maxBytes {
 				select {
 				case more, ok := <-x.upload:
 					if !ok {
+						break collect
+					}
+					capacity := maxBytes - len(buf)
+					if len(more) > capacity {
+						buf = append(buf, more[:capacity]...)
+						pending = append([]byte(nil), more[capacity:]...)
 						break collect
 					}
 					buf = append(buf, more...)
@@ -196,7 +386,7 @@ func (x *xhttpConn) uploadPackets() {
 			timer.Stop()
 			u := x.sessionURL(strconv.FormatUint(seq, 10))
 			seq++
-			req, err := x.request(http.MethodPost, u, bytes.NewReader(buf))
+			req, err := x.request(x.uplinkMethod(), u, bytes.NewReader(buf), strconv.FormatUint(seq-1, 10))
 			if err == nil {
 				var resp *http.Response
 				resp, err = x.client.Do(req)
@@ -217,6 +407,12 @@ func (x *xhttpConn) uploadPackets() {
 			}
 		}
 	}
+}
+func (x *xhttpConn) uplinkMethod() string {
+	if x.options != nil && x.options.UplinkHTTPMethod != "" {
+		return x.options.UplinkHTTPMethod
+	}
+	return http.MethodPost
 }
 func (x *xhttpConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
@@ -239,7 +435,7 @@ func (x *xhttpConn) Read(p []byte) (int, error) {
 	return body.Read(p)
 }
 func (x *xhttpConn) Write(p []byte) (int, error) {
-	if x.mode == "stream-one" {
+	if x.mode == "stream-one" || x.mode == "stream-up" {
 		return x.writer.Write(p)
 	}
 	x.mu.Lock()
@@ -251,8 +447,12 @@ func (x *xhttpConn) Write(p []byte) (int, error) {
 		return 0, x.uploadErr
 	}
 	written := 0
+	chunkLimit := 64 * 1024
+	if x.options != nil && x.options.ScMaxEachPostBytes.To > 0 {
+		chunkLimit = min(chunkLimit, x.options.ScMaxEachPostBytes.From)
+	}
 	for len(p) > 0 {
-		n := min(len(p), 64*1024)
+		n := min(len(p), chunkLimit)
 		chunk := append([]byte(nil), p[:n]...)
 		select {
 		case x.upload <- chunk:
@@ -271,7 +471,7 @@ func (x *xhttpConn) CloseWrite() error {
 		return nil
 	}
 	x.writeClosed = true
-	if x.mode == "stream-one" {
+	if x.mode == "stream-one" || x.mode == "stream-up" {
 		return x.writer.Close()
 	}
 	close(x.upload)

@@ -52,8 +52,18 @@ func TestParseVLESSTLS(t *testing.T) {
 	if _, err := ParseVLESS("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?encryption=none&security=reality&sni=example.com&fp=chrome&pbk=" + pub + "&type=xhttp&mode=stream-one"); err != nil {
 		t.Fatalf("REALITY XHTTP rejected: %v", err)
 	}
+	for _, query := range []string{"&type=xhttp&mode=stream-up", "&type=xhttp&mode=auto", "&type=xhttp&mode=packet-up&alpn=h3", "&type=grpc&serviceName=%2Fproxy%2FCustom&authority=front.example.com", "&type=grpc&serviceName=proxy&mode=multi"} {
+		if _, err := ParseVLESS(base + query); err != nil {
+			t.Fatalf("rejected supported profile: %v", err)
+		}
+	}
+	for _, query := range []string{"&type=tcp", "&type=grpc&serviceName=proxy"} {
+		if _, err := ParseVLESS("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?encryption=none&security=reality&sni=example.com&fp=chrome&pbk=" + pub + query); err != nil {
+			t.Fatalf("rejected REALITY profile: %v", err)
+		}
+	}
 	for _, query := range []string{
-		"&type=ws&flow=xtls-rprx-vision", "&type=tcp&pbk=secret", "&type=tcp&path=%2Fchat", "&type=ws&alpn=h2", "&type=ws&path=%2Fbad%0Apath", "&type=ws&path=%2Fchat%3Fed%3D2048&ed=1024", "&type=grpc&serviceName=proxy&mode=auto", "&type=xhttp&mode=stream-up", "&type=ws&ed=9000",
+		"&type=ws&flow=xtls-rprx-vision", "&type=tcp&pbk=secret", "&type=tcp&path=%2Fchat", "&type=ws&alpn=h2", "&type=ws&path=%2Fbad%0Apath", "&type=ws&path=%2Fchat%3Fed%3D2048&ed=1024", "&type=grpc&serviceName=proxy&mode=auto", "&type=grpc&serviceName=proxy&authority=bad%2Fhost", "&type=xhttp&mode=packet-up&alpn=h2,h3", "&type=xhttp&mode=packet-up&alpn=h3&fp=chrome", "&type=ws&ed=9000",
 	} {
 		if _, err := ParseVLESS(base + query); err == nil {
 			t.Fatalf("accepted invalid TLS profile")

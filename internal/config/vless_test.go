@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestXHTTPExplicitExtra(t *testing.T) {
+	base := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nNetwork = xhttp\nSecurity = tls\nXHTTPMode = packet-up\n"
+	for _, fields := range []string{
+		"XHTTPExtra = {\"headers\":{\"User-Agent\":\"Example\"},\"xmux\":{\"maxConnections\":2}}\n",
+		"XHTTPHeaders = {\"User-Agent\":\"Example\"}\nXHTTPXmux = {\"maxConnections\":2}\n",
+	} {
+		config, err := ParseData([]byte(base + fields))
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile, err := config.Resolve(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if profile.VLESS.XHTTPOptions.Headers["User-Agent"] != "Example" || profile.VLESS.XHTTPOptions.Xmux.MaxConnections.From != 2 {
+			t.Fatal("extended fields lost")
+		}
+	}
+	if _, err := ParseData([]byte(base + "XHTTPExtra = {}\nXHTTPHeaders = {}\n")); err == nil {
+		t.Fatal("mixed options accepted")
+	}
+}
+
 func TestVLESSConfigSources(t *testing.T) {
 	pub := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	uri := "vless://123e4567-e89b-12d3-a456-426614174000@[2604:86c0:f401:a::4]:8443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=example.com&fp=firefox&pbk=" + pub + "&sid=abcd&type=tcp"
@@ -53,7 +76,9 @@ func TestVLESSHTTPParameters(t *testing.T) {
 	base := "[Profile]\nVersion = 1\n[AccessKey]\nType = vless\nServer = example.com\nPort = 443\nID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nSecurity = tls\nServerName = example.com\n"
 	for _, tc := range []struct{ fields, network string }{
 		{"Network = grpc\nGRPCServiceName = proxy\nALPN = h2\n", "grpc"},
+		{"Network = grpc\nGRPCServiceName = /proxy/Custom\nGRPCAuthority = front.example.com\nGRPCMultiMode = true\nALPN = h2\n", "grpc"},
 		{"Network = xhttp\nXHTTPMode = packet-up\nXHTTPPath = /stream\nXHTTPHost = front.example.com\nALPN = h2\n", "xhttp"},
+		{"Network = xhttp\nXHTTPMode = stream-up\nXHTTPPath = /stream\nALPN = h2\n", "xhttp"},
 	} {
 		c, err := ParseData([]byte(base + tc.fields))
 		if err != nil {

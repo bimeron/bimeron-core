@@ -51,7 +51,7 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	var authKey []byte
 	verified := false
 	config := &utls.Config{ServerName: settings.ServerName, InsecureSkipVerify: true, SessionTicketsDisabled: true}
-	if settings.Network == "xhttp" {
+	if settings.Network == "xhttp" || settings.Network == "grpc" {
 		config.NextProtos = []string{"h2"}
 	}
 	config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
@@ -78,7 +78,7 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	if err := secure.BuildHandshakeState(); err != nil {
 		return nil, fmt.Errorf("REALITY client hello failed")
 	}
-	if settings.Network == "xhttp" {
+	if settings.Network == "xhttp" || settings.Network == "grpc" {
 		found := false
 		for _, extension := range secure.Extensions {
 			if alpn, ok := extension.(*utls.ALPNExtension); ok {
@@ -136,7 +136,7 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	if !verified {
 		return nil, fmt.Errorf("REALITY authentication failed")
 	}
-	if settings.Network == "xhttp" && secure.ConnectionState().NegotiatedProtocol != "h2" {
+	if (settings.Network == "xhttp" || settings.Network == "grpc") && secure.ConnectionState().NegotiatedProtocol != "h2" {
 		return nil, fmt.Errorf("REALITY HTTP/2 negotiation failed")
 	}
 	return secure, nil
