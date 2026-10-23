@@ -336,7 +336,7 @@ Action = direct
 
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
 choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
-SOCKS5=socks5://..., Key, or explicit parameters. File is allowed
+SOCKS5=socks5://..., Trojan=trojan://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -351,6 +351,17 @@ to the profile and File key; custom mapped drives and EFS may not be available.
 Validation without a network: run CLI `validate <config>` and check the exit code.
 Full format help is available in the core repository, docs/CONF.MD; this example does not
 replace it when developing a full-fledged editor for all settings.
+
+### Trojan profile editor
+
+For standard Trojan over TCP/TLS, write `Type = trojan`, `Server`, `Port`,
+and `Password`. `ServerName` optionally overrides the TLS certificate name
+and SNI. Alternatively, write a single `Trojan = trojan://...` or `Key =
+trojan://...` source, or point `File` at such a link. Do not combine a link
+source with explicit parameters. Reject unsupported link options rather than
+silently dropping them. The core supports TCP and UDP through Trojan in VPN
+mode; the local SOCKS5 proxy listener remains TCP only. Never display the
+password in status or diagnostics.
 
 ### Remote SOCKS5 profile editor
 
@@ -386,12 +397,13 @@ the remote transport over the network without installing a VPN: TCP/TLS and
 UDP/DNS in VPN mode, TCP/TLS only for SOCKS5 in local `proxy` mode. In VPN mode,
 the remote SOCKS5 server must support both TCP `CONNECT` and UDP `ASSOCIATE`;
 failure to relay UDP/DNS prevents startup. Local `proxy` mode needs only TCP
-`CONNECT`. The current VPN implementation resolves the upstream host to IPv4.
+`CONNECT`. The current VPN implementation resolves Shadowsocks and SOCKS5
+upstream hosts to IPv4; VLESS and Trojan may use IPv6.
 DNS settings, MTU, split rules, and direct/block actions use the same GUI
 controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
 encrypted by SOCKS5; explain this when users choose the protocol. Keep
 credentials out of status displays, logs, analytics, and crash reports.
-`bimeron inspect <key-file>` reports `type` as `socks5` or `shadowsocks`
+`bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, or `shadowsocks`
 without reporting the username or password.
 
 ## Installation, update and diagnostics of Windows/Linux
