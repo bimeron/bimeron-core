@@ -11,7 +11,7 @@ The VLESS input and transport contract is in [VLESS_TRANSPORTS.MD](VLESS_TRANSPO
 - The GUI update verifier accepts a signed manifest and all four desktop ZIPs at GUI version 0.2.0, and rejects altered signatures, hashes, unsafe paths, wrong architectures, and incompatible bounds. The installed GUI must bundle a trusted updater that supports `service update -source`.
 - The release signing key matches the public key pinned in the GUI package. `gui_reviewed` becomes true only after verification against the actual GUI 0.2.0 package and its update and rollback flow.
 
-The proposed GUI range is `[0.2.0, 0.2.1)` with IPC 1 and profile format 1. It is provisional while `gui_reviewed` is false. A manifest carrying this flag is intentionally rejected by GUI update discovery and by the release publisher.
+The reviewed GUI range is `[0.2.0, 0.2.1)` with IPC 1 and profile format 1. A Windows amd64 VM with Desktop 0.2.0 and a local release source passed signed discovery, service installation, IPC hello, and reconnection. Altered manifests, signatures, and ZIP files were rejected; the bundled helper rolled the service back after an IPC failure. GitHub Releases discovery and other platforms remain unverified. The final rebuilt assets must be checked again by GUI because the reviewed compatibility commit changes the embedded Core revision and archive bytes.
 
 ## Remaining live interoperability checks
 

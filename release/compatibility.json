@@ -4,6 +4,6 @@
   "ipc_max": 1,
   "gui_min": "0.2.0",
   "gui_max_exclusive": "0.2.1",
-  "gui_reviewed": false,
+  "gui_reviewed": true,
   "profile_format": 1
 }
