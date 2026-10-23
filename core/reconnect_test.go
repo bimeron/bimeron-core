@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"golang.getoutline.org/sdk/transport"
-	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"bimeron/internal/routing"
 	"bimeron/internal/vpn"
+	"golang.getoutline.org/sdk/transport"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 type persistentFake struct {
@@ -81,19 +81,20 @@ func TestVPNReconnectChangesGenerationOnly(t *testing.T) {
 	r.replace(vpn.NewHandler(ctx))
 	defer r.Close()
 	attempts := 0
+	oldClosed, newClosed := 0, 0
 	metadata := vpn.NewDNSMetadata()
-	s := &vpnSession{ctx: ctx, cfg: c, path: networkPath{identity: "ethernet"}, router: r, platform: p, report: func(string, string) {}, metadata: metadata,
-		prepare: func(lifetime, attempt context.Context, _ SessionConfig, _ networkPath, _ func(string, string), got *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, error) {
+	s := &vpnSession{ctx: ctx, cfg: c, path: networkPath{identity: "ethernet"}, router: r, platform: p, report: func(string, string) {}, metadata: metadata, closeTransport: func() error { oldClosed++; return nil },
+		prepare: func(lifetime, attempt context.Context, _ SessionConfig, _ networkPath, _ func(string, string), got *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, func() error, error) {
 			if got != metadata {
 				t.Fatal("DNS metadata replaced during reconnect")
 			}
 			attempts++
 			if attempts == 1 {
-				return nil, nil, nil, fault("transport_check_failed", true)
+				return nil, nil, nil, nil, fault("transport_check_failed", true)
 			}
 			h := vpn.NewHandler(lifetime)
 			h.Metadata = got
-			return h, nil, nil, nil
+			return h, nil, nil, func() error { newClosed++; return nil }, nil
 		}}
 	s.Suspend()
 	if err := s.Reconnect(ctx); !retryable(err) {
@@ -110,6 +111,13 @@ func TestVPNReconnectChangesGenerationOnly(t *testing.T) {
 	}
 	if r.current.Metadata != metadata {
 		t.Fatal("DNS metadata did not survive reconnect")
+	}
+	if oldClosed != 1 || newClosed != 0 {
+		t.Fatal("transport generation cleanup was incorrect")
+	}
+	_ = s.closeTransport()
+	if newClosed != 1 {
+		t.Fatal("new transport was not owned by the session")
 	}
 }
 

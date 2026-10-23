@@ -34,14 +34,16 @@ type File struct {
 	profile *accesskey.Profile
 }
 type Access struct {
-	SS         string
-	SSConf     string
-	SOCKS5     string
-	Key        string
-	KeyFile    string
-	Type       string
-	Parameters *Parameters
-	Username   string
+	SS              string
+	SSConf          string
+	SOCKS5          string
+	VLESS           string
+	Key             string
+	KeyFile         string
+	Type            string
+	Parameters      *Parameters
+	Username        string
+	VLESSParameters *accesskey.VLESS
 }
 type Parameters struct {
 	Server   string
@@ -176,6 +178,8 @@ func parse(b []byte) (*File, error) {
 			}
 		case "AccessKey":
 			switch key {
+			case "VLESS":
+				c.Access.VLESS = value
 			case "SS":
 				c.Access.SS = value
 			case "SSConf":
@@ -190,6 +194,33 @@ func parse(b []byte) (*File, error) {
 				c.Access.Key = value
 			case "File":
 				c.Access.KeyFile = value
+			case "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX":
+				if c.Access.VLESSParameters == nil {
+					c.Access.VLESSParameters = &accesskey.VLESS{}
+				}
+				v := c.Access.VLESSParameters
+				switch key {
+				case "ID":
+					v.ID = value
+				case "Encryption":
+					v.Encryption = value
+				case "Flow":
+					v.Flow = value
+				case "Network":
+					v.Network = value
+				case "Security":
+					v.Security = value
+				case "ServerName":
+					v.ServerName = value
+				case "PublicKey":
+					v.PublicKey = value
+				case "ShortID":
+					v.ShortID = value
+				case "Fingerprint":
+					v.Fingerprint = value
+				case "SpiderX":
+					v.SpiderX = value
+				}
 			case "Server", "Port", "Method", "Password", "Prefix":
 				if c.Access.Parameters == nil {
 					c.Access.Parameters = &Parameters{}
@@ -307,6 +338,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
 		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
 	}
+	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
+		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
@@ -315,6 +349,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.SOCKS5 != "" {
+		sources++
+	}
+	if c.Access.VLESS != "" {
 		sources++
 	}
 	if c.Access.Key != "" {
@@ -326,13 +363,13 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		sources++
 	}
-	if c.Access.Parameters != nil || c.Access.Type != "" || c.Access.Username != "" {
+	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, Key, or explicit parameters")
 	}
-	if c.Access.Parameters != nil || c.Access.Type != "" || c.Access.Username != "" {
+	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" {
 		if c.Access.Type == "" {
 			return nil, fmt.Errorf("[AccessKey] Type is required when using explicit parameters")
 		}
@@ -340,6 +377,21 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] Server and Port are required")
 		}
 		s := c.Access.Parameters
+		if c.Access.Type == "vless" {
+			if c.Access.Username != "" || s.Method != "" || s.Password != "" || s.Prefix != "" || c.Access.VLESSParameters == nil {
+				return nil, fmt.Errorf("[AccessKey] invalid VLESS parameters")
+			}
+			v := *c.Access.VLESSParameters
+			if err := v.Validate(s.Server, s.Port); err != nil {
+				return nil, err
+			}
+			e := accesskey.Endpoint{Host: s.Server, Port: s.Port}
+			c.profile = &accesskey.Profile{Name: c.Name, Type: "vless", TCP: e, UDP: e, VLESS: v}
+			return c, nil
+		}
+		if c.Access.VLESSParameters != nil {
+			return nil, fmt.Errorf("[AccessKey] VLESS options require Type = vless")
+		}
 		if c.Access.Type == "socks5" {
 			if s.Method != "" || s.Prefix != "" {
 				return nil, fmt.Errorf("[AccessKey] Method and Prefix are only valid for shadowsocks")
@@ -381,6 +433,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" {
 		key = c.Access.SOCKS5
 	}
+	if c.Access.VLESS != "" {
+		key = c.Access.VLESS
+	}
 	if c.Access.KeyFile != "" {
 		keyPath := c.Access.KeyFile
 		if !filepath.IsAbs(keyPath) {
@@ -409,8 +464,16 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "vless://") {
+		p, err := accesskey.ParseVLESS(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, or socks5://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, or vless://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

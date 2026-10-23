@@ -57,11 +57,22 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 	}
 	original := p
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
-		ips, err := d.Resolver.LookupNetIP(ctx, "ip4", ep.Host)
+		family := "ip4"
+		if p.Type == "vless" {
+			family = "ip"
+		}
+		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
 		if err != nil || len(ips) == 0 {
 			return Profile{}, d, sessionEndpoints{}, fault("endpoint_dns_failed", true)
 		}
-		ep.Host = ips[0].Unmap().String()
+		chosen := ips[0]
+		for _, ip := range ips {
+			if ip.Is4() {
+				chosen = ip
+				break
+			}
+		}
+		ep.Host = chosen.Unmap().String()
 	}
 	domain := func(host string) string {
 		if _, err := netip.ParseAddr(host); err == nil {

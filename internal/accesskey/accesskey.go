@@ -3,6 +3,7 @@ package accesskey
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"gopkg.in/yaml.v3"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +33,77 @@ type Profile struct {
 	UDP      Endpoint
 	Type     string // Empty means Shadowsocks for existing API callers.
 	Username string // SOCKS5 only; Secret contains its password.
+	VLESS    VLESS
+}
+
+// VLESS contains only the TCP/REALITY/Vision combination supported by Bimeron.
+type VLESS struct {
+	ID, Flow, Network, Security, Encryption              string
+	ServerName, PublicKey, ShortID, Fingerprint, SpiderX string
+}
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func (v VLESS) Validate(host string, port int) error {
+	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid VLESS server endpoint")
+	}
+	if !uuidPattern.MatchString(v.ID) {
+		return fmt.Errorf("invalid VLESS user ID")
+	}
+	if v.Network != "tcp" || v.Security != "reality" || v.Encryption != "none" || (v.Flow != "xtls-rprx-vision" && v.Flow != "xtls-rprx-vision-udp443") {
+		return fmt.Errorf("unsupported VLESS transport, security, encryption or flow")
+	}
+	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") || v.Fingerprint == "" {
+		return fmt.Errorf("invalid VLESS REALITY settings")
+	}
+	switch v.Fingerprint {
+	case "chrome", "firefox", "safari", "ios", "android", "edge":
+	default:
+		return fmt.Errorf("unsupported VLESS fingerprint")
+	}
+	key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
+	if err != nil || len(key) != 32 {
+		return fmt.Errorf("invalid VLESS REALITY public key")
+	}
+	if len(v.ShortID) > 16 || len(v.ShortID)%2 != 0 {
+		return fmt.Errorf("invalid VLESS REALITY short ID")
+	}
+	if _, err := hex.DecodeString(v.ShortID); err != nil {
+		return fmt.Errorf("invalid VLESS REALITY short ID")
+	}
+	return nil
+}
+
+// ParseVLESS never includes the input URI or credentials in errors.
+func ParseVLESS(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "vless" || u.User == nil || u.Hostname() == "" || u.Path != "" {
+		return Profile{}, fmt.Errorf("invalid VLESS URI")
+	}
+	if _, ok := u.User.Password(); ok {
+		return Profile{}, fmt.Errorf("invalid VLESS user ID")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid VLESS port")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid VLESS options")
+	}
+	allowed := map[string]bool{"encryption": true, "flow": true, "type": true, "security": true, "sni": true, "pbk": true, "sid": true, "fp": true, "spx": true}
+	for k, values := range q {
+		if !allowed[k] || len(values) != 1 {
+			return Profile{}, fmt.Errorf("unsupported or duplicate VLESS option")
+		}
+	}
+	v := VLESS{ID: u.User.Username(), Flow: q.Get("flow"), Network: q.Get("type"), Security: q.Get("security"), Encryption: q.Get("encryption"), ServerName: q.Get("sni"), PublicKey: q.Get("pbk"), ShortID: q.Get("sid"), Fingerprint: q.Get("fp"), SpiderX: q.Get("spx")}
+	if err := v.Validate(u.Hostname(), port); err != nil {
+		return Profile{}, err
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port}
+	return Profile{Type: "vless", Name: u.Fragment, TCP: e, UDP: e, VLESS: v}, nil
 }
 
 func (e Endpoint) Validate() error {
@@ -249,6 +322,9 @@ func NewResolverWithTransport(t http.RoundTripper) *Resolver {
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "vless://") {
+		return ParseVLESS(key)
+	}
 	if strings.HasPrefix(key, "ss://") {
 		return ParseSS(key)
 	}

@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, or `socks5://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, or `vless://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -105,6 +105,36 @@ in credentials (for example `@` as `%40`). This is Bimeron's import syntax;
 SOCKS5 does not define a universal profile-link format. Credentials are stored
 as plaintext in the configuration file.
 
+### Inline VLESS URI
+
+```ini
+[AccessKey]
+VLESS = vless://123e4567-e89b-12d3-a456-426614174000@server.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=example.com&fp=firefox&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp
+```
+
+This example uses placeholder credentials and will not connect. The supported
+combination is TCP, REALITY, and `xtls-rprx-vision`. `encryption=none`,
+`type=tcp`, `security=reality`, `flow`, `sni`, `fp`, and `pbk` are required.
+`sid` and `spx` are optional. Supported fingerprints are `chrome`, `firefox`,
+`safari`, `ios`, `android`, and `edge`. Use brackets around an IPv6 server
+address, as in `@[2001:db8::1]:443`. The fragment is the profile label.
+Unknown or duplicate URI options are rejected. Subscriptions are not supported.
+`spx` is accepted for link compatibility; Bimeron rejects failed REALITY
+authentication and does not run Xray's decoy-site crawler.
+
+Use `flow=xtls-rprx-vision-udp443` only when the server explicitly permits
+UDP/443. The normal Vision flow rejects that destination. In `proxy` mode the
+local SOCKS5 listener supports TCP CONNECT; in `vpn` mode XUDP carries UDP
+traffic through the VLESS server.
+
+### Explicit VLESS parameters
+
+See [`examples/vless.conf`](../examples/vless.conf). Set `Type = vless`,
+`Server`, `Port`, `ID`, `Encryption`, `Flow`, `Network`, `Security`,
+`ServerName`, `PublicKey`, and `Fingerprint`. `ShortID` and `SpiderX` are
+optional. A link in `VLESS` or `Key`, or a file containing a link in `File`,
+is an alternative to these fields.
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -114,8 +144,8 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, or `socks5://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, or `vless://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters

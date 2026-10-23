@@ -16,6 +16,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Reject incompatible VLESS modules
+        run: |
+          if go list -m all | grep -E 'github.com/(sagernet/|juju/ratelimit|xtls/reality|xtls/xray-core)'; then
+            echo 'A GPL/LGPL-dependent VLESS module entered the build graph' >&2
+            exit 1
+          fi
       - run: go test ./...
       - name: Linux TUN lifecycle
         run: |
