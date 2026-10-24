@@ -11,6 +11,7 @@ import (
 
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/proxy"
+	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
 	"bimeron/internal/vpn"
 	"golang.getoutline.org/sdk/transport"
@@ -50,6 +51,13 @@ func check(args []string) error {
 		tcp, udp = s, s
 	} else if p.Type == "vless" {
 		client, err := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp, udp = client, client
+	} else if p.Type == "trojan" {
+		client, err := trojan.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
 		}

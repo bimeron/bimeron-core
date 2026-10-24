@@ -34,6 +34,61 @@ type Profile struct {
 	Type     string // Empty means Shadowsocks for existing API callers.
 	Username string // SOCKS5 only; Secret contains its password.
 	VLESS    VLESS
+	Trojan   Trojan
+}
+
+// Trojan holds settings for the standard TCP/TLS transport.
+type Trojan struct {
+	Password, ServerName string
+}
+
+func (t Trojan) Validate(host string, port int) error {
+	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid Trojan server endpoint")
+	}
+	if t.Password == "" || strings.ContainsAny(t.Password, "\r\n") {
+		return fmt.Errorf("invalid Trojan password")
+	}
+	if t.ServerName == "" || strings.ContainsAny(t.ServerName, " /\t\r\n") {
+		return fmt.Errorf("invalid Trojan server name")
+	}
+	return nil
+}
+
+// ParseTrojan never includes credentials or the input URI in errors.
+func ParseTrojan(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "trojan" || u.User == nil || u.Hostname() == "" || u.Path != "" {
+		return Profile{}, fmt.Errorf("invalid Trojan URI")
+	}
+	if _, ok := u.User.Password(); ok {
+		return Profile{}, fmt.Errorf("invalid Trojan password")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid Trojan port")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid Trojan options")
+	}
+	for key, values := range q {
+		if (key != "sni" && key != "type" && key != "security") || len(values) != 1 {
+			return Profile{}, fmt.Errorf("unsupported or duplicate Trojan option")
+		}
+	}
+	if (q.Has("type") && q.Get("type") != "tcp") || (q.Has("security") && q.Get("security") != "tls") {
+		return Profile{}, fmt.Errorf("unsupported Trojan transport or security")
+	}
+	t := Trojan{Password: u.User.Username(), ServerName: q.Get("sni")}
+	if t.ServerName == "" && !q.Has("sni") {
+		t.ServerName = u.Hostname()
+	}
+	if err := t.Validate(u.Hostname(), port); err != nil {
+		return Profile{}, err
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port}
+	return Profile{Type: "trojan", Name: u.Fragment, TCP: e, UDP: e, Trojan: t}, nil
 }
 
 // VLESS contains the supported VLESS security and transport settings.
@@ -448,6 +503,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "vless://") {
 		return ParseVLESS(key)
 	}
+	if strings.HasPrefix(key, "trojan://") {
+		return ParseTrojan(key)
+	}
 	if strings.HasPrefix(key, "ss://") {
 		return ParseSS(key)
 	}
@@ -455,7 +513,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 		return ParseSOCKS5(key)
 	}
 	if !strings.HasPrefix(key, "ssconf://") {
-		return Profile{}, fmt.Errorf("expected ss, ssconf, or socks5 key")
+		return Profile{}, fmt.Errorf("unsupported access key scheme")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

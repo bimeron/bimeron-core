@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, or `vless://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, or `trojan://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -165,6 +165,39 @@ See [`examples/vless.conf`](../examples/vless.conf),
 A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.
 
+### Trojan over TCP/TLS
+
+Use a complete URI as the sole `[AccessKey]` source:
+
+```ini
+[AccessKey]
+Trojan = trojan://replace-me@server.example.com:443?security=tls&type=tcp&sni=server.example.com
+```
+
+`Key` and `File` also accept this URI. Percent-encode reserved password
+characters. The optional fragment is the profile label. `sni` defaults to
+the server address; an explicit empty `sni` is rejected. The optional
+`security=tls` and `type=tcp` values may be omitted, but other values and
+unknown or duplicate options are rejected. TLS verifies the certificate and
+server name. There is no insecure certificate option.
+
+For an explicit profile, see [`examples/trojan.conf`](../examples/trojan.conf):
+
+```ini
+[AccessKey]
+Type = trojan
+Server = server.example.com
+Port = 443
+Password = replace-me
+ServerName = server.example.com
+```
+
+`ServerName` is optional and defaults to `Server`. The password must be
+nonempty and must not contain a line break. Trojan supports TCP and UDP in
+VPN mode; UDP datagrams travel over a TLS connection. The local SOCKS5
+listener in `proxy` mode accepts TCP CONNECT only. WebSocket, gRPC, REALITY,
+TLS fingerprints, custom ALPN, and insecure TLS are unsupported.
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -174,8 +207,8 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, or `vless://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, or `trojan://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters
