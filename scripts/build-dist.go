@@ -34,6 +34,12 @@ func run() error {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		return fmt.Errorf("run from the repository root: %w", err)
 	}
+	version := os.Getenv("BIMERON_VERSION")
+	if version == "" {
+		if tag, err := exec.Command("git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*").Output(); err == nil {
+			version = strings.TrimSpace(string(tag)) + "-dev"
+		}
+	}
 	dist := os.Getenv("BIMERON_DIST_DIR")
 	if dist == "" {
 		dist = filepath.Join(root, "dist")
@@ -58,7 +64,7 @@ func run() error {
 			return err
 		}
 		ldflags := "-s -w"
-		if version := os.Getenv("BIMERON_VERSION"); version != "" {
+		if version != "" {
 			ldflags += " -X bimeron/core.Version=" + strings.TrimPrefix(version, "v")
 		}
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "./cmd/bimeron")

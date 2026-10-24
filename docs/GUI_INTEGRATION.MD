@@ -67,11 +67,11 @@ Read capabilities from the running core through hello/capabilities. These report
 build support; they do not check whether a driver, permissions, or server is available.
 
 Hello and the new version RPC command return an optional core field:
-version (now 0.1.0-dev), revision (Git SHA), commit_time, modified,
+version (for development builds, the nearest reachable Git tag plus `-dev`), revision (Git SHA), commit_time, modified,
 go_version, platform, architecture. This is the data of the running daemon/service,
 not a GUI or a separate CLI. Do not confuse core.version with version=1 protocol.
 For dev builds, compare revision and modified, and not just the same line
-0.1.0-dev. If there is no VCS data, revision/commit_time may be missing.
+tag-derived development version. If there is no VCS data, revision/commit_time may be missing.
 The old core may not have the core field - display an unknown version.
 CLI `version` shows its assembly; `version -daemon` - running core.
 DomainSplit is now true on Windows, Linux and macOS; system domain rules

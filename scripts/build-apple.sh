@@ -11,7 +11,14 @@ case "$APPLE_EXTENSION_KIND" in app-extension|system-extension) ;; *) exit 1 ;; 
 case "$(uname -m)" in arm64) APPLE_ARCH=arm64 ;; x86_64) APPLE_ARCH=amd64 ;; *) echo 'Unsupported Mac architecture' >&2; exit 1 ;; esac
 export APPLE_BUILD_DIR="${APPLE_BUILD_DIR:-$PWD/dist/apple-$APPLE_EXTENSION_KIND-$APPLE_ARCH}"
 mkdir -p "$APPLE_BUILD_DIR/bridge"
-go build -buildmode=c-archive -o "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" ./cmd/bimeron-apple
+if [ -n "${BIMERON_VERSION:-}" ]; then
+    set -- -ldflags "-X bimeron/core.Version=${BIMERON_VERSION#v}"
+elif tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+    set -- -ldflags "-X bimeron/core.Version=${tag#v}-dev"
+else
+    set --
+fi
+go build "$@" -buildmode=c-archive -o "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" ./cmd/bimeron-apple
 cat > "$APPLE_BUILD_DIR/bridge/module.modulemap" <<'EOF'
 module CoreBridge {
     header "libBimeronCore.h"

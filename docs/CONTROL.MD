@@ -65,7 +65,9 @@ Changes to required fields or existing command semantics require a new version.
 Hello/version contain optional core: version, revision, commit_time, modified,
 go_version, platform, architecture. This is the running core's version; the RPC
 version remains 1. Older builds omit the field. The development version is
-0.1.0-dev; distinguish builds using revision/modified. VCS data may be absent.
+the nearest reachable Git tag plus `-dev` when built by project scripts;
+distinguish builds using revision/modified. Without a reachable tag, the
+fallback is 0.1.0-dev. VCS data may be absent.
 TCP statistics update after every successful write, not only when a connection
 closes. Adding optional fields is compatible: the GUI must ignore unknown response
 fields. The GUI must not assume that every platform has identical capabilities.

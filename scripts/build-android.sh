@@ -9,6 +9,8 @@ output="${ANDROID_BUILD_DIR:-$PWD/dist/android}"
 mkdir -p "$output"
 if [ -n "${BIMERON_VERSION:-}" ]; then
     set -- -ldflags "-X bimeron/core.Version=${BIMERON_VERSION#v}"
+elif tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+    set -- -ldflags "-X bimeron/core.Version=${tag#v}-dev"
 else
     set --
 fi
