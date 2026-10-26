@@ -47,33 +47,44 @@ func Check(ctx context.Context, tcp transport.StreamDialer, udp transport.Packet
 	if err != nil {
 		return "", err
 	}
+	if err := checkDNS(ctx, tcp, udp, dns); err != nil {
+		return "", err
+	}
+	return address, nil
+}
+
+func checkDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.PacketListener, dns []string) error {
 	var random [2]byte
 	if _, err := rand.Read(random[:]); err != nil {
-		return "", err
+		return err
 	}
 	id := binary.BigEndian.Uint16(random[:])
 	name, _ := dnsmessage.NewName("api.ipify.org.")
 	message := dnsmessage.Message{Header: dnsmessage.Header{ID: id, RecursionDesired: true}, Questions: []dnsmessage.Question{{Name: name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}}}
 	packet, err := message.Pack()
 	if err != nil {
-		return "", err
+		return err
 	}
-	answer, err := (DNSResolver{Servers: dns, TCP: tcp, UDP: udp}).Exchange(ctx, packet, false)
+	resolver := DNSResolver{Servers: dns, TCP: tcp, UDP: udp}
+	answer, err := resolver.Exchange(ctx, packet, false)
 	if err != nil {
-		return "", fmt.Errorf("UDP/DNS check failed for all configured resolvers")
+		answer, err = resolver.Exchange(ctx, packet, true)
+		if err != nil {
+			return fmt.Errorf("DNS check failed over UDP and TCP")
+		}
 	}
 	var response dnsmessage.Message
 	if err := response.Unpack(answer); err != nil {
-		return "", fmt.Errorf("invalid DNS check answer")
+		return fmt.Errorf("invalid DNS check answer")
 	}
 	if response.Truncated {
-		answer, err = (DNSResolver{Servers: dns, TCP: tcp, UDP: udp}).Exchange(ctx, packet, true)
+		answer, err = resolver.Exchange(ctx, packet, true)
 		if err != nil || response.Unpack(answer) != nil {
-			return "", fmt.Errorf("DNS TCP fallback failed")
+			return fmt.Errorf("DNS TCP fallback failed")
 		}
 	}
 	if response.RCode != dnsmessage.RCodeSuccess || len(response.Answers) == 0 {
-		return "", fmt.Errorf("DNS resolver returned no usable answer")
+		return fmt.Errorf("DNS resolver returned no usable answer")
 	}
-	return address, nil
+	return nil
 }
