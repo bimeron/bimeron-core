@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/hysteria2"
 	"bimeron/internal/proxy"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
@@ -102,6 +103,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		client, clientErr := trojan.New(p, outbound)
 		if clientErr != nil {
 			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		tcp, udp, closeTransport = client, client, client.Close
+	} else if p.Type == "hysteria2" {
+		client, clientErr := hysteria2.New(ctx, p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_udp_transport", true)
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else {
@@ -327,6 +334,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		client, clientErr := trojan.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
 			return nil, fault("invalid_tcp_transport", false)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "hysteria2" {
+		client, clientErr := hysteria2.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_udp_transport", true)
 		}
 		d, closeTransport = client, client.Close
 	} else {

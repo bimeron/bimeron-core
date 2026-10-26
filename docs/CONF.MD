@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, or `trojan://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`, or `hysteria2://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -197,6 +197,24 @@ nonempty and must not contain a line break. Trojan supports TCP and UDP in
 VPN mode; UDP datagrams travel over a TLS connection. The local SOCKS5
 listener in `proxy` mode accepts TCP CONNECT only. WebSocket, gRPC, REALITY,
 TLS fingerprints, custom ALPN, and insecure TLS are unsupported.
+
+### Hysteria2 over QUIC
+
+Use a complete `hysteria2://` or `hy2://` URI as the sole access key source.
+See [`examples/hysteria2.conf`](../examples/hysteria2.conf):
+
+```ini
+[AccessKey]
+Hysteria2 = hysteria2://replace-me@server.example.com:443?sni=server.example.com
+```
+
+The password is the URI username. Percent-encode reserved characters, such as
+`@` as `%40`. The server port and password are required. `sni` is optional and
+defaults to the server hostname. TLS certificate and name verification remain
+enabled. The fragment is the profile label. Unknown or duplicate query options
+are rejected; obfuscation, insecure TLS, and bandwidth options are not yet
+supported. The server must allow UDP relay. In VPN mode, both TCP and UDP
+traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.
 
 ### Compatibility: Key
 

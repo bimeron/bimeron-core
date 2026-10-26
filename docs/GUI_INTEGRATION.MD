@@ -336,7 +336,7 @@ Action = direct
 
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
 choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
-SOCKS5=socks5://..., Trojan=trojan://..., Key, or explicit parameters. File is allowed
+SOCKS5=socks5://..., Trojan=trojan://..., Hysteria2=hysteria2://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -362,6 +362,15 @@ source with explicit parameters. Reject unsupported link options rather than
 silently dropping them. The core supports TCP and UDP through Trojan in VPN
 mode; the local SOCKS5 proxy listener remains TCP only. Never display the
 password in status or diagnostics.
+
+### Hysteria2 profile editor
+
+Write one `Hysteria2 = hysteria2://password@server:port?sni=name`, `Key`, or
+`File` source. The `hy2://` alias is also accepted. Percent-encode reserved
+password characters. `sni` is optional; TLS verification is always enabled.
+Reject unsupported URI options instead of silently dropping them. VPN mode
+uses TCP and UDP relay; local proxy mode exposes TCP CONNECT. The server must
+support UDP relay. Keep the password out of status and diagnostics.
 
 ### Remote SOCKS5 profile editor
 
@@ -398,12 +407,12 @@ UDP/DNS in VPN mode, TCP/TLS only for SOCKS5 in local `proxy` mode. In VPN mode,
 the remote SOCKS5 server must support both TCP `CONNECT` and UDP `ASSOCIATE`;
 failure to relay UDP/DNS prevents startup. Local `proxy` mode needs only TCP
 `CONNECT`. The current VPN implementation resolves Shadowsocks and SOCKS5
-upstream hosts to IPv4; VLESS and Trojan may use IPv6.
+upstream hosts to IPv4; VLESS, Trojan, and Hysteria2 may use IPv6.
 DNS settings, MTU, split rules, and direct/block actions use the same GUI
 controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
 encrypted by SOCKS5; explain this when users choose the protocol. Keep
 credentials out of status displays, logs, analytics, and crash reports.
-`bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, or `shadowsocks`
+`bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, `hysteria2`, or `shadowsocks`
 without reporting the username or password.
 
 ## Installation, update and diagnostics of Windows/Linux
