@@ -77,7 +77,9 @@ jobs:
       - name: Race check QUIC fingerprint state
         if: runner.os == 'Linux'
         working-directory: third_party/apernet-quic-go
-        run: go test -race . ./internal/handshake ./internal/wire ./internal/ackhandler
+        # Race instrumentation randomly drops sync.Pool entries; allocation counts
+        # are checked by the ordinary unit test step above.
+        run: go test -race -skip '^TestFrameParserAllocs$/^STREAM$' . ./internal/handshake ./internal/wire ./internal/ackhandler
 
   cli-dist:
     runs-on: ubuntu-latest
