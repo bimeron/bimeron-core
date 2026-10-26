@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,68 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 )
+
+func TestXHTTPReadDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	x := &xhttpConn{ctx: ctx, cancel: cancel, ready: make(chan struct{})}
+	if err := x.SetReadDeadline(time.Now().Add(10 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var b [1]byte
+	if _, err := x.Read(b[:]); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("deadline: %v", err)
+	}
+}
+
+func TestXHTTPUploadStatusReachesReader(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		<-r.Context().Done()
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	u, _ := url.Parse(server.URL + "/stream/")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	tr := &http2.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // test certificate
+	defer tr.CloseIdleConnections()
+	x := &xhttpConn{ctx: ctx, cancel: cancel, client: &http.Client{Transport: tr}, base: *u, mode: "packet-up", session: "session", upload: make(chan []byte, 1), ready: make(chan struct{})}
+	defer x.Close()
+	go x.download(x.sessionURL(""), nil)
+	go x.uploadPackets()
+	if _, err := x.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	var b [1]byte
+	_, err := x.Read(b[:])
+	var status interface{ HTTPStatusCode() int }
+	if !errors.As(err, &status) || status.HTTPStatusCode() != 502 {
+		t.Fatalf("upload status lost: %v", err)
+	}
+}
+
+func TestXHTTPUploadFailureReleasesBlockedWriter(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	x := &xhttpConn{ctx: ctx, cancel: cancel, mode: "packet-up", upload: make(chan []byte), ready: make(chan struct{})}
+	defer x.Close()
+	done := make(chan error, 1)
+	go func() { _, err := x.Write([]byte("blocked")); done <- err }()
+	x.failUpload(xhttpStatusError{502})
+	select {
+	case err := <-done:
+		var status interface{ HTTPStatusCode() int }
+		if !errors.As(err, &status) || status.HTTPStatusCode() != 502 {
+			t.Fatalf("write: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed upload left writer blocked")
+	}
+}
 
 func TestXHTTPPacketUp(t *testing.T) {
 	payload := make(chan []byte, 1)

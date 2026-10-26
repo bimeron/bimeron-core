@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bimeron/internal/accesskey"
@@ -238,26 +240,28 @@ func (c *Client) xhttpDial(ctx context.Context) (net.Conn, error) {
 }
 
 type xhttpConn struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	client         *http.Client
-	downloadClient *http.Client
-	base           url.URL
-	downloadBase   url.URL
-	remote         net.Addr
-	mode, session  string
-	options        *accesskey.XHTTPOptions
-	reader         *io.PipeReader
-	writer         *io.PipeWriter
-	upload         chan []byte
-	ready          chan struct{}
-	mu             sync.Mutex
-	body           io.ReadCloser
-	readErr        error
-	uploadErr      error
-	writeClosed    bool
-	deadline       *time.Timer
-	once           sync.Once
+	ctx             context.Context
+	cancel          context.CancelFunc
+	client          *http.Client
+	downloadClient  *http.Client
+	base            url.URL
+	downloadBase    url.URL
+	remote          net.Addr
+	mode, session   string
+	options         *accesskey.XHTTPOptions
+	reader          *io.PipeReader
+	writer          *io.PipeWriter
+	upload          chan []byte
+	ready           chan struct{}
+	mu              sync.Mutex
+	body            io.ReadCloser
+	readErr         error
+	uploadErr       error
+	uploadMu        sync.Mutex
+	writeClosed     bool
+	deadline        *time.Timer
+	deadlineExpired atomic.Bool
+	once            sync.Once
 }
 
 func (x *xhttpConn) sessionURL(seq string) url.URL {
@@ -293,15 +297,12 @@ func (x *xhttpConn) uploadStream() {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				err = fmt.Errorf("XHTTP upload status %d", resp.StatusCode)
+				err = xhttpStatusError{resp.StatusCode}
 			}
 		}
 	}
 	if err != nil {
-		x.mu.Lock()
-		x.uploadErr = err
-		x.mu.Unlock()
-		x.cancel()
+		x.failUpload(err)
 	}
 }
 func (x *xhttpConn) download(u url.URL, body io.Reader) {
@@ -324,7 +325,7 @@ func (x *xhttpConn) download(u url.URL, body io.Reader) {
 				x.mu.Unlock()
 			} else {
 				_ = resp.Body.Close()
-				err = fmt.Errorf("XHTTP response status %d", resp.StatusCode)
+				err = xhttpStatusError{resp.StatusCode}
 			}
 		}
 	}
@@ -394,15 +395,12 @@ func (x *xhttpConn) uploadPackets() {
 					_, _ = io.Copy(io.Discard, resp.Body)
 					_ = resp.Body.Close()
 					if resp.StatusCode != http.StatusOK {
-						err = fmt.Errorf("XHTTP upload status %d", resp.StatusCode)
+						err = xhttpStatusError{resp.StatusCode}
 					}
 				}
 			}
 			if err != nil {
-				x.cancel()
-				x.mu.Lock()
-				x.uploadErr = err
-				x.mu.Unlock()
+				x.failUpload(err)
 				return
 			}
 		}
@@ -414,6 +412,35 @@ func (x *xhttpConn) uplinkMethod() string {
 	}
 	return http.MethodPost
 }
+
+// Expose only the numeric HTTP status to diagnostics, never request metadata.
+type xhttpStatusError struct{ status int }
+
+func (e xhttpStatusError) Error() string       { return fmt.Sprintf("XHTTP status %d", e.status) }
+func (e xhttpStatusError) HTTPStatusCode() int { return e.status }
+
+func (x *xhttpConn) failUpload(err error) {
+	// Write can hold mu while waiting for queue space. Publishing the error
+	// must not wait for that lock before cancellation releases the writer.
+	x.uploadMu.Lock()
+	x.uploadErr = err
+	x.uploadMu.Unlock()
+	x.cancel()
+}
+
+func (x *xhttpConn) streamError(err error) error {
+	if err != nil && x.deadlineExpired.Load() {
+		return os.ErrDeadlineExceeded
+	}
+	x.uploadMu.Lock()
+	uploadErr := x.uploadErr
+	x.uploadMu.Unlock()
+	if uploadErr != nil {
+		return uploadErr
+	}
+	return err
+}
+
 func (x *xhttpConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -421,18 +448,22 @@ func (x *xhttpConn) Read(p []byte) (int, error) {
 	select {
 	case <-x.ready:
 	case <-x.ctx.Done():
-		return 0, x.ctx.Err()
+		return 0, x.streamError(x.ctx.Err())
 	}
 	x.mu.Lock()
 	body, err := x.body, x.readErr
 	x.mu.Unlock()
 	if err != nil {
-		return 0, err
+		return 0, x.streamError(err)
 	}
 	if body == nil {
 		return 0, io.ErrClosedPipe
 	}
-	return body.Read(p)
+	n, err := body.Read(p)
+	if err != nil {
+		return n, x.streamError(err)
+	}
+	return n, nil
 }
 func (x *xhttpConn) Write(p []byte) (int, error) {
 	if x.mode == "stream-one" || x.mode == "stream-up" {
@@ -443,8 +474,8 @@ func (x *xhttpConn) Write(p []byte) (int, error) {
 	if x.writeClosed {
 		return 0, io.ErrClosedPipe
 	}
-	if x.uploadErr != nil {
-		return 0, x.uploadErr
+	if err := x.streamError(nil); err != nil {
+		return 0, err
 	}
 	written := 0
 	chunkLimit := 64 * 1024
@@ -459,7 +490,7 @@ func (x *xhttpConn) Write(p []byte) (int, error) {
 			written += n
 			p = p[n:]
 		case <-x.ctx.Done():
-			return written, x.ctx.Err()
+			return written, x.streamError(x.ctx.Err())
 		}
 	}
 	return written, nil
@@ -506,8 +537,9 @@ func (x *xhttpConn) SetDeadline(t time.Time) error {
 		x.deadline.Stop()
 		x.deadline = nil
 	}
+	x.deadlineExpired.Store(false)
 	if !t.IsZero() {
-		x.deadline = time.AfterFunc(max(0, time.Until(t)), x.cancel)
+		x.deadline = time.AfterFunc(max(0, time.Until(t)), func() { x.deadlineExpired.Store(true); x.cancel() })
 	}
 	return nil
 }
