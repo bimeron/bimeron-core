@@ -35,6 +35,7 @@ type Profile struct {
 	Username string // SOCKS5 only; Secret contains its password.
 	VLESS    VLESS
 	Trojan   Trojan
+	VMess    VMess
 }
 
 // Trojan holds settings for the standard TCP/TLS transport.
@@ -505,6 +506,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	}
 	if strings.HasPrefix(key, "trojan://") {
 		return ParseTrojan(key)
+	}
+	if strings.HasPrefix(key, "vmess://") {
+		return ParseVMess(key)
 	}
 	if strings.HasPrefix(key, "ss://") {
 		return ParseSS(key)

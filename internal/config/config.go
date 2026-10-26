@@ -38,6 +38,7 @@ type Access struct {
 	SSConf          string
 	SOCKS5          string
 	VLESS           string
+	VMess           string
 	Trojan          string
 	Key             string
 	KeyFile         string
@@ -184,6 +185,8 @@ func parse(b []byte) (*File, error) {
 			switch key {
 			case "VLESS":
 				c.Access.VLESS = value
+			case "VMess":
+				c.Access.VMess = value
 			case "Trojan":
 				c.Access.Trojan = value
 			case "SS":
@@ -389,6 +392,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
 		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
 	}
+	if c.Access.VMess != "" && !strings.HasPrefix(c.Access.VMess, "vmess://") {
+		return nil, fmt.Errorf("[AccessKey] VMess must start with vmess://")
+	}
 	if c.Access.Trojan != "" && !strings.HasPrefix(c.Access.Trojan, "trojan://") {
 		return nil, fmt.Errorf("[AccessKey] Trojan must start with trojan://")
 	}
@@ -403,6 +409,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.VLESS != "" {
+		sources++
+	}
+	if c.Access.VMess != "" {
 		sources++
 	}
 	if c.Access.Trojan != "" {
@@ -424,7 +433,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, Trojan, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, VMess, Trojan, Key, or explicit parameters")
 	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
 		if c.Access.Type == "" {
@@ -513,6 +522,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.VLESS != "" {
 		key = c.Access.VLESS
 	}
+	if c.Access.VMess != "" {
+		key = c.Access.VMess
+	}
 	if c.Access.Trojan != "" {
 		key = c.Access.Trojan
 	}
@@ -552,6 +564,14 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "vmess://") {
+		p, err := accesskey.ParseVMess(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
 	if strings.HasPrefix(c.key, "trojan://") {
 		p, err := accesskey.ParseTrojan(c.key)
 		if err != nil {
@@ -561,7 +581,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, or trojan://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, vmess://, or trojan://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

@@ -31,6 +31,11 @@ jobs:
             fi
           done
       - run: go test ./...
+      - name: VMess interoperability with Xray
+        run: |
+          xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
+          go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
+          BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/vmess -run '^TestXrayVMessAEAD$' -count=1 -v
       - name: Linux TUN lifecycle
         run: |
           go test -c -o /tmp/bimeron-core.test ./core

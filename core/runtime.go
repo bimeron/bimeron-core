@@ -13,6 +13,7 @@ import (
 	"bimeron/internal/proxy"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
+	"bimeron/internal/vmess"
 	"bimeron/internal/vpn"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -100,6 +101,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		tcp, udp, closeTransport = client, client, client.Close
 	} else if p.Type == "trojan" {
 		client, clientErr := trojan.New(p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		tcp, udp, closeTransport = client, client, client.Close
+	} else if p.Type == "vmess" {
+		client, clientErr := vmess.New(p, outbound)
 		if clientErr != nil {
 			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
 		}
@@ -325,6 +332,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		d, closeTransport = client, client.Close
 	} else if p.Type == "trojan" {
 		client, clientErr := trojan.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_tcp_transport", false)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "vmess" {
+		client, clientErr := vmess.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
 			return nil, fault("invalid_tcp_transport", false)
 		}

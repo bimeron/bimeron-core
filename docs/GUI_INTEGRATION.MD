@@ -336,7 +336,8 @@ Action = direct
 
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
 choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
-SOCKS5=socks5://..., Trojan=trojan://..., Key, or explicit parameters. File is allowed
+SOCKS5=socks5://..., VLESS=vless://..., VMess=vmess://...,
+Trojan=trojan://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -351,6 +352,14 @@ to the profile and File key; custom mapped drives and EFS may not be available.
 Validation without a network: run CLI `validate <config>` and check the exit code.
 Full format help is available in the core repository, docs/CONF.MD; this example does not
 replace it when developing a full-fledged editor for all settings.
+
+### VMess profile importer
+
+Accept base64 JSON `vmess://` links as the sole `VMess`, `Key`, or `File`
+source. Preserve the complete link; the core validates AEAD (`aid=0`),
+TCP/TLS or WebSocket/TLS, SNI, path, and encryption. Unsupported fields and
+transports produce validation errors. The core supports VMess TCP and UDP in
+VPN mode. Do not display the user ID or full link in diagnostics.
 
 ### Trojan profile editor
 

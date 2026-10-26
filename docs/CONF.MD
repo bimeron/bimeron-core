@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, or `trojan://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, or `trojan://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -165,6 +165,23 @@ See [`examples/vless.conf`](../examples/vless.conf),
 A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.
 
+### VMess AEAD
+
+Use one base64-encoded JSON `vmess://` link as `VMess`, `Key`, or the contents
+of `File`. For example, the JSON inside a supported link has this shape:
+
+```json
+{"v":"2","ps":"Example","add":"server.example.com","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"ws","type":"none","host":"server.example.com","path":"/vmess","tls":"tls","sni":"server.example.com"}
+```
+
+The `vmess://` payload is standard or URL-safe base64 of the UTF-8 JSON.
+`net` may be `tcp` or `ws`; both require TLS certificate verification. `scy`
+may be `auto` (AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
+The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
+the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
+transport, other networks, and unknown JSON fields are rejected. VMess has no
+explicit parameter form in this release.
+
 ### Trojan over TCP/TLS
 
 Use a complete URI as the sole `[AccessKey]` source:
@@ -207,8 +224,8 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, or `trojan://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, or `trojan://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters
