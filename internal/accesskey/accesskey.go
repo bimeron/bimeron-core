@@ -39,7 +39,7 @@ type Profile struct {
 }
 
 // Hysteria2 contains the authentication and verified TLS settings.
-type Hysteria2 struct{ Password, ServerName string }
+type Hysteria2 struct{ Password, ServerName, ALPN string }
 
 func (h Hysteria2) Validate(host string, port int) error {
 	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
@@ -51,17 +51,22 @@ func (h Hysteria2) Validate(host string, port int) error {
 	if h.ServerName == "" || strings.ContainsAny(h.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid Hysteria2 server name")
 	}
+	if h.ALPN != "" && h.ALPN != "h3" {
+		return fmt.Errorf("unsupported Hysteria2 ALPN")
+	}
 	return nil
 }
 
 // ParseHysteria2 never includes credentials or the input URI in errors.
 func ParseHysteria2(raw string) (Profile, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || (u.Scheme != "hysteria2" && u.Scheme != "hy2") || u.User == nil || u.Hostname() == "" || u.Path != "" || u.Opaque != "" {
+	if err != nil || (u.Scheme != "hysteria2" && u.Scheme != "hy2") || u.Hostname() == "" || u.Path != "" || u.Opaque != "" {
 		return Profile{}, fmt.Errorf("invalid Hysteria2 URI")
 	}
-	if _, ok := u.User.Password(); ok {
-		return Profile{}, fmt.Errorf("invalid Hysteria2 password")
+	if u.User != nil {
+		if _, ok := u.User.Password(); ok {
+			return Profile{}, fmt.Errorf("invalid Hysteria2 password")
+		}
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil {
@@ -72,11 +77,26 @@ func ParseHysteria2(raw string) (Profile, error) {
 		return Profile{}, fmt.Errorf("invalid Hysteria2 options")
 	}
 	for key, values := range q {
-		if key != "sni" || len(values) != 1 {
+		if (key != "sni" && key != "auth" && key != "insecure" && key != "alpn" && key != "fp") || len(values) != 1 {
 			return Profile{}, fmt.Errorf("unsupported or duplicate Hysteria2 option")
 		}
 	}
-	h := Hysteria2{Password: u.User.Username(), ServerName: q.Get("sni")}
+	if q.Has("auth") && u.User != nil {
+		return Profile{}, fmt.Errorf("duplicate Hysteria2 password source")
+	}
+	if q.Has("insecure") && q.Get("insecure") != "0" {
+		return Profile{}, fmt.Errorf("unsupported Hysteria2 insecure TLS option")
+	}
+	if q.Has("fp") {
+		if q.Get("fp") == "firefox" {
+			return Profile{}, fmt.Errorf("Hysteria2 Firefox QUIC fingerprint is unsupported")
+		}
+		return Profile{}, fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
+	}
+	h := Hysteria2{Password: q.Get("auth"), ServerName: q.Get("sni"), ALPN: q.Get("alpn")}
+	if u.User != nil {
+		h.Password = u.User.Username()
+	}
 	if !q.Has("sni") {
 		h.ServerName = u.Hostname()
 	}

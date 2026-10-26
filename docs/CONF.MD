@@ -205,15 +205,21 @@ See [`examples/hysteria2.conf`](../examples/hysteria2.conf):
 
 ```ini
 [AccessKey]
-Hysteria2 = hysteria2://replace-me@server.example.com:443?sni=server.example.com
+Hysteria2 = hysteria2://server.example.com:443?auth=replace-me&sni=server.example.com&insecure=0&alpn=h3
 ```
 
-The password is the URI username. Percent-encode reserved characters, such as
-`@` as `%40`. The server port and password are required. `sni` is optional and
-defaults to the server hostname. TLS certificate and name verification remain
-enabled. The fragment is the profile label. Unknown or duplicate query options
-are rejected; obfuscation, insecure TLS, and bandwidth options are not yet
-supported. The server must allow UDP relay. In VPN mode, both TCP and UDP
+The password may be supplied as `auth` or as URI userinfo
+(`hysteria2://replace-me@server.example.com:443`). Supplying both is an error.
+Percent-encode reserved characters, such as `@` as `%40`. The server port and
+password are required. `sni` is optional and defaults to the server hostname.
+`insecure=0` keeps certificate and name verification enabled; `insecure=1`
+is rejected. `alpn=h3` asserts the HTTP/3 protocol offered by the Hysteria2
+client; other ALPN values are rejected. The fragment is the profile label.
+`fp=firefox` is rejected: the upstream Hysteria2 QUIC client cannot produce
+a Firefox QUIC fingerprint. It only provides its default Chrome fingerprint
+or disables Chrome impersonation, which is not equivalent to Firefox.
+Unknown or duplicate query options, obfuscation, and bandwidth options are
+rejected. The server must allow UDP relay. In VPN mode, both TCP and UDP
 traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.
 
 ### Compatibility: Key

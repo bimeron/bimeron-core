@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -24,7 +25,7 @@ import (
 type testAuth struct{}
 
 func (testAuth) Authenticate(_ net.Addr, auth string, _ uint64) (bool, string) {
-	return auth == "secret", "test"
+	return auth == "fixture-pass", "test"
 }
 
 func testCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
@@ -86,7 +87,13 @@ func TestReferenceServerTCPUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, roots := testCertificate(t)
-	s, err := server.NewServer(&server.Config{Conn: listener, TLSConfig: server.TLSConfig{Certificates: []tls.Certificate{cert}}, Authenticator: testAuth{}})
+	var sawH3 atomic.Bool
+	s, err := server.NewServer(&server.Config{Conn: listener, TLSConfig: server.TLSConfig{GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if hello.ServerName == "localhost" && len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == "h3" {
+			sawH3.Store(true)
+		}
+		return &cert, nil
+	}}, Authenticator: testAuth{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +103,10 @@ func TestReferenceServerTCPUDP(t *testing.T) {
 	port, _ := strconv.Atoi(portText)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	p := accesskey.Profile{Type: "hysteria2", TCP: accesskey.Endpoint{Host: host, Port: port}, Hysteria2: accesskey.Hysteria2{Password: "secret", ServerName: "localhost"}}
+	p, err := accesskey.ParseHysteria2(fmt.Sprintf("hysteria2://%s?auth=fixture-pass&sni=localhost&insecure=0&alpn=h3", net.JoinHostPort(host, strconv.Itoa(port))))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if bad, err := newClient(ctx, p, net.Dialer{}, nil); err == nil {
 		_ = bad.Close()
 		t.Fatal("untrusted certificate was accepted")
@@ -115,6 +125,9 @@ func TestReferenceServerTCPUDP(t *testing.T) {
 	}
 	if !bound.Load() {
 		t.Fatal("outbound UDP socket did not use interface binding")
+	}
+	if !sawH3.Load() {
+		t.Fatal("Hysteria2 did not offer h3 ALPN and requested SNI")
 	}
 	defer c.Close()
 	stream, err := c.DialStream(ctx, tcp.Addr().String())

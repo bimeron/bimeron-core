@@ -28,3 +28,8 @@ options that the adapter does not implement.
   the adapter cannot forward a TCP FIN independently of closing the stream.
 - The first release supports password authentication and SNI. Additional
   link settings require explicit interoperability and security review.
+- The client fixes HTTP/3 ALPN to `h3`, so an `alpn=h3` link can be accepted
+  without changing the wire handshake. Its QUIC fork implements only Chrome
+  fingerprint emulation. Turning that off does not emulate Firefox; supporting
+  `fp=firefox` would require a QUIC and TLS integration with an actual Firefox
+  handshake, so the parser rejects it explicitly.

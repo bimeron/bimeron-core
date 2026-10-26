@@ -365,12 +365,23 @@ password in status or diagnostics.
 
 ### Hysteria2 profile editor
 
-Write one `Hysteria2 = hysteria2://password@server:port?sni=name`, `Key`, or
-`File` source. The `hy2://` alias is also accepted. Percent-encode reserved
-password characters. `sni` is optional; TLS verification is always enabled.
-Reject unsupported URI options instead of silently dropping them. VPN mode
+Write one `Hysteria2 = hysteria2://server:port?auth=replace-me&sni=name&insecure=0&alpn=h3`,
+`Key`, or `File` source. The `hy2://` alias and the older
+`hysteria2://replace-me@server:port?sni=name` form are also accepted.
+Percent-encode reserved password characters. Supply the password in exactly
+one place: `auth` or URI userinfo. `sni` is optional and defaults to the
+server hostname. `insecure=0` retains verified TLS; `insecure=1` is rejected.
+The only accepted ALPN value is `h3`, which is offered by the Hysteria2 HTTP/3
+client. Do not expose `fp=firefox` as a working choice: the current QUIC client
+does not implement a Firefox fingerprint, and the core rejects it. Reject
+unknown and duplicate options instead of silently dropping them. VPN mode
 uses TCP and UDP relay; local proxy mode exposes TCP CONNECT. The server must
 support UDP relay. Keep the password out of status and diagnostics.
+
+For bimeron-desktop, add query-form `auth` import and export, preserve the
+userinfo form when importing existing profiles, show only verified TLS and
+`h3` ALPN, and reject a Firefox fingerprint with an explicit unsupported
+setting message. Do not save a URI containing `fp=firefox` as a usable profile.
 
 ### Remote SOCKS5 profile editor
 
