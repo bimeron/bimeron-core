@@ -22,7 +22,7 @@ func TestParseHysteria2(t *testing.T) {
 		"hy2://fixture-pass@example.com:443?auth=other",
 		"hy2://example.com:443?auth=fixture-pass&auth=other",
 		"hy2://example.com:443?auth=fixture-pass&alpn=h2",
-		"hy2://example.com:443?auth=fixture-pass&fp=firefox",
+		"hy2://example.com:443?auth=fixture-pass&fp=safari",
 		"hy2://example.com:443?auth=fixture-pass&insecure=true",
 		"hy2://secret@example.com:443?sni=a&sni=b",
 		"hy2://secret@example.com:443?obfs=salamander",
@@ -34,9 +34,30 @@ func TestParseHysteria2(t *testing.T) {
 			t.Fatalf("expected redacted error for %q: %v", raw, err)
 		}
 	}
-	if _, err := ParseHysteria2("hy2://example.com:443?auth=fixture-pass&fp=firefox"); err == nil || !strings.Contains(err.Error(), "Firefox") {
-		t.Fatalf("expected explicit Firefox limitation, got %v", err)
+	for _, fp := range []string{"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"} {
+		for _, scheme := range []string{"hysteria2", "hy2"} {
+			for _, auth := range []string{"fixture-pass@example.com:443?", "example.com:443?auth=fixture-pass&"} {
+				p, err := ParseHysteria2(scheme + "://" + auth + "sni=name.example&insecure=0&alpn=h3&fp=" + fp)
+				if err != nil || p.Hysteria2.Fingerprint != fp {
+					t.Fatalf("fingerprint was not preserved: %v", err)
+				}
+			}
+		}
 	}
+	for _, suffix := range []string{"fp=", "fp=firefox&fp=chrome", "fp=fixture-pass", "fp=chrome-146", "auth=", "unknown=fixture-pass", "fp=%zz"} {
+		raw := "hy2://fixture-pass@example.com:443?" + suffix
+		_, err := ParseHysteria2(raw)
+		if err == nil {
+			t.Fatal("invalid option accepted")
+		}
+		if strings.Contains(err.Error(), "fixture-pass") || strings.Contains(err.Error(), raw) {
+			t.Fatal("secret in error")
+		}
+	}
+	if err := (Hysteria2{Password: "fixture-pass", ServerName: "example.com", Fingerprint: "fixture-pass"}).Validate("example.com", 443); err == nil || strings.Contains(err.Error(), "fixture-pass") {
+		t.Fatal("typed fingerprint validation failed")
+	}
+
 	if err := (Hysteria2{Password: "fixture-pass", ServerName: "example.com", ALPN: "h2"}).Validate("example.com", 443); err == nil {
 		t.Fatal("unsupported ALPN was accepted")
 	}

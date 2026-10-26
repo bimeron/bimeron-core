@@ -53,6 +53,11 @@ func testCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 }
 
 func TestReferenceServerTCPUDP(t *testing.T) {
+	for _, fp := range []string{"", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"} {
+		t.Run("fp="+fp, func(t *testing.T) { testReferenceServerTCPUDP(t, fp) })
+	}
+}
+func testReferenceServerTCPUDP(t *testing.T, fp string) {
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -107,9 +112,17 @@ func TestReferenceServerTCPUDP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.Hysteria2.Fingerprint = fp
 	if bad, err := newClient(ctx, p, net.Dialer{}, nil); err == nil {
 		_ = bad.Close()
 		t.Fatal("untrusted certificate was accepted")
+	}
+	p.Hysteria2.Fingerprint = fp
+	wrongName := p
+	wrongName.Hysteria2.ServerName = "wrong.example"
+	if bad, e := newClient(ctx, wrongName, net.Dialer{}, roots); e == nil {
+		bad.Close()
+		t.Fatal("wrong TLS name accepted")
 	}
 	wrong := p
 	wrong.Hysteria2.Password = "wrong"

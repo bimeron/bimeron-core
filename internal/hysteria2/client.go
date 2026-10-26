@@ -11,6 +11,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	hy "github.com/apernet/hysteria/core/v2/client"
+	"github.com/apernet/quic-go"
 	"golang.getoutline.org/sdk/transport"
 )
 
@@ -55,7 +56,11 @@ func newClient(ctx context.Context, profile accesskey.Profile, dialer net.Dialer
 		return nil, fmt.Errorf("invalid Hysteria2 server endpoint")
 	}
 	factory := &connFactory{ctx: ctx, control: dialer}
-	upstream, info, err := hy.NewClient(&hy.Config{ConnFactory: factory, ServerAddr: endpoint, Auth: profile.Hysteria2.Password, TLSConfig: hy.TLSConfig{ServerName: profile.Hysteria2.ServerName, RootCAs: roots}})
+	fingerprint := quic.QUICFingerprint(profile.Hysteria2.Fingerprint)
+	if fingerprint == "firefox" {
+		fingerprint = quic.QUICFirefox116
+	}
+	upstream, info, err := hy.NewClient(&hy.Config{ConnFactory: factory, ServerAddr: endpoint, Auth: profile.Hysteria2.Password, QUICConfig: hy.QUICConfig{Fingerprint: fingerprint}, TLSConfig: hy.TLSConfig{ServerName: profile.Hysteria2.ServerName, RootCAs: roots}})
 	if factory.stop != nil {
 		factory.stop()
 	}

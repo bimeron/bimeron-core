@@ -46,6 +46,39 @@ jobs:
           cache: true
       - run: go test ./...
 
+  test-fingerprint-dependencies:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            third_party/apernet-quic-go/go.sum
+            third_party/hysteria-core/go.sum
+            internal/hysteria2/testdata/reference-server/go.sum
+      - name: QUIC unit and wire tests
+        working-directory: third_party/apernet-quic-go
+        run: go test . ./internal/handshake ./internal/wire ./internal/ackhandler
+      - name: QUIC interoperability and retry tests
+        working-directory: third_party/apernet-quic-go
+        run: go test ./integrationtests/self -run 'Test(FirefoxParrot|ChromeParrot)' -count=1
+      - name: Hysteria client and server tests
+        working-directory: third_party/hysteria-core
+        run: go test ./client ./server
+      - name: Race check the URI and relay adapters
+        if: runner.os == 'Linux'
+        run: go test -race ./internal/accesskey ./internal/hysteria2
+      - name: Race check QUIC fingerprint state
+        if: runner.os == 'Linux'
+        working-directory: third_party/apernet-quic-go
+        run: go test -race . ./internal/handshake ./internal/wire ./internal/ackhandler
+
   cli-dist:
     runs-on: ubuntu-latest
     env:

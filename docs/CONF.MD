@@ -215,9 +215,31 @@ password are required. `sni` is optional and defaults to the server hostname.
 `insecure=0` keeps certificate and name verification enabled; `insecure=1`
 is rejected. `alpn=h3` asserts the HTTP/3 protocol offered by the Hysteria2
 client; other ALPN values are rejected. The fragment is the profile label.
-`fp=firefox` is rejected: the upstream Hysteria2 QUIC client cannot produce
-a Firefox QUIC fingerprint. It only provides its default Chrome fingerprint
-or disables Chrome impersonation, which is not equivalent to Firefox.
+Supported `fp` values are case-sensitive:
+
+- `firefox` and `firefox-116`: Firefox 116A QUIC Initial/ClientHello preset (8-byte initial DCID).
+- `firefox-116b`: Firefox 116B (9-byte initial DCID).
+- `firefox-116c`: Firefox 116C (15-byte initial DCID).
+- `chrome`: the existing apernet ChromeParrot preset, pinned to the vendored
+  apernet revision documented in `third_party/apernet-quic-go/BIMERON_PATCHES.md`.
+  It is not an alias for uquic Chrome 115 or Chrome 146.
+
+Omitting `fp` retains the existing ChromeParrot default. An explicit empty or
+unsupported value is rejected; there is no fallback or automatic preset upgrade.
+For example, append `&fp=firefox` to the example above. `chrome-115`,
+`chrome-146`, Safari, Edge, and VLESS/TCP-only fingerprints are not supported.
+
+Fingerprint selection changes the TLS ClientHello, QUIC transport parameters,
+and Initial packet layout. Certificate and hostname verification remain enabled.
+These are historical handshake presets; subsequent transport behavior remains
+apernet QUIC and application traffic remains Hysteria2. Full browser
+indistinguishability is not promised. TLS resumption and 0-RTT are disabled.
+The presets do not offer Ed25519 server signatures; use a compatible RSA/ECDSA
+certificate. Firefox advertises 1200-byte QUIC DATAGRAM frames; Hysteria2
+fragmentation handles larger relay messages within the upstream size limit
+(4096 bytes including the Hysteria message header). Oversized messages may be
+silently discarded by upstream. Existing TCP half-close limitations remain.
+
 Unknown or duplicate query options, obfuscation, and bandwidth options are
 rejected. The server must allow UDP relay. In VPN mode, both TCP and UDP
 traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.

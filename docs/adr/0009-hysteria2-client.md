@@ -28,8 +28,7 @@ options that the adapter does not implement.
   the adapter cannot forward a TCP FIN independently of closing the stream.
 - The first release supports password authentication and SNI. Additional
   link settings require explicit interoperability and security review.
-- The client fixes HTTP/3 ALPN to `h3`, so an `alpn=h3` link can be accepted
-  without changing the wire handshake. Its QUIC fork implements only Chrome
-  fingerprint emulation. Turning that off does not emulate Firefox; supporting
-  `fp=firefox` would require a QUIC and TLS integration with an actual Firefox
-  handshake, so the parser rejects it explicitly.
+- The client fixes HTTP/3 ALPN to `h3`, so `alpn=h3` asserts the protocol used
+  on the wire. Named QUIC fingerprints are now supplied by the local apernet
+  extension described in [ADR 0010](0010-hysteria2-quic-fingerprints.md), while
+  retaining this upstream client and its TCP/UDP protocol implementation.

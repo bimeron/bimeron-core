@@ -39,7 +39,7 @@ type Profile struct {
 }
 
 // Hysteria2 contains the authentication and verified TLS settings.
-type Hysteria2 struct{ Password, ServerName, ALPN string }
+type Hysteria2 struct{ Password, ServerName, ALPN, Fingerprint string }
 
 func (h Hysteria2) Validate(host string, port int) error {
 	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
@@ -53,6 +53,11 @@ func (h Hysteria2) Validate(host string, port int) error {
 	}
 	if h.ALPN != "" && h.ALPN != "h3" {
 		return fmt.Errorf("unsupported Hysteria2 ALPN")
+	}
+	switch h.Fingerprint {
+	case "", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome":
+	default:
+		return fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
 	}
 	return nil
 }
@@ -87,13 +92,10 @@ func ParseHysteria2(raw string) (Profile, error) {
 	if q.Has("insecure") && q.Get("insecure") != "0" {
 		return Profile{}, fmt.Errorf("unsupported Hysteria2 insecure TLS option")
 	}
-	if q.Has("fp") {
-		if q.Get("fp") == "firefox" {
-			return Profile{}, fmt.Errorf("Hysteria2 Firefox QUIC fingerprint is unsupported")
-		}
+	if q.Has("fp") && q.Get("fp") == "" {
 		return Profile{}, fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
 	}
-	h := Hysteria2{Password: q.Get("auth"), ServerName: q.Get("sni"), ALPN: q.Get("alpn")}
+	h := Hysteria2{Password: q.Get("auth"), ServerName: q.Get("sni"), ALPN: q.Get("alpn"), Fingerprint: q.Get("fp")}
 	if u.User != nil {
 		h.Password = u.User.Username()
 	}

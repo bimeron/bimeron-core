@@ -372,16 +372,41 @@ Percent-encode reserved password characters. Supply the password in exactly
 one place: `auth` or URI userinfo. `sni` is optional and defaults to the
 server hostname. `insecure=0` retains verified TLS; `insecure=1` is rejected.
 The only accepted ALPN value is `h3`, which is offered by the Hysteria2 HTTP/3
-client. Do not expose `fp=firefox` as a working choice: the current QUIC client
-does not implement a Firefox fingerprint, and the core rejects it. Reject
-unknown and duplicate options instead of silently dropping them. VPN mode
-uses TCP and UDP relay; local proxy mode exposes TCP CONNECT. The server must
-support UDP relay. Keep the password out of status and diagnostics.
+client. Use a Hysteria2-specific QUIC fingerprint selector:
 
-For bimeron-desktop, add query-form `auth` import and export, preserve the
-userinfo form when importing existing profiles, show only verified TLS and
-`h3` ALPN, and reject a Firefox fingerprint with an explicit unsupported
-setting message. Do not save a URI containing `fp=firefox` as a usable profile.
+- Default: omit `fp`, preserving the core's existing ChromeParrot behavior.
+- Firefox 116A: `firefox` or `firefox-116` (aliases; preserve the imported spelling).
+- Firefox 116B: `firefox-116b`.
+- Firefox 116C: `firefox-116c`.
+- Chrome: `chrome`, the pinned apernet ChromeParrot preset, not a versioned
+  uquic Chrome 115/146 preset.
+
+The values are case-sensitive. Reject explicit empty values, unknown values,
+and duplicate options. Never remove `fp` silently or fall back to a different
+preset. Do not reuse VLESS/TCP's fingerprint list. `chrome-115` and `chrome-146`
+remain unsupported. The core applies the chosen preset to the wire handshake.
+
+For bimeron-desktop, this changes the previous contract as follows:
+
+1. Import, preserve, and export one `fp` parameter from the list above; allow
+   the complete query-auth URI ending in `&fp=firefox#label`.
+2. Replace the previous unconditional Firefox rejection with the selector and
+   exact allowlist. Keep unknown presets visible as unsupported until edited.
+3. Continue exactly one password source (`auth` or userinfo), verified TLS,
+   optional `sni`, and only `h3` ALPN. Omitted `fp` stays omitted on export.
+4. Keep passwords and complete URIs out of errors, status, and diagnostics.
+5. Gate these choices on a bundled core build containing ADR 0010. Older
+   builds, including the previous `feat/hysteria2` binary, reject `fp`; no
+   minimum released version has been assigned yet. Use `bimeron validate`
+   before activating a profile and do not infer support from the development
+   version string alone.
+
+Explain that these emulate historical QUIC handshakes, not an entire browser.
+TLS resumption/0-RTT are disabled; compatible RSA/ECDSA server certificates are
+required (Ed25519 is not offered). VPN mode uses TCP and UDP relay; local proxy
+mode exposes TCP CONNECT. The server must support UDP relay. The existing
+upstream UDP message-size and TCP half-close limitations still apply; see
+[CONF.MD](CONF.MD#hysteria2-over-quic).
 
 ### Remote SOCKS5 profile editor
 
