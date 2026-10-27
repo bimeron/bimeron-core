@@ -1,6 +1,25 @@
 # Bimeron Core
 
+[![CI](https://github.com/bimeron/bimeron-core/actions/workflows/go.yml/badge.svg)](https://github.com/bimeron/bimeron-core/actions/workflows/go.yml)
+[![Release](https://img.shields.io/github/v/release/bimeron/bimeron-core?include_prereleases)](https://github.com/bimeron/bimeron-core/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Bimeron Core is a VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` Shadowsocks access keys, VLESS over TCP with REALITY and Vision or ordinary TLS, VLESS over WebSocket with TLS and early data, VLESS over gRPC with TLS, VLESS over XHTTP with TLS or REALITY in selected modes, VMess AEAD over TCP, WebSocket, HTTPUpgrade, gRPC, or XHTTP with TLS or supported REALITY combinations and UDP relay, Trojan over TCP/TLS with UDP relay, Hysteria2 over QUIC with TCP and UDP relay, TUIC v5 over QUIC with stream-mode UDP relay, remote SOCKS5 upstreams, built-in SSH TCP forwarding in local proxy or TCP-only system VPN mode, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules. See [configuration](docs/CONF.MD), [SSH connection guide](docs/SSH.MD), [VLESS transport contract](docs/VLESS_TRANSPORTS.MD), [VMess transport matrix](docs/VMESS_TRANSPORTS.MD), and [GUI integration](docs/GUI_INTEGRATION.MD).
+
+## Protocol support
+
+| Upstream | Transport | TCP | UDP in VPN mode | Notes |
+| --- | --- | --- | --- | --- |
+| Shadowsocks | `ss://`, `ssconf://` | Yes | Yes | Static and dynamic access keys |
+| VLESS | TCP, WebSocket, gRPC, XHTTP | Yes | Yes | TLS or supported REALITY combinations; Vision on TCP/REALITY |
+| VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes | Yes | TLS or supported REALITY combinations |
+| Trojan | TCP/TLS | Yes | Yes | UDP relayed over TLS |
+| Hysteria2 | QUIC | Yes | Yes | Server must allow UDP relay |
+| TUIC v5 | QUIC | Yes | Yes | Stream-mode UDP relay |
+| Remote SOCKS5 | SOCKS5 | Yes | With `UDP ASSOCIATE` | Upstream SOCKS5 connections are not encrypted |
+| SSH | TCP forwarding | Yes | No | TCP-only VPN mode; DNS is forwarded over TCP |
+
+The local SOCKS5 proxy accepts TCP `CONNECT` only. See the [VLESS transport contract](docs/VLESS_TRANSPORTS.MD) and [VMess transport matrix](docs/VMESS_TRANSPORTS.MD) for exact supported combinations. Protocol support does not mean every combination has been verified on a physical device or against an independent server.
 
 Bimeron's original code is licensed under the MIT License; see `LICENSE`. Adapted VLESS and VMess protocol files retain Xray-core's MPL 2.0 license; see `third_party/vless/` and `third_party/vmess/`. Other third-party components retain their own licenses in `THIRD_PARTY_NOTICES.txt`, `third_party/wf/LICENSE`, and, for distributed Wintun DLLs, `WINTUN-LICENSE.txt`.
 
