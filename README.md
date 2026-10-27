@@ -31,12 +31,12 @@ the core from separate repositories.
 
 ## Try a local proxy
 
-You need Go 1.26.9 or newer and a working access profile for a supported upstream. This path
-runs without administrator privileges or a system tunnel.
+You need Go 1.26.9 or newer and a working access URI for a supported upstream. This path runs
+without administrator privileges or a system tunnel. The inline example uses Shadowsocks; see
+the [configuration reference](docs/CONF.MD) for other protocol-specific URI fields.
 
-1. Put your access URI in `profiles/access.key`. Keep real keys in the ignored `profiles/`
-   directory.
-2. Save this as `profiles/quickstart.conf`:
+1. Save this as `profiles/quickstart.conf`, replacing the sample `SS` URI with your own. The
+   `profiles/` directory is ignored by Git; never commit real access keys.
 
    ```ini
    [Profile]
@@ -44,7 +44,7 @@ runs without administrator privileges or a system tunnel.
    Name = Quick start
 
    [AccessKey]
-   File = access.key
+   SS = ss://chacha20-ietf-poly1305:replace-me@server.example.com:8388
 
    [Interface]
    Mode = proxy
@@ -54,14 +54,23 @@ runs without administrator privileges or a system tunnel.
    Default = proxy
    ```
 
-3. From the repository root, validate and start the profile:
+   To keep the URI in a separate file instead, replace the `[AccessKey]` section with:
+
+   ```ini
+   [AccessKey]
+   File = access.key
+   ```
+
+   Put the complete URI in `profiles/access.key`. Use only one access source in a profile.
+
+2. From the repository root, validate and start the profile:
 
    ```sh
    go run ./cmd/bimeron validate profiles/quickstart.conf
    go run ./cmd/bimeron run profiles/quickstart.conf
    ```
 
-4. In another terminal, send a request through the local proxy:
+3. In another terminal, send a request through the local proxy:
 
    ```sh
    curl --proxy socks5h://127.0.0.1:1080 https://example.com
