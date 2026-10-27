@@ -121,7 +121,11 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else if p.Type == "ssh" {
-		return nil, nil, nil, nil, fault("ssh_requires_proxy_mode", false)
+		client, clientErr := sshtunnel.New(ctx, p, outbound, c.SSHPrompt, c.SSHDefaultKeys)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("ssh_connection_failed", false)
+		}
+		tcp, closeTransport = client, client.Close
 	} else if p.Type == "tuic" {
 		client, clientErr := tuic.New(p, outbound)
 		if clientErr != nil {
@@ -138,7 +142,11 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
 		}
 	}
-	report("transport_check", "Checking TCP/TLS and UDP/DNS")
+	if p.Type == "ssh" {
+		report("transport_check", "Checking TCP/TLS and DNS over SSH")
+	} else {
+		report("transport_check", "Checking TCP/TLS and UDP/DNS")
+	}
 	if _, err := vpn.Check(ctx, tcp, udp, c.DNS); err != nil {
 		if closeTransport != nil {
 			_ = closeTransport()

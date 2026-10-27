@@ -11,14 +11,16 @@ func TestSSHProfiles(t *testing.T) {
 		"Key = ssh://alice@ssh.example.com:22?identity=id_ed25519",
 		"Type = ssh\nServer = ssh.example.com\nPort = 22\nUsername = alice\nIdentityFile = id_ed25519",
 	} {
-		b := []byte("[Profile]\nVersion = 1\n[AccessKey]\n" + source + "\n[Interface]\nMode = proxy\n")
-		c, err := ParseData(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		p, err := c.Resolve(nil)
-		if err != nil || p.Type != "ssh" || p.SSH.User != "alice" {
-			t.Fatalf("profile: %+v, %v", p, err)
+		for _, mode := range []string{"proxy", "vpn"} {
+			b := []byte("[Profile]\nVersion = 1\n[AccessKey]\n" + source + "\n[Interface]\nMode = " + mode + "\n")
+			c, err := ParseData(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := c.Resolve(nil)
+			if err != nil || p.Type != "ssh" || p.SSH.User != "alice" {
+				t.Fatalf("profile: %+v, %v", p, err)
+			}
 		}
 	}
 	for _, source := range []string{
@@ -31,7 +33,7 @@ func TestSSHProfiles(t *testing.T) {
 			t.Fatalf("bad SSH profile accepted or leaked: %v", err)
 		}
 	}
-	if _, err := ParseData([]byte("[Profile]\nVersion = 1\n[AccessKey]\nSSH = ssh://alice@ssh.example.com:22\n")); err == nil {
-		t.Fatal("SSH VPN accepted")
+	if _, err := ParseData([]byte("[Profile]\nVersion = 1\n[AccessKey]\nSSH = ssh://alice@ssh.example.com:22\n")); err != nil {
+		t.Fatal("SSH VPN rejected", err)
 	}
 }

@@ -368,7 +368,12 @@ link in diagnostics. See [VMess transport matrix](VMESS_TRANSPORTS.MD).
 
 ### SSH profile editor and interactive authentication
 
-SSH is supported only with `[Interface] Mode = proxy`. The GUI can import
+SSH supports `[Interface] Mode = proxy` for a local SOCKS5 listener and
+`Mode = vpn` for system TCP routing through SSH. Label VPN mode as TCP-only:
+proxied non-DNS UDP is dropped, captured DNS uses TCP over SSH, and explicitly
+direct-routed traffic remains outside the tunnel. Do not present it as a full
+VPN or promise that applications with their own DNS cannot bypass the tunnel.
+The GUI can import
 `ssh://user@host:22` as `SSH = ...` or write explicit `Type = ssh`, `Server`,
 `Port`, and `Username` fields. Provide file pickers for the identity and
 `known_hosts`; save absolute paths as `IdentityFile` and `KnownHostsFile`.

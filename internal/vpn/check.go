@@ -66,12 +66,20 @@ func checkDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.Pac
 		return err
 	}
 	resolver := DNSResolver{Servers: dns, TCP: tcp, UDP: udp}
-	answer, err := resolver.Exchange(ctx, packet, false)
-	if err != nil {
+	var answer []byte
+	if udp != nil {
+		answer, err = resolver.Exchange(ctx, packet, false)
+	} else {
+		answer, err = resolver.Exchange(ctx, packet, true)
+	}
+	if err != nil && udp != nil {
 		answer, err = resolver.Exchange(ctx, packet, true)
 		if err != nil {
 			return fmt.Errorf("DNS check failed over UDP and TCP")
 		}
+	}
+	if err != nil {
+		return fmt.Errorf("DNS check failed over TCP")
 	}
 	var response dnsmessage.Message
 	if err := response.Unpack(answer); err != nil {

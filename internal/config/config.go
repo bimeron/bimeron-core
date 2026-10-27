@@ -488,9 +488,6 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		s := c.Access.Parameters
 		if c.Access.Type == "ssh" {
-			if c.Tunnel.Mode != "proxy" {
-				return nil, fmt.Errorf("SSH requires Mode = proxy")
-			}
 			if c.Access.Username == "" || s.Server == "" || s.Port < 1 || s.Port > 65535 || s.Method != "" || s.Password != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || c.Access.ServerName != "" {
 				return nil, fmt.Errorf("[AccessKey] invalid SSH parameters")
 			}
@@ -652,9 +649,6 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if strings.HasPrefix(c.key, "ssh://") {
-		if c.Tunnel.Mode != "proxy" {
-			return nil, fmt.Errorf("SSH requires Mode = proxy")
-		}
 		p, err := accesskey.ParseSSH(c.key)
 		if err != nil {
 			return nil, err
