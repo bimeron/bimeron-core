@@ -152,6 +152,12 @@ All three desktop targets support the local SOCKS5 proxy and service/daemon cont
 named pipes on Windows and Unix sockets on Linux/macOS. Application-based split routing is
 not available.
 
+- **Android API 23+:** a packet engine is available as an AAR for a separate VPN application.
+  See [Android integration](docs/ANDROID_VPN_SERVICE.MD) for the host contract and device checks.
+- **iOS:** no supported iOS build is provided yet. The existing
+  [Apple integration](docs/APPLE_NETWORK_EXTENSION.MD) targets macOS; iOS builds and
+  memory-limit validation remain incomplete.
+
 Platform capabilities describe compiled support, not the availability of a driver, permission,
 or compatible server on a particular device. See [desktop integration](docs/GUI_INTEGRATION.MD)
 for the service contract and platform limits. Platform-hosted packet engines are described below.
