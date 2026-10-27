@@ -41,6 +41,21 @@ establish trust. Protect release tags with GitHub rulesets. To rotate, first
 release GUI trusting both keys, then switch the signer, then retire the old key
 after the supported update window.
 
+## Documentation for each version
+
+The README and linked guides describe the source revision that contains them.
+Update protocol support, platform status, configuration examples, and requirements
+alongside the corresponding implementation changes, before creating a release tag.
+The default branch can be ahead of a release; do not maintain a second feature
+matrix for the latest release in its README.
+
+Before tagging, check the quick start against the release candidate and review
+the README and linked guides at that exact commit. The prepared-release publisher
+adds a link to `README.md` at the release tag to the release notes. Keep that
+version-specific link when editing the notes; it also gives readers the matching
+configuration and integration guides. For older releases without the link, open
+the release tag in GitHub and navigate to `README.md`.
+
 ## Publish prepared bytes
 
 The tag CI builds and tests distributions but never creates a release. Build
