@@ -23,11 +23,27 @@ the core from separate repositories.
   [documented limits](docs/DNS_METADATA.MD).
 - **A session API for applications:** control start and stop, read status, events, statistics,
   and safe diagnostic codes, and handle network changes without parsing CLI output.
-- **Several upstream choices:** use Shadowsocks (`ss://` and `ssconf://`), VLESS, VMess AEAD,
-  Trojan, Hysteria2, TUIC v5, remote SOCKS5, or SSH TCP forwarding. Exact transport and UDP
-  combinations vary; see [configuration](docs/CONF.MD),
-  [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
-  and [SSH](docs/SSH.MD).
+
+## Supported upstreams
+
+These upstreams currently support TCP. The UDP column describes system VPN mode; the local
+SOCKS5 listener accepts TCP `CONNECT` only.
+
+| Upstream | Input or transport | UDP in VPN mode |
+| --- | --- | --- |
+| Shadowsocks | `ss://`, `ssconf://` | Yes |
+| VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
+| VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
+| Trojan | TCP/TLS | Yes |
+| Hysteria2 | QUIC | If the server allows UDP relay |
+| TUIC v5 | QUIC | Stream-mode relay |
+| Remote SOCKS5 | SOCKS5 | With upstream `UDP ASSOCIATE` |
+| SSH | TCP forwarding | No; DNS is forwarded over TCP |
+
+Transport and security combinations vary. See [configuration](docs/CONF.MD),
+[VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
+and [SSH](docs/SSH.MD) for exact support. Connections to a remote SOCKS5 upstream are not
+encrypted by the core. Not every combination has passed live interoperability testing.
 
 ## Try a local proxy
 
@@ -114,8 +130,6 @@ validation status.
 The `.conf` format keeps the access source, interface mode, and routing rules in one profile.
 Start with the [configuration reference](docs/CONF.MD) and the [examples](examples/).
 Domain-based VPN rules rely on DNS metadata; application-based split routing is not available.
-Protocol support does not imply that every transport combination has passed live
-interoperability testing. Connections to a remote SOCKS5 upstream are not encrypted by the core.
 
 ## Build and verify
 
