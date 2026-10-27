@@ -16,6 +16,7 @@ import (
 	"bimeron/internal/config"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/routing"
+	"bimeron/internal/sshtunnel"
 	"bimeron/internal/telemetry"
 )
 
@@ -37,6 +38,8 @@ type SessionConfig struct {
 	// ResolveOnNetwork is used by the VPN control plane while tunnel routes remain
 	// installed. Custom key providers should use this transport for their requests.
 	ResolveOnNetwork func(context.Context, http.RoundTripper) (Profile, error)
+	SSHPrompt        sshtunnel.Prompt
+	SSHDefaultKeys   bool
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters
@@ -45,7 +48,7 @@ type SessionConfig struct {
 }
 
 func DefaultConfig() SessionConfig {
-	return SessionConfig{Mode: "vpn", Name: "Bimeron", Listen: "127.0.0.1:1080", MTU: 1420, DNS: []string{"1.1.1.1"}}
+	return SessionConfig{Mode: "vpn", Name: "Bimeron", Listen: "127.0.0.1:1080", MTU: 1420, DNS: []string{"1.1.1.1"}, SSHDefaultKeys: true}
 }
 
 func LoadConfig(path string) (SessionConfig, error) {
@@ -107,7 +110,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 		return SessionConfig{}, err
 	}
 	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: copy.Tunnel.Name, Listen: copy.Tunnel.Listen, MTU: copy.Tunnel.MTU,
-		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport}, nil
+		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true}, nil
 }
 
 // KeyFile retains the legacy command syntax. The file is reread on reconnect.

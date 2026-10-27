@@ -37,7 +37,43 @@ type Profile struct {
 	Trojan    Trojan
 	VMess     VMess
 	Hysteria2 Hysteria2
+	SSH       SSH
 	TUIC      TUIC
+}
+
+// SSH describes a TCP-only SSH upstream. Paths never contain key material.
+type SSH struct {
+	User, IdentityFile, KnownHostsFile string
+}
+
+func ParseSSH(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "ssh" || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.User == nil || u.User.Username() == "" {
+		return Profile{}, fmt.Errorf("invalid SSH URI")
+	}
+	if _, ok := u.User.Password(); ok {
+		return Profile{}, fmt.Errorf("SSH URI passwords are not supported")
+	}
+	port := 22
+	if u.Port() != "" {
+		port, err = strconv.Atoi(u.Port())
+		if err != nil {
+			return Profile{}, fmt.Errorf("invalid SSH port")
+		}
+	}
+	if port < 1 || port > 65535 {
+		return Profile{}, fmt.Errorf("invalid SSH port")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid SSH options")
+	}
+	for key, values := range q {
+		if (key != "identity" && key != "known_hosts") || len(values) != 1 || values[0] == "" {
+			return Profile{}, fmt.Errorf("unsupported or duplicate SSH option")
+		}
+	}
+	return Profile{Type: "ssh", Name: u.Fragment, TCP: Endpoint{Host: u.Hostname(), Port: port}, SSH: SSH{User: u.User.Username(), IdentityFile: q.Get("identity"), KnownHostsFile: q.Get("known_hosts")}}, nil
 }
 
 // Hysteria2 contains the authentication and verified TLS settings.
@@ -574,6 +610,9 @@ func NewResolverWithTransport(t http.RoundTripper) *Resolver {
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "ssh://") {
+		return ParseSSH(key)
+	}
 	if strings.HasPrefix(key, "vless://") {
 		return ParseVLESS(key)
 	}

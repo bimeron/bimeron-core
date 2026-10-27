@@ -1,4 +1,4 @@
-# ADR 0015: Require protected VMess transport and reliable UDP boundaries
+# ADR 0016: Require protected VMess transport and reliable UDP boundaries
 
 Status: accepted, October 27, 2026.
 

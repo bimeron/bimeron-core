@@ -1,4 +1,4 @@
-# ADR 0014: Share stream transports between VLESS and VMess
+# ADR 0015: Share stream transports between VLESS and VMess
 
 Status: accepted, October 27, 2026.
 

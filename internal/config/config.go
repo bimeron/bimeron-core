@@ -41,12 +41,15 @@ type Access struct {
 	VMess           string
 	Trojan          string
 	Hysteria2       string
+	SSH             string
 	TUIC            string
 	Key             string
 	KeyFile         string
 	Type            string
 	Parameters      *Parameters
 	Username        string
+	IdentityFile    string
+	KnownHostsFile  string
 	VLESSParameters *accesskey.VLESS
 	ServerName      string
 	xhttpExtraUsed  bool
@@ -193,6 +196,8 @@ func parse(b []byte) (*File, error) {
 				c.Access.Trojan = value
 			case "Hysteria2":
 				c.Access.Hysteria2 = value
+			case "SSH":
+				c.Access.SSH = value
 			case "TUIC":
 				c.Access.TUIC = value
 			case "SS":
@@ -205,6 +210,10 @@ func parse(b []byte) (*File, error) {
 				c.Access.Type = value
 			case "Username":
 				c.Access.Username = value
+			case "IdentityFile":
+				c.Access.IdentityFile = value
+			case "KnownHostsFile":
+				c.Access.KnownHostsFile = value
 			case "ServerName":
 				c.Access.ServerName = value
 			case "Key":
@@ -353,6 +362,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Version != 1 {
 		return nil, fmt.Errorf("[Profile] Version must be 1")
 	}
+	resolveSSHPath := func(value string) string {
+		if value != "" && path != "" && !filepath.IsAbs(value) && value != "~" && !strings.HasPrefix(value, "~/") && !strings.HasPrefix(value, `~\`) {
+			return filepath.Join(filepath.Dir(path), value)
+		}
+		return value
+	}
 	if c.Tunnel.Mode != "vpn" && c.Tunnel.Mode != "proxy" {
 		return nil, fmt.Errorf("[Interface] Mode must be vpn or proxy")
 	}
@@ -407,6 +422,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Hysteria2 != "" && !strings.HasPrefix(c.Access.Hysteria2, "hysteria2://") && !strings.HasPrefix(c.Access.Hysteria2, "hy2://") {
 		return nil, fmt.Errorf("[AccessKey] Hysteria2 must start with hysteria2:// or hy2://")
 	}
+	if c.Access.SSH != "" && !strings.HasPrefix(c.Access.SSH, "ssh://") {
+		return nil, fmt.Errorf("[AccessKey] SSH must start with ssh://")
+	}
 	if c.Access.TUIC != "" && !strings.HasPrefix(c.Access.TUIC, "tuic://") {
 		return nil, fmt.Errorf("[AccessKey] TUIC must start with tuic://")
 	}
@@ -432,6 +450,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Hysteria2 != "" {
 		sources++
 	}
+	if c.Access.SSH != "" {
+		sources++
+	}
 	if c.Access.TUIC != "" {
 		sources++
 	}
@@ -451,7 +472,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, VMess, Trojan, Hysteria2, TUIC, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, VMess, Trojan, Hysteria2, SSH, TUIC, Key, or explicit parameters")
+	}
+	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
+		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
+			return nil, fmt.Errorf("[AccessKey] SSH file options require an SSH profile")
+		}
 	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
 		if c.Access.Type == "" {
@@ -461,6 +487,16 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] Server and Port are required")
 		}
 		s := c.Access.Parameters
+		if c.Access.Type == "ssh" {
+			if c.Tunnel.Mode != "proxy" {
+				return nil, fmt.Errorf("SSH requires Mode = proxy")
+			}
+			if c.Access.Username == "" || s.Server == "" || s.Port < 1 || s.Port > 65535 || s.Method != "" || s.Password != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || c.Access.ServerName != "" {
+				return nil, fmt.Errorf("[AccessKey] invalid SSH parameters")
+			}
+			c.profile = &accesskey.Profile{Name: c.Name, Type: "ssh", TCP: accesskey.Endpoint{Host: s.Server, Port: s.Port}, SSH: accesskey.SSH{User: c.Access.Username, IdentityFile: resolveSSHPath(c.Access.IdentityFile), KnownHostsFile: resolveSSHPath(c.Access.KnownHostsFile)}}
+			return c, nil
+		}
 		if c.Access.Type == "trojan" {
 			if c.Access.Username != "" || s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || s.Password == "" {
 				return nil, fmt.Errorf("[AccessKey] invalid Trojan parameters")
@@ -549,6 +585,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Hysteria2 != "" {
 		key = c.Access.Hysteria2
 	}
+	if c.Access.SSH != "" {
+		key = c.Access.SSH
+	}
 	if c.Access.TUIC != "" {
 		key = c.Access.TUIC
 	}
@@ -612,6 +651,25 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "ssh://") {
+		if c.Tunnel.Mode != "proxy" {
+			return nil, fmt.Errorf("SSH requires Mode = proxy")
+		}
+		p, err := accesskey.ParseSSH(c.key)
+		if err != nil {
+			return nil, err
+		}
+		if c.Access.IdentityFile != "" {
+			p.SSH.IdentityFile = c.Access.IdentityFile
+		}
+		if c.Access.KnownHostsFile != "" {
+			p.SSH.KnownHostsFile = c.Access.KnownHostsFile
+		}
+		p.SSH.IdentityFile = resolveSSHPath(p.SSH.IdentityFile)
+		p.SSH.KnownHostsFile = resolveSSHPath(p.SSH.KnownHostsFile)
+		c.profile = &p
+		return c, nil
+	}
 	if strings.HasPrefix(c.key, "tuic://") {
 		p, err := accesskey.ParseTUIC(c.key)
 		if err != nil {
@@ -621,7 +679,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, vmess://, trojan://, hysteria2://, hy2://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, vmess://, trojan://, hysteria2://, hy2://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

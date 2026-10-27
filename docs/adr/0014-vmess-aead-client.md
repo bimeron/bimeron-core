@@ -1,8 +1,8 @@
-# ADR 0013: Add a focused VMess AEAD client
+# ADR 0014: Add a focused VMess AEAD client
 
 Status: accepted, October 26, 2026.
 
-The supported transport scope was expanded by ADR 0014 and ADR 0015 on
+The supported transport scope was expanded by ADR 0015 and ADR 0016 on
 October 27, 2026. The options below describe the initial release decision.
 
 ## Context

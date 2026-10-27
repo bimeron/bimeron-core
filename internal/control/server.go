@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	core "bimeron/core"
+	"bimeron/internal/sshtunnel"
 	"bimeron/internal/telemetry"
 )
 
@@ -22,11 +24,17 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
-	ID      string `json:"id,omitempty"`
-	Version int    `json:"version"`
-	Command string `json:"command"`
-	Config  string `json:"config,omitempty"`
-	After   uint64 `json:"after,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	Version     int      `json:"version"`
+	Command     string   `json:"command"`
+	Config      string   `json:"config,omitempty"`
+	After       uint64   `json:"after,omitempty"`
+	ChallengeID string   `json:"challenge_id,omitempty"`
+	Answers     []string `json:"answers,omitempty"`
+}
+type AuthChallenge struct {
+	ID string `json:"id"`
+	sshtunnel.Challenge
 }
 type LoggedEvent struct {
 	Sequence uint64     `json:"sequence"`
@@ -45,6 +53,7 @@ type Response struct {
 
 	Stats        *telemetry.Snapshot `json:"stats,omitempty"`
 	Capabilities *core.Capabilities  `json:"capabilities,omitempty"`
+	Auth         *AuthChallenge      `json:"auth,omitempty"`
 }
 type Engine interface {
 	Start(context.Context, core.SessionConfig) error
@@ -63,6 +72,52 @@ type Server struct {
 	load     func(string) (core.SessionConfig, error)
 	shutdown context.CancelFunc
 	closing  bool // protected by command
+	authMu   sync.Mutex
+	pending  *pendingAuth
+}
+type pendingAuth struct {
+	challenge AuthChallenge
+	reply     chan []string
+}
+
+func (s *Server) prompt(ctx context.Context, challenge sshtunnel.Challenge) ([]string, error) {
+	if len(challenge.Prompts) == 0 || len(challenge.Prompts) > 8 || len(challenge.Prompts) != len(challenge.Echo) {
+		return nil, fmt.Errorf("invalid SSH challenge")
+	}
+	for _, p := range challenge.Prompts {
+		if !utf8.ValidString(p) || len(p) > 256 {
+			return nil, fmt.Errorf("invalid SSH challenge")
+		}
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return nil, fmt.Errorf("SSH challenge unavailable")
+	}
+	p := &pendingAuth{challenge: AuthChallenge{ID: fmt.Sprintf("%x", id), Challenge: challenge}, reply: make(chan []string, 1)}
+	s.authMu.Lock()
+	if s.pending != nil {
+		s.authMu.Unlock()
+		return nil, fmt.Errorf("SSH challenge already pending")
+	}
+	s.pending = p
+	s.authMu.Unlock()
+	defer func() {
+		s.authMu.Lock()
+		if s.pending == p {
+			s.pending = nil
+		}
+		s.authMu.Unlock()
+	}()
+	timer := time.NewTimer(2 * time.Minute)
+	defer timer.Stop()
+	select {
+	case answers := <-p.reply:
+		return answers, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, fmt.Errorf("SSH authentication timed out")
+	}
 }
 
 func NewServer(e Engine) *Server {
@@ -141,6 +196,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	if r.Version != Version {
 		answer.Error = "unsupported_protocol"
+	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
+		answer.Error = "invalid_request"
 	} else {
 		switch r.Command {
 		case "hello", "version":
@@ -190,6 +247,39 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				}
 			}
 			s.mu.Unlock()
+		case "auth_pending":
+			if r.Config != "" || r.After != 0 || r.ChallengeID != "" || len(r.Answers) != 0 {
+				answer.Error = "invalid_request"
+				break
+			}
+			s.authMu.Lock()
+			if s.pending != nil {
+				copy := s.pending.challenge
+				answer.Auth = &copy
+			}
+			s.authMu.Unlock()
+		case "auth_reply":
+			if r.Config != "" || r.After != 0 || r.ChallengeID == "" {
+				answer.Error = "invalid_request"
+				break
+			}
+			s.authMu.Lock()
+			p := s.pending
+			if p == nil || p.challenge.ID != r.ChallengeID || len(r.Answers) != len(p.challenge.Prompts) {
+				answer.Error = "invalid_auth_challenge"
+			} else {
+				for _, value := range r.Answers {
+					if len(value) > 1024 || !utf8.ValidString(value) {
+						answer.Error = "invalid_auth_response"
+						break
+					}
+				}
+				if answer.Error == "" {
+					s.pending = nil
+					p.reply <- append([]string(nil), r.Answers...)
+				}
+			}
+			s.authMu.Unlock()
 		case "start":
 			if !filepath.IsAbs(r.Config) || r.After != 0 {
 				answer.Error = "absolute_config_path_required"
@@ -204,10 +294,14 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			cfg, err := s.load(r.Config)
 			if err != nil {
 				answer.Error = "invalid_configuration"
-			} else if err = s.engine.Start(ctx, cfg); err != nil {
-				answer.Error = "session_start_failed"
-				if errors.Is(err, core.ErrSessionRunning) {
-					answer.Error = "session_already_running"
+			} else {
+				cfg.SSHPrompt = s.prompt
+				cfg.SSHDefaultKeys = false // Service home is not the GUI user's home.
+				if err = s.engine.Start(ctx, cfg); err != nil {
+					answer.Error = "session_start_failed"
+					if errors.Is(err, core.ErrSessionRunning) {
+						answer.Error = "session_already_running"
+					}
 				}
 			}
 			s.command.Unlock()
