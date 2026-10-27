@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`,
+`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, `trojan://...`,
 `hysteria2://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -179,6 +179,37 @@ See [`examples/vless.conf`](../examples/vless.conf),
 A link in `VLESS` or `Key`, or a file containing a link in `File`,
 is an alternative to these fields.
 
+### VMess AEAD
+
+Use one base64-encoded JSON `vmess://` link as `VMess`, `Key`, or the contents
+of `File`. For example, the JSON inside a supported link has this shape:
+
+```json
+{"v":"2","ps":"Example","add":"server.example.com","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"ws","type":"none","host":"server.example.com","path":"/vmess","tls":"tls","sni":"server.example.com"}
+```
+
+The `vmess://` payload is standard or URL-safe base64 of the UTF-8 JSON.
+`net` may be `tcp`, `ws`, `httpupgrade`, `grpc`, or `xhttp`. Supported
+combinations use verified TLS or REALITY authentication. `scy` may be `auto`
+(AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
+Optional `fp` selects a TLS client fingerprint: `chrome`, `firefox`, `safari`,
+`ios`, `android`, or `edge`. Optional `alpn` supplies comma-separated TLS ALPN
+protocols; WebSocket and HTTPUpgrade accept only `http/1.1`, gRPC accepts `h2`,
+and XHTTP accepts `h2` or `h3` (HTTP/3 requires TLS and no `fp`). Without
+`alpn`, the transport selects its default. For WebSocket and HTTPUpgrade,
+`path` and optional `host` specify the
+HTTP request. For gRPC, `path` is the required service name, optional `host`
+is the authority, and `mode=multi` selects multi mode. For XHTTP, `path` and
+optional `host` specify the HTTP request; `mode` may be `auto` (the default),
+`packet-up`, `stream-up`, or `stream-one`. The optional `extra` field holds
+validated XHTTP settings as a JSON string. REALITY uses `tls=reality`, `sni`,
+`fp`, `pbk`, and optional `sid` and `spx` on TCP, gRPC, or XHTTP over HTTP/2.
+See [VMess transport matrix](VMESS_TRANSPORTS.MD).
+The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
+the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
+transport, `scy=zero`, other networks, and unknown JSON fields are rejected.
+VMess has no explicit parameter form in this release.
+
 ### Trojan over TCP/TLS
 
 Use a complete URI as the sole `[AccessKey]` source:
@@ -292,9 +323,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, `trojan://`,
 `hysteria2://`, `hy2://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`,
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 

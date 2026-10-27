@@ -2,7 +2,7 @@ package vless
 
 import (
 	"context"
-	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/streamtransport"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
@@ -30,6 +31,7 @@ type Client struct {
 	id                 [16]byte
 	publicKey, shortID []byte
 	dialer             net.Dialer
+	rootCAs            *x509.CertPool
 	mu                 sync.Mutex
 	closed             bool
 	connections        map[*streamConn]struct{}
@@ -197,38 +199,15 @@ func (c *Client) tlsHandshake(ctx context.Context, raw net.Conn) (net.Conn, erro
 	} else if c.settings.Network == "grpc" || c.settings.Network == "xhttp" {
 		protocols = []string{"h2"}
 	}
-	if c.settings.Fingerprint != "" {
-		id, _ := fingerprint(c.settings.Fingerprint)
-		conn := utls.UClient(raw, &utls.Config{ServerName: name, NextProtos: protocols, MinVersion: tls.VersionTLS12}, id)
-		if len(protocols) > 0 {
-			if err := conn.BuildHandshakeState(); err != nil {
-				return nil, fmt.Errorf("VLESS TLS client hello failed")
-			}
-			found := false
-			for _, extension := range conn.Extensions {
-				if alpn, ok := extension.(*utls.ALPNExtension); ok {
-					alpn.AlpnProtocols = protocols
-					found = true
-				}
-			}
-			if !found {
-				conn.Extensions = append(conn.Extensions, &utls.ALPNExtension{AlpnProtocols: protocols})
-			}
-			if err := conn.BuildHandshakeState(); err != nil {
-				return nil, fmt.Errorf("VLESS TLS client hello failed")
-			}
-		}
-		if err := conn.HandshakeContext(ctx); err != nil {
-			return nil, fmt.Errorf("VLESS TLS handshake failed: %w", err)
-		}
-		return conn, nil
-	}
-	conn := tls.Client(raw, &tls.Config{ServerName: name, NextProtos: protocols, MinVersion: tls.VersionTLS12})
-	if err := conn.HandshakeContext(ctx); err != nil {
+	conn, err := streamtransport.TLS(ctx, raw, name, protocols, c.settings.Fingerprint, c.rootCAs)
+	if err != nil {
 		return nil, fmt.Errorf("VLESS TLS handshake failed: %w", err)
 	}
 	return conn, nil
 }
+
+// SetRootCAs supplies a trust store before opening transport streams.
+func (c *Client) SetRootCAs(roots *x509.CertPool) { c.rootCAs = roots }
 
 func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
 	host := c.settings.WSHost
@@ -259,6 +238,51 @@ func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
 
 func (c *Client) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {
 	return c.open(ctx, 1, address)
+}
+
+// DialTransport opens a protocol-neutral gRPC or XHTTP byte stream. The caller
+// owns the returned stream and writes its own protocol request framing.
+func (c *Client) DialTransport(ctx context.Context) (net.Conn, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, net.ErrClosed
+	}
+	switch c.settings.Network {
+	case "grpc":
+		return c.grpcStream(ctx)
+	case "xhttp":
+		return c.xhttpStream(ctx)
+	case "tcp":
+		if c.settings.Security != "reality" {
+			return nil, fmt.Errorf("unsupported raw transport")
+		}
+		setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+		if err != nil {
+			return nil, err
+		}
+		ready := false
+		defer func() {
+			if !ready {
+				_ = raw.Close()
+			}
+		}()
+		stop := context.AfterFunc(setup, func() { _ = raw.Close() })
+		defer stop()
+		_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
+		conn, err := realityHandshake(setup, raw, c.settings, c.publicKey, c.shortID)
+		if err != nil {
+			return nil, err
+		}
+		_ = raw.SetDeadline(time.Time{})
+		ready = true
+		return conn, nil
+	default:
+		return nil, fmt.Errorf("unsupported raw transport")
+	}
 }
 
 func (c *Client) Close() error {
