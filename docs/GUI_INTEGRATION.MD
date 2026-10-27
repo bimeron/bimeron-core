@@ -61,7 +61,12 @@ a regular user without elevation.
 | Windows amd64/arm64 | Wintun, TCP/UDP | WFP kill switch, if enabled | SCM service or console daemon, named pipe |
 | Linux amd64/arm64 | TUN, TCP/UDP | nftables kill switch, if enabled; does not survive reboot | root daemon, Unix socket |
 | macOS Intel/Apple Silicon | Experimental utun backend | Kill switch not implemented | root daemon, Unix socket |
-| iOS/Android | Platform integration not implemented | Not implemented | Current desktop IPC is not a mobile VPN API |
+| Android | Packet engine; host app supplies `VpnService` | Host responsibility | [AAR integration](ANDROID_VPN_SERVICE.MD); desktop IPC is not a mobile VPN API |
+| iOS | Platform integration not implemented | Not implemented | No iOS VPN host |
+
+The separate [macOS NetworkExtension integration](APPLE_NETWORK_EXTENSION.MD)
+provides a packet engine and Swift provider; deployment requires signing and
+provisioning. It does not use the experimental CLI `utun` backend above.
 
 Read capabilities from the running core through hello/capabilities. These report
 build support; they do not check whether a driver, permissions, or server is available.

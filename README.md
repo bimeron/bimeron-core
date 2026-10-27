@@ -14,33 +14,41 @@ the core from separate repositories.
 
 **Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status)
 
+**Choose documentation for your version.** This README and its linked guides describe the
+Git revision you are viewing. For a downloaded package, open its entry in
+[Releases](https://github.com/bimeron/bimeron-core/releases), follow the release tag, and open
+`README.md` there. The default branch may contain changes that are absent from that release.
+
 ## Why use it?
 
-- **One profile, two local modes:** expose a TCP SOCKS5 proxy to selected applications or route
-  system traffic through a VPN tunnel.
+- **One profile format across upstreams:** keep access settings and routing rules in a `.conf`
+  profile shared by the CLI and your application. Use it for a local SOCKS5 proxy or system VPN.
 - **Traffic rules in the core:** choose `proxy`, `direct`, or `block` for IP ranges and domains.
   In system VPN mode, domain rules use observed DNS responses and have
   [documented limits](docs/DNS_METADATA.MD).
-- **A session API for applications:** control start and stop, read status, events, statistics,
-  and safe diagnostic codes, and handle network changes without parsing CLI output.
+- **Connection management for your application:** let the core handle tunnel setup, DNS,
+  reconnects, and cleanup. Control sessions and read status, events, statistics, and diagnostic
+  codes through an API.
+- **A GUI that can run without elevation:** use local IPC to control a separately installed
+  privileged service. Network operations stay in that service; your interface uses structured
+  responses without parsing CLI output.
 
 ## Supported upstreams
 
-This table describes the current source tree. Published packages reflect the code at their
-release tag; read the README at that tag to check a downloaded version's capabilities.
+Support below applies to this source revision; check the tagged README for a release package.
 
 All upstreams shown here support TCP. The UDP column describes system VPN mode; the local
 SOCKS5 listener accepts TCP `CONNECT` only.
 
-| Upstream | Input or transport | UDP in VPN mode |
+| Upstream | Transport | UDP in VPN mode |
 | --- | --- | --- |
-| Shadowsocks | `ss://`, `ssconf://` | Yes |
+| Shadowsocks | TCP, UDP | Yes |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP/TLS | Yes |
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
-| Remote SOCKS5 | SOCKS5 | With upstream `UDP ASSOCIATE` |
+| Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
@@ -50,12 +58,25 @@ encrypted by the core. Not every combination has passed live interoperability te
 
 ## Try a local proxy
 
-You need Go 1.26.9 or newer and a working access URI for a supported upstream. This path runs
-without administrator privileges or a system tunnel. The inline example uses Shadowsocks; see
-the [configuration reference](docs/CONF.MD) for other protocol-specific URI fields.
+This quick start runs **from source**. You need Git, Go 1.26.9 or newer, `curl`, and a working
+access URI for a supported upstream. It runs without administrator privileges or a system
+tunnel. Go is not required to use a prebuilt CLI package; use that release's tagged README
+and configuration guide for its supported commands and profiles.
 
-1. Save this as `profiles/quickstart.conf`, replacing the sample `SS` URI with your own. The
-   `profiles/` directory is ignored by Git; never commit real access keys.
+1. Get the source and create a directory for local profiles:
+
+   ```sh
+   git clone https://github.com/bimeron/bimeron-core.git
+   cd bimeron-core
+   mkdir profiles
+   ```
+
+   If you already have a checkout, use its root directory and create `profiles/` if needed.
+
+2. Save this as `profiles/quickstart.conf`, replacing the sample `SS` URI with your own. The
+   example uses Shadowsocks; see the [configuration reference](docs/CONF.MD) for other
+   protocol-specific URI fields. The `profiles/` directory is ignored by Git; never commit
+   real access keys.
 
    ```ini
    [Profile]
@@ -73,7 +94,10 @@ the [configuration reference](docs/CONF.MD) for other protocol-specific URI fiel
    Default = proxy
    ```
 
-   To keep the URI in a separate file instead, replace the `[AccessKey]` section with:
+   <details>
+   <summary>Alternative: keep the access URI in a file</summary>
+
+   Replace the `[AccessKey]` section with:
 
    ```ini
    [AccessKey]
@@ -82,22 +106,35 @@ the [configuration reference](docs/CONF.MD) for other protocol-specific URI fiel
 
    Put the complete URI in `profiles/access.key`. Use only one access source in a profile.
 
-2. From the repository root, validate and start the profile:
+   </details>
+
+3. From the repository root, validate and start the profile:
 
    ```sh
    go run ./cmd/bimeron validate profiles/quickstart.conf
    go run ./cmd/bimeron run profiles/quickstart.conf
    ```
 
-3. In another terminal, send a request through the local proxy:
+   Wait for a log entry containing:
+
+   ```text
+   SOCKS5 TCP listening on 127.0.0.1:1080
+   ```
+
+   This confirms the local listener is ready. `validate` checks the configuration without
+   connecting; the next step checks that traffic can pass through your upstream.
+
+4. Leave the core running and, in another terminal, send a request through the local proxy:
 
    ```sh
    curl --proxy socks5h://127.0.0.1:1080 https://example.com
    ```
 
-   In Windows PowerShell, use `curl.exe`. The request requires a reachable upstream; `validate`
-   checks the configuration without connecting. Stop the core with Ctrl+C. The local SOCKS5
-   listener accepts TCP `CONNECT` only.
+   In Windows PowerShell, use `curl.exe`. Success prints the page's HTML, including
+   `Example Domain`. If the request fails, check the URI and upstream reachability; if the
+   listener cannot start, check whether port `1080` is already in use.
+
+   Stop the core with Ctrl+C in its terminal.
 
 For system VPN, set `Mode = vpn` and use the [Windows CLI](docs/CONF.MD#commands),
 [Linux](docs/LINUX.MD), or [macOS](docs/MACOS.MD) guide. System network changes require elevated
@@ -105,19 +142,19 @@ privileges; the Windows distribution also includes the matching Wintun DLL.
 
 ## Platform status
 
-| Target | Core functionality | Integration |
+| Desktop target | System VPN | Optional kill switch |
 | --- | --- | --- |
-| Windows amd64/arm64 | System VPN via Wintun; local SOCKS5 | Console, SCM service, named-pipe IPC; optional WFP kill switch |
-| Linux amd64/arm64 | System VPN via TUN; local SOCKS5 | Console, daemon, Unix-socket IPC; optional nftables kill switch |
-| macOS Intel/Apple Silicon | Experimental CLI VPN via utun; local SOCKS5 | Console and daemon; no core kill switch |
-| Android | Packet engine distributed as an AAR | Host app supplies `VpnService`, TUN, permissions, and lifecycle |
-| macOS NetworkExtension | Packet engine, Swift provider, and technical console shell | Signing and provisioning are required for deployment; no GUI |
+| Windows amd64/arm64 | Wintun | WFP |
+| Linux amd64/arm64 | TUN | nftables; does not survive reboot |
+| macOS Intel/Apple Silicon | Experimental CLI VPN via utun | Not implemented |
+
+All three desktop targets support the local SOCKS5 proxy and service/daemon control. IPC uses
+named pipes on Windows and Unix sockets on Linux/macOS. Application-based split routing is
+not available.
 
 Platform capabilities describe compiled support, not the availability of a driver, permission,
-or compatible server on a particular device. See [desktop integration](docs/GUI_INTEGRATION.MD),
-[Android](docs/ANDROID_VPN_SERVICE.MD), and
-[Apple NetworkExtension](docs/APPLE_NETWORK_EXTENSION.MD) for the exact boundaries and
-validation status.
+or compatible server on a particular device. See [desktop integration](docs/GUI_INTEGRATION.MD)
+for the service contract and platform limits. Platform-hosted packet engines are described below.
 
 ## Integrate the core
 
@@ -126,13 +163,14 @@ validation status.
   [GUI integration contract](docs/GUI_INTEGRATION.MD) covers identity, secrets, and recovery.
 - **Go application:** use `bimeron/core` to load a profile and manage an engine with `Start`,
   `Stop`, `Status`, `Events`, `Stats`, and `Wait`. See the [Go API guide](docs/CORE.MD).
-- **Platform VPN host:** embed the [Android AAR](docs/ANDROID_VPN_SERVICE.MD) or the
-  [Apple packet engine](docs/APPLE_NETWORK_EXTENSION.MD) and supply the operating system's VPN
-  lifecycle and tunnel.
+- **Android VPN host:** embed the [Android AAR](docs/ANDROID_VPN_SERVICE.MD). Your app supplies
+  `VpnService`, the TUN interface, permissions, protected sockets, and lifecycle management.
+- **macOS NetworkExtension host:** use the [Apple packet engine](docs/APPLE_NETWORK_EXTENSION.MD),
+  Swift provider, and technical console shell. Deployment requires signing and provisioning;
+  unsigned builds are for inspection. This integration does not include a GUI.
 
-The `.conf` format keeps the access source, interface mode, and routing rules in one profile.
-Start with the [configuration reference](docs/CONF.MD) and the [examples](examples/).
-Domain-based VPN rules rely on DNS metadata; application-based split routing is not available.
+Start with the [configuration reference](docs/CONF.MD) and the [examples](examples/). The Android
+and Apple guides document host responsibilities and device validation requirements.
 
 ## Build and verify
 

@@ -26,11 +26,12 @@ runs `scripts/check-dist.go` and uploads `cli-dist` for 14 days. The
 licenses, and uploads `android-dist` for 14 days. These workflow artifacts
 are build outputs, not GitHub Releases. Apple NetworkExtension is excluded.
 
-Pushing a `v*` tag runs the same checks, embeds the tag version in the CLI and
-Android builds, and publishes seven ZIP archives plus `SHA256SUMS` in a GitHub
-Release. Tags with a suffix are marked as prereleases. Each archive contains
-its own platform directory and license files. The release notes list the
-package scope and the excluded Apple NetworkExtension.
+Pushing a `v*` tag runs the same checks and embeds the tag version in the CLI
+and Android builds. CI does not publish releases. The
+[prepared-release publisher](RELEASE_UPDATES.md#publish-prepared-bytes) verifies
+the prepared archives, checksums, and signed manifest before publication and
+requires successful tag CI. Its release notes link to the README at that tag
+and describe the package scope, including the excluded Apple NetworkExtension.
 
 ## Proposed test and build workflow
 
@@ -52,7 +53,7 @@ service, or change the workstation's network. Restrict privileged checks to
 disposable runners and namespaces. macOS unit tests and unsigned builds do not
 replace testing a real `utun` VPN or a signed NetworkExtension on a Mac.
 
-Build artifacts should use the per-platform directories described in the README,
+Build artifacts should use the per-platform directories described in [building and packaging](BUILDING.md),
 including `LICENSE` and `THIRD_PARTY_NOTICES.txt`. Both Windows directories must
 include the matching verified Wintun DLL and its exact prebuilt-binaries license.
 Unsigned Apple builds must be identified as such and cannot run the NetworkExtension.
