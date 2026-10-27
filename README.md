@@ -1,33 +1,114 @@
 # Bimeron Core
 
+Bimeron Core is a Go networking engine that turns a supported access profile into a local
+SOCKS5 proxy or a system VPN.
+
 [![CI](https://github.com/bimeron/bimeron-core/actions/workflows/go.yml/badge.svg)](https://github.com/bimeron/bimeron-core/actions/workflows/go.yml)
 [![Release](https://img.shields.io/github/v/release/bimeron/bimeron-core?include_prereleases)](https://github.com/bimeron/bimeron-core/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Bimeron Core is a VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` Shadowsocks access keys, VLESS over TCP with REALITY and Vision or ordinary TLS, VLESS over WebSocket with TLS and early data, VLESS over gRPC with TLS, VLESS over XHTTP with TLS or REALITY in selected modes, VMess AEAD over TCP, WebSocket, HTTPUpgrade, gRPC, or XHTTP with TLS or supported REALITY combinations and UDP relay, Trojan over TCP/TLS with UDP relay, Hysteria2 over QUIC with TCP and UDP relay, TUIC v5 over QUIC with stream-mode UDP relay, remote SOCKS5 upstreams, built-in SSH TCP forwarding in local proxy or TCP-only system VPN mode, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules. See [configuration](docs/CONF.MD), [SSH connection guide](docs/SSH.MD), [VLESS transport contract](docs/VLESS_TRANSPORTS.MD), [VMess transport matrix](docs/VMESS_TRANSPORTS.MD), and [GUI integration](docs/GUI_INTEGRATION.MD).
+Building a VPN application also requires tunnel setup, routing, DNS, connection state, and
+recovery. Bimeron Core handles these tasks for its CLI and for applications using local IPC, the
+Go API, or a platform packet API. You provide the upstream access profile. GUI projects integrate
+the core from separate repositories.
 
-## Protocol support
+**Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status)
 
-| Upstream | Transport | TCP | UDP in VPN mode | Notes |
-| --- | --- | --- | --- | --- |
-| Shadowsocks | `ss://`, `ssconf://` | Yes | Yes | Static and dynamic access keys |
-| VLESS | TCP, WebSocket, gRPC, XHTTP | Yes | Yes | TLS or supported REALITY combinations; Vision on TCP/REALITY |
-| VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes | Yes | TLS or supported REALITY combinations |
-| Trojan | TCP/TLS | Yes | Yes | UDP relayed over TLS |
-| Hysteria2 | QUIC | Yes | Yes | Server must allow UDP relay |
-| TUIC v5 | QUIC | Yes | Yes | Stream-mode UDP relay |
-| Remote SOCKS5 | SOCKS5 | Yes | With `UDP ASSOCIATE` | Upstream SOCKS5 connections are not encrypted |
-| SSH | TCP forwarding | Yes | No | TCP-only VPN mode; DNS is forwarded over TCP |
+## Why use it?
 
-The local SOCKS5 proxy accepts TCP `CONNECT` only. See the [VLESS transport contract](docs/VLESS_TRANSPORTS.MD) and [VMess transport matrix](docs/VMESS_TRANSPORTS.MD) for exact supported combinations. Protocol support does not mean every combination has been verified on a physical device or against an independent server.
+- **One profile, two local modes:** expose a TCP SOCKS5 proxy to selected applications or route
+  system traffic through a VPN tunnel.
+- **Traffic rules in the core:** choose `proxy`, `direct`, or `block` for IP ranges and domains.
+  In system VPN mode, domain rules use observed DNS responses and have
+  [documented limits](docs/DNS_METADATA.MD).
+- **A session API for applications:** control start and stop, read status, events, statistics,
+  and safe diagnostic codes, and handle network changes without parsing CLI output.
+- **Several upstream choices:** use Shadowsocks (`ss://` and `ssconf://`), VLESS, VMess AEAD,
+  Trojan, Hysteria2, TUIC v5, remote SOCKS5, or SSH TCP forwarding. Exact transport and UDP
+  combinations vary; see [configuration](docs/CONF.MD),
+  [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
+  and [SSH](docs/SSH.MD).
 
-Bimeron's original code is licensed under the MIT License; see `LICENSE`. Adapted VLESS and VMess protocol files retain Xray-core's MPL 2.0 license; see `third_party/vless/` and `third_party/vmess/`. Other third-party components retain their own licenses in `THIRD_PARTY_NOTICES.txt`, `third_party/wf/LICENSE`, and, for distributed Wintun DLLs, `WINTUN-LICENSE.txt`.
+## Try a local proxy
 
-## Requirements
+You need Go 1.26.9 or newer and a working access profile for a supported upstream. This path
+runs without administrator privileges or a system tunnel.
 
-Go 1.26.9 or newer and `curl` for the verified Wintun download. Building the Apple NetworkExtension requires macOS and Xcode; signed deployment requires an Apple Developer account. Android bindings require `gomobile` and the Android SDK.
+1. Put your access URI in `profiles/access.key`. Keep real keys in the ignored `profiles/`
+   directory.
+2. Save this as `profiles/quickstart.conf`:
 
-## Build and test
+   ```ini
+   [Profile]
+   Version = 1
+   Name = Quick start
+
+   [AccessKey]
+   File = access.key
+
+   [Interface]
+   Mode = proxy
+   Listen = 127.0.0.1:1080
+
+   [Routing]
+   Default = proxy
+   ```
+
+3. From the repository root, validate and start the profile:
+
+   ```sh
+   go run ./cmd/bimeron validate profiles/quickstart.conf
+   go run ./cmd/bimeron run profiles/quickstart.conf
+   ```
+
+4. In another terminal, send a request through the local proxy:
+
+   ```sh
+   curl --proxy socks5h://127.0.0.1:1080 https://example.com
+   ```
+
+   In Windows PowerShell, use `curl.exe`. The request requires a reachable upstream; `validate`
+   checks the configuration without connecting. Stop the core with Ctrl+C. The local SOCKS5
+   listener accepts TCP `CONNECT` only.
+
+For system VPN, set `Mode = vpn` and use the [Windows CLI](docs/CONF.MD#commands),
+[Linux](docs/LINUX.MD), or [macOS](docs/MACOS.MD) guide. System network changes require elevated
+privileges; the Windows distribution also includes the matching Wintun DLL.
+
+## Platform status
+
+| Target | Core functionality | Integration |
+| --- | --- | --- |
+| Windows amd64/arm64 | System VPN via Wintun; local SOCKS5 | Console, SCM service, named-pipe IPC; optional WFP kill switch |
+| Linux amd64/arm64 | System VPN via TUN; local SOCKS5 | Console, daemon, Unix-socket IPC; optional nftables kill switch |
+| macOS Intel/Apple Silicon | Experimental CLI VPN via utun; local SOCKS5 | Console and daemon; no core kill switch |
+| Android | Packet engine distributed as an AAR | Host app supplies `VpnService`, TUN, permissions, and lifecycle |
+| macOS NetworkExtension | Packet engine, Swift provider, and technical console shell | Signing and provisioning are required for deployment; no GUI |
+
+Platform capabilities describe compiled support, not the availability of a driver, permission,
+or compatible server on a particular device. See [desktop integration](docs/GUI_INTEGRATION.MD),
+[Android](docs/ANDROID_VPN_SERVICE.MD), and
+[Apple NetworkExtension](docs/APPLE_NETWORK_EXTENSION.MD) for the exact boundaries and
+validation status.
+
+## Integrate the core
+
+- **Desktop application:** manage a privileged service through [local IPC](docs/CONTROL.MD).
+  Start a `.conf` profile, then read authoritative status, events, and statistics. The
+  [GUI integration contract](docs/GUI_INTEGRATION.MD) covers identity, secrets, and recovery.
+- **Go application:** use `bimeron/core` to load a profile and manage an engine with `Start`,
+  `Stop`, `Status`, `Events`, `Stats`, and `Wait`. See the [Go API guide](docs/CORE.MD).
+- **Platform VPN host:** embed the [Android AAR](docs/ANDROID_VPN_SERVICE.MD) or the
+  [Apple packet engine](docs/APPLE_NETWORK_EXTENSION.MD) and supply the operating system's VPN
+  lifecycle and tunnel.
+
+The `.conf` format keeps the access source, interface mode, and routing rules in one profile.
+Start with the [configuration reference](docs/CONF.MD) and the [examples](examples/).
+Domain-based VPN rules rely on DNS metadata; application-based split routing is not available.
+Protocol support does not imply that every transport combination has passed live
+interoperability testing. Connections to a remote SOCKS5 upstream are not encrypted by the core.
+
+## Build and verify
 
 ```sh
 go test ./...
@@ -35,38 +116,19 @@ go run scripts/build-dist.go
 go run scripts/check-dist.go
 ```
 
-`go run scripts/build-dist.go` works on Windows, Linux, and macOS and builds six CLI distributions. `scripts/build-all.ps1` and `scripts/build-all.sh` are wrappers for the same command. `bin/` contains the raw cross-compiled binaries, named `bimeron-<os>-<arch>` (with `.exe` for Windows), and may contain the cached Wintun ZIP. Each `dist/` directory contains one distribution:
+The distribution build produces six Windows, Linux, and macOS CLI packages. Android and Apple
+extension builds use separate scripts. See [building and packaging](docs/BUILDING.md) for
+prerequisites, output contents, Wintun verification, and platform-specific steps; see
+[CI checks](docs/CI.MD) for automated coverage and its limits.
 
-| Directory | Contents |
-| --- | --- |
-| `dist/windows-amd64/`, `dist/windows-arm64/` | `bimeron.exe`, matching `wintun.dll`, `LICENSE`, `WINTUN-LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` |
-| `dist/linux-amd64/`, `dist/linux-arm64/` | `bimeron`, `LICENSE`, `THIRD_PARTY_NOTICES.txt` |
-| `dist/macos-amd64/`, `dist/macos-arm64/` | `bimeron`, `LICENSE`, `THIRD_PARTY_NOTICES.txt` |
-| `dist/android/` | Android AAR, sources JAR, `LICENSE`, `THIRD_PARTY_NOTICES.txt` after the separate Android build |
-| `dist/apple-system-extension-<arch>/` or `dist/apple-app-extension-<arch>/` | Native Mac app and extension, `LICENSE`, `THIRD_PARTY_NOTICES.txt` after the separate macOS build |
+## License and third-party notices
 
-The CLI build downloads the official Wintun 0.14.1 ZIP and verifies its SHA-256 (`07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`) before extracting the two architecture-specific DLLs and the exact license. `scripts/install-wintun.ps1 -Architecture amd64` (or `arm64`) builds and refreshes just one Windows directory. The ZIP contains WireGuard LLC's **Prebuilt Binaries License** for the DLL; read `WINTUN-LICENSE.txt` before redistribution. Its terms differ from the license for the Go Wintun module in `THIRD_PARTY_NOTICES.txt`. Generated files and the downloaded ZIP are ignored by Git.
+Bimeron's original code is licensed under the [MIT License](LICENSE). Adapted VLESS and VMess
+protocol files retain Xray-core's MPL 2.0 license; see `third_party/vless/` and
+`third_party/vmess/`. Other third-party components retain their own licenses in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and `third_party/wf/LICENSE`. Distributed
+Wintun DLLs include `WINTUN-LICENSE.txt`, whose **Prebuilt Binaries License** differs from the
+Go Wintun module license in `THIRD_PARTY_NOTICES.txt`. Read those terms before redistribution.
 
-The CLI command does not build Android or Apple extension artifacts. Build the Android AAR with `sh scripts/build-android.sh` or, on Windows, `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1` after installing the Android SDK, NDK, JDK, and `gomobile` and setting `ANDROID_HOME` and `ANDROID_NDK_HOME`. Build the Apple system extension on a Mac with Xcode using `sh scripts/build-apple.sh`; set `APPLE_EXTENSION_KIND=app-extension` to build that variant. The extension build uses the Mac's native architecture, so both amd64 and arm64 outputs require builds on the corresponding Macs. Without an Apple Developer account, these are **unsigned** builds for inspection only; NetworkExtension execution requires signing and provisioning. The Android output is an AAR, not an installable Android app.
-
-## Usage
-
-```sh
-bimeron validate examples/main.conf
-bimeron validate examples/vless.conf
-bimeron validate examples/trojan.conf
-bimeron validate examples/ssh.conf
-bimeron validate examples/tuic.conf
-bimeron check profiles/test.key
-bimeron proxy profiles/test.key
-bimeron connect profiles/test.key
-bimeron doctor
-```
-
-Run system VPN commands with the privileges required by the platform. Store real access keys only in ignored local `profiles/` files. Never commit keys, profiles, or diagnostic output containing private data. The example profiles contain placeholders and will not connect as-is.
-
-The CLI also provides `daemon`, `start`, `status`, `watch`, `stats`, `capabilities`, `stop`, `shutdown`, `run`, `recover`, `inspect`, and `route`. See `docs/` for platform and integration details. Verify platform-specific procedures against the code before deployment.
-
-## Third-party projects
-
-Bimeron Core uses the Outline SDK, gVisor, Wintun, and other libraries listed in `go.mod` and `THIRD_PARTY_NOTICES.txt`. Their upstream names, links, and license notices are not part of this project's rebranding.
+Bimeron Core uses the Outline SDK, gVisor, Wintun, and other libraries listed in `go.mod` and
+`THIRD_PARTY_NOTICES.txt`. Their upstream names, links, and license notices remain theirs.
