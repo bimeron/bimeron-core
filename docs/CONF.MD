@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,8 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`, `hysteria2://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`,
+`hysteria2://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -90,6 +91,19 @@ URL parameters and `#...` are preserved. Fetching is limited to 15 seconds,
 There is no periodic refresh during a healthy connection: content is fetched
 again at the next start or reconnect, as described in [CORE.MD](CORE.MD).
 The `validate` command checks the URL without fetching it.
+
+### SSH TCP forwarding
+
+SSH profiles run in `Mode = proxy` and expose TCP through the local SOCKS5
+listener. They do not support system VPN mode or UDP. Use either explicit
+`Type = ssh`, `Server`, `Port`, `Username` fields or an `SSH = ssh://user@host:22`
+link. `Key` and `File` can also contain an SSH link. `IdentityFile` and
+`KnownHostsFile` are optional file-path settings for explicit or inline SSH
+profiles. They override corresponding `identity` and `known_hosts` URI query
+options. URI passwords are rejected. For service use, set `KnownHostsFile` and
+select an absolute identity path or use interactive authentication through the
+GUI. See [the SSH connection guide](SSH.MD) for complete examples, key search
+order, GUI password prompts, and server verification.
 
 ### Inline SOCKS5 URI
 
@@ -278,8 +292,10 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `trojan://`, `hysteria2://`, `hy2://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `TUIC`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `trojan://`,
+`hysteria2://`, `hy2://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`,
+`SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters

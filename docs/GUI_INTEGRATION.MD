@@ -337,7 +337,7 @@ Action = direct
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
 choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
 SOCKS5=socks5://..., Trojan=trojan://..., Hysteria2=hysteria2://...,
-TUIC=tuic://..., Key, or explicit parameters. File is allowed
+SSH=ssh://..., TUIC=tuic://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -352,6 +352,26 @@ to the profile and File key; custom mapped drives and EFS may not be available.
 Validation without a network: run CLI `validate <config>` and check the exit code.
 Full format help is available in the core repository, docs/CONF.MD; this example does not
 replace it when developing a full-fledged editor for all settings.
+
+### SSH profile editor and interactive authentication
+
+SSH is supported only with `[Interface] Mode = proxy`. The GUI can import
+`ssh://user@host:22` as `SSH = ...` or write explicit `Type = ssh`, `Server`,
+`Port`, and `Username` fields. Provide file pickers for the identity and
+`known_hosts`; save absolute paths as `IdentityFile` and `KnownHostsFile`.
+The service account may have a different home directory, so do not rely on
+its `~/.ssh` defaults. The GUI saves the `.conf` atomically before `start`.
+
+While connecting, poll the protected local control socket with
+`{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
+each `prompts` entry with masking controlled by its matching `echo` value.
+Send `{"version":1,"command":"auth_reply","challenge_id":"...","answers":["..."]}`.
+The supported challenge kinds are `key_passphrase`, `password`, and
+`keyboard_interactive`. An answer is one-use and is never stored in the
+profile, GUI settings, logs, status, or diagnostics. The core times out the
+challenge after two minutes. Older cores reply `unknown_command` to
+`auth_pending`; hide interactive authentication for them. See
+[SSH.MD](SSH.MD) for the full wire contract, examples, and security limits.
 
 ### Trojan profile editor
 

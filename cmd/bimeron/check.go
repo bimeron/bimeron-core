@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
 	"bimeron/internal/proxy"
+	"bimeron/internal/sshtunnel"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
 	"bimeron/internal/vpn"
@@ -71,6 +72,13 @@ func check(args []string) error {
 		}
 		defer client.Close()
 		tcp, udp = client, client
+	} else if p.Type == "ssh" {
+		client, err := sshtunnel.New(ctx, p, net.Dialer{Timeout: 15 * time.Second}, terminalSSHPrompt, true)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp = client
 	} else {
 		tcp, err = proxy.Outline(p.TCP)
 		if err != nil {
@@ -81,7 +89,7 @@ func check(args []string) error {
 			return err
 		}
 	}
-	if cfg != nil && cfg.Tunnel.Mode == "proxy" && p.Type == "socks5" {
+	if p.Type == "ssh" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && p.Type == "socks5") {
 		address, err := vpn.CheckTCP(ctx, tcp)
 		if err != nil {
 			return err
