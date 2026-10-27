@@ -378,13 +378,16 @@ client. Use a Hysteria2-specific QUIC fingerprint selector:
 - Firefox 116A: `firefox` or `firefox-116` (aliases; preserve the imported spelling).
 - Firefox 116B: `firefox-116b`.
 - Firefox 116C: `firefox-116c`.
+- Chrome 115: `chrome-115`.
+- Chrome 146: `chrome-146`.
 - Chrome: `chrome`, the pinned apernet ChromeParrot preset, not a versioned
   uquic Chrome 115/146 preset.
 
 The values are case-sensitive. Reject explicit empty values, unknown values,
 and duplicate options. Never remove `fp` silently or fall back to a different
-preset. Do not reuse VLESS/TCP's fingerprint list. `chrome-115` and `chrome-146`
-remain unsupported. The core applies the chosen preset to the wire handshake.
+preset. Do not reuse VLESS/TCP's fingerprint list. The core applies the chosen
+preset to the wire handshake. Address-family selection is automatic from the
+resolved endpoint; the GUI must not append IPv4/IPv6 suffixes.
 
 For bimeron-desktop, this changes the previous contract as follows:
 
@@ -528,3 +531,14 @@ are described in [APPLE_NETWORK_EXTENSION.MD](APPLE_NETWORK_EXTENSION.MD).
 The GUI should select one backend and not run both VPNs at the same time.
 At this stage, the NE bundle is only built unsigned; real signed launch
 not verified. This is a preparation of a contract, not a statement of a ready-made VPN system.
+
+### Desktop changes for issue #23
+
+Add exactly `chrome-115` and `chrome-146` to the Hysteria2 allowlist and selector.
+Preserve these exact strings on import/export. Keep `chrome` and omitted `fp`
+unchanged; never migrate saved profiles automatically. The password, TLS, SNI,
+ALPN and error-redaction contracts are unchanged. Gate the new entries on a
+bundled core containing ADR 0011 and successful `bimeron validate`; ADR 0010
+alone does not establish versioned Chrome support. No released minimum version
+has been assigned. Show unsupported imported values without dropping them.
+These presets do not claim full browser equivalence; see ADR 0011.

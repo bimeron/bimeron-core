@@ -197,10 +197,10 @@ func TestChromeParrotRejectsUnsupportedTLSConfig(t *testing.T) {
 
 func TestFirefoxParrotHandshake(t *testing.T) {
 	for _, mode := range []string{"normal", "retry", "loss", "hrr"} {
-		t.Run(mode, func(t *testing.T) { testFirefoxHandshake(t, mode) })
+		t.Run(mode, func(t *testing.T) { testFingerprintHandshake(t, mode, quic.QUICFirefox116) })
 	}
 }
-func testFirefoxHandshake(t *testing.T, mode string) {
+func testFingerprintHandshake(t *testing.T, mode string, fp quic.QUICFingerprint) {
 	serverConf, clientConf := chromeCompatibleTLSConfigs(t)
 
 	if mode == "hrr" {
@@ -220,9 +220,12 @@ func testFirefoxHandshake(t *testing.T, mode string) {
 		socket = &dropFirstFingerprintPacket{PacketConn: socket}
 	}
 	tr := &quic.Transport{Conn: socket, ConnectionIDLength: 3, AllowQUICBitGrease: true}
+	if !fp.IsFirefox() {
+		tr.ConnectionIDGenerator = quic.ZeroLengthConnectionIDGenerator{}
+	}
 	defer tr.Close()
 	clientConn, err := tr.Dial(ctx, server.Addr(),
-		clientConf, getQuicConfig(&quic.Config{Fingerprint: quic.QUICFirefox116}))
+		clientConf, getQuicConfig(&quic.Config{Fingerprint: fp}))
 	require.NoError(t, err)
 	defer clientConn.CloseWithError(0, "")
 
@@ -267,7 +270,13 @@ func (c *dropFirstFingerprintPacket) WriteTo(b []byte, a net.Addr) (int, error) 
 	return c.PacketConn.WriteTo(b, a)
 }
 
-func TestFirefoxParrotTLSFailures(t *testing.T) {
+func TestFirefoxParrotTLSFailures(t *testing.T) { testFingerprintTLSFailures(t, quic.QUICFirefox116) }
+func TestChromeParrotVersionedTLSFailures(t *testing.T) {
+	for _, fp := range []quic.QUICFingerprint{quic.QUICChrome115, quic.QUICChrome146} {
+		t.Run(string(fp), func(t *testing.T) { testFingerprintTLSFailures(t, fp) })
+	}
+}
+func testFingerprintTLSFailures(t *testing.T, fp quic.QUICFingerprint) {
 	for _, mode := range []string{"expired", "alpn", "untrusted", "name"} {
 		t.Run(mode, func(t *testing.T) {
 			serverConf, clientConf := chromeCompatibleTLSConfigs(t)
@@ -285,14 +294,27 @@ func TestFirefoxParrotTLSFailures(t *testing.T) {
 			require.NoError(t, err)
 			defer server.Close()
 			tr := &quic.Transport{Conn: newUDPConnLocalhost(t), ConnectionIDLength: 3, AllowQUICBitGrease: true}
+			if !fp.IsFirefox() {
+				tr.ConnectionIDGenerator = quic.ZeroLengthConnectionIDGenerator{}
+			}
 			defer tr.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			c, err := tr.Dial(ctx, server.Addr(), clientConf, &quic.Config{Fingerprint: quic.QUICFirefox116})
+			c, err := tr.Dial(ctx, server.Addr(), clientConf, &quic.Config{Fingerprint: fp})
 			if c != nil {
 				c.CloseWithError(0, "")
 			}
 			require.Error(t, err)
+		})
+	}
+}
+
+func TestChromeParrotVersionedHandshake(t *testing.T) {
+	for _, fp := range []quic.QUICFingerprint{quic.QUICChrome115, quic.QUICChrome146} {
+		t.Run(string(fp), func(t *testing.T) {
+			for _, mode := range []string{"normal", "retry", "loss", "hrr"} {
+				t.Run(mode, func(t *testing.T) { testFingerprintHandshake(t, mode, fp) })
+			}
 		})
 	}
 }

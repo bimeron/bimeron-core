@@ -55,7 +55,7 @@ func (h Hysteria2) Validate(host string, port int) error {
 		return fmt.Errorf("unsupported Hysteria2 ALPN")
 	}
 	switch h.Fingerprint {
-	case "", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome":
+	case "", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146":
 	default:
 		return fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
 	}

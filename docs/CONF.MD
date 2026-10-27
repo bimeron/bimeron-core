@@ -220,14 +220,21 @@ Supported `fp` values are case-sensitive:
 - `firefox` and `firefox-116`: Firefox 116A QUIC Initial/ClientHello preset (8-byte initial DCID).
 - `firefox-116b`: Firefox 116B (9-byte initial DCID).
 - `firefox-116c`: Firefox 116C (15-byte initial DCID).
+- `chrome-115`: versioned Chrome 115 QUIC preset (X25519, legacy ALPS).
+- `chrome-146`: versioned Chrome 146 QUIC preset (X25519MLKEM768 + X25519,
+  new ALPS and GREASE ECH, two-datagram Initial flight).
 - `chrome`: the existing apernet ChromeParrot preset, pinned to the vendored
   apernet revision documented in `third_party/apernet-quic-go/BIMERON_PATCHES.md`.
   It is not an alias for uquic Chrome 115 or Chrome 146.
 
 Omitting `fp` retains the existing ChromeParrot default. An explicit empty or
 unsupported value is rejected; there is no fallback or automatic preset upgrade.
-For example, append `&fp=firefox` to the example above. `chrome-115`,
-`chrome-146`, Safari, Edge, and VLESS/TCP-only fingerprints are not supported.
+For example, append `&fp=chrome-146` to the example above. Safari, Edge,
+and VLESS/TCP-only fingerprints are not supported. Versioned Chrome selects
+1250-byte IPv4 or 1230-byte IPv6 Initial datagrams from the actual remote
+address; this is not inferred from the SNI. Neither versioned name is an alias
+for `chrome`. See [ADR 0011](adr/0011-versioned-chrome-quic.md) for reference
+provenance, corrections, and the limits of browser-fidelity evidence.
 
 Fingerprint selection changes the TLS ClientHello, QUIC transport parameters,
 and Initial packet layout. Certificate and hostname verification remain enabled.

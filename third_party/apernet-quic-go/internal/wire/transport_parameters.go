@@ -97,6 +97,7 @@ type TransportParameters struct {
 
 	// ChromeFingerprint makes Marshal encode the parameters the way Google
 	// Chrome does. Client side only; see marshalChrome.
+	ChromeVersion      uint16
 	ChromeFingerprint  bool
 	FirefoxFingerprint bool
 }

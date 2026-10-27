@@ -103,6 +103,9 @@ type chaosItem struct {
 // and PINGs comes out of the padding budget. If the budget can't cover a step we
 // stop splitting rather than overrun.
 func (p *packetPacker) appendChaosProtectedPayload(raw []byte, pl payload, paddingLen protocol.ByteCount, v protocol.Version) ([]byte, error) {
+	if p.fingerprint.IsVersionedChrome() {
+		return p.appendVersionedChromePayload(raw, pl, paddingLen, v)
+	}
 	startLen := len(raw)
 
 	// The ACK, if any, is written first and left out of the shuffle. Packets that

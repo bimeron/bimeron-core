@@ -488,6 +488,12 @@ var newClientConnection = func(
 	}
 	if s.config.ChromeParrot {
 		chromeParrotTransportParameters(params)
+		if s.config.Fingerprint == QUICChrome115 {
+			params.ChromeVersion = 115
+		}
+		if s.config.Fingerprint == QUICChrome146 {
+			params.ChromeVersion = 146
+		}
 	}
 	if s.config.Fingerprint.IsFirefox() {
 		params.FirefoxFingerprint = true
@@ -522,6 +528,7 @@ var newClientConnection = func(
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, oneRTTStream)
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
 	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective, s.config.ChromeParrot)
+	s.packer.(*packetPacker).fingerprint = s.config.Fingerprint
 	if s.config.Fingerprint.IsFirefox() {
 		s.packer.(*packetPacker).firefoxParrot = true
 		s.unpacker.(*packetUnpacker).allowQUICBitGrease = true
@@ -2194,6 +2201,9 @@ func (c *Conn) handleAckFrame(frame *wire.AckFrame, encLevel protocol.Encryption
 
 func (c *Conn) handleDatagramFrame(f *wire.DatagramFrame) error {
 	limit := wire.MaxDatagramSize
+	if c.perspective == protocol.PerspectiveClient && c.config.ChromeParrot {
+		limit = chromeMaxDatagramFrameSize
+	}
 	if c.perspective == protocol.PerspectiveClient && c.config.Fingerprint.IsFirefox() {
 		limit = 1200
 	}

@@ -23,6 +23,7 @@ type baseCryptoStream struct {
 	highestOffset protocol.ByteCount
 	finished      bool
 
+	tailEnd     protocol.ByteCount // highest offset already extracted from the tail
 	writeOffset protocol.ByteCount
 	writeBuf    []byte
 }
@@ -104,6 +105,9 @@ func (s *baseCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.Crypt
 	f.Data = s.writeBuf[:n]
 	s.writeBuf = s.writeBuf[n:]
 	s.writeOffset += n
+	if len(s.writeBuf) == 0 {
+		s.writeOffset = max(s.writeOffset, s.tailEnd)
+	}
 	return f
 }
 
@@ -120,7 +124,11 @@ func (s *baseCryptoStream) PopCryptoFrameTail(dataLen protocol.ByteCount) *wire.
 		Offset: s.writeOffset + n,
 		Data:   s.writeBuf[n:],
 	}
+	s.tailEnd = max(s.tailEnd, f.Offset+dataLen)
 	s.writeBuf = s.writeBuf[:n]
+	if len(s.writeBuf) == 0 {
+		s.writeOffset = s.tailEnd
+	}
 	return f
 }
 

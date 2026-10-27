@@ -28,3 +28,12 @@ modules. When rebasing, review the patch inventory, rerun wire expectations
 and unmodified-server integration, and preserve default Chrome behavior.
 The explicit `chrome` name pins this snapshot's existing ChromeParrot behavior;
 it does not claim equivalence to uquic Chrome 115/146.
+
+Issue #23 / ADR 0011 adds named Chrome 115/146 TLS/QUIC presets, address-family
+Initial sizes, versioned frame composition and packet-number widths. Reference
+material is adapted from the same attributed uquic revision; see ADR 0011 for
+reference discrepancies and corrections. Multi-packet CRYPTO tail accounting
+now preserves the next TLS message's offset (HRR regression). Zero-ID transports
+use large receive buffers to honor Chrome's advertised 1472-byte UDP capacity.
+Chrome DATAGRAM validation follows the advertised limit. Wire tests reassemble
+multiple Initials; integration tests cover both new versions and legacy presets.
