@@ -1,4 +1,4 @@
-# ADR 0014: TCP-only system VPN mode for SSH
+# ADR 0017: TCP-only system VPN mode for SSH
 
 Status: accepted, October 27, 2026. Tracks issue #32 and extends ADR 0013.
 

@@ -31,6 +31,13 @@ jobs:
             fi
           done
       - run: go test ./...
+      - name: Check VLESS and VMess transport races
+        run: CGO_ENABLED=1 go test -race ./internal/vless ./internal/vmess
+      - name: VMess transport interoperability with Xray
+        run: |
+          xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
+          go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
+          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXrayVMessAEAD$' -count=1 -v
       - name: Linux TUN lifecycle
         run: |
           go test -c -o /tmp/bimeron-core.test ./core

@@ -65,7 +65,7 @@ func LoadConfig(path string) (SessionConfig, error) {
 }
 
 // LoadConfigData is for sandboxed hosts. It never accesses configuration/key
-// files; supply SS, SSConf, SOCKS5, VLESS, Trojan, Key or explicit server parameters in the contents.
+// files; supply SS, SSConf, SOCKS5, VLESS, VMess, Trojan, Key or explicit server parameters in the contents.
 func LoadConfigData(data []byte) (SessionConfig, error) {
 	c, err := config.ParseData(data)
 	if err != nil {
