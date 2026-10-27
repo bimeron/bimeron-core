@@ -3,6 +3,9 @@
 .env
 .env.*
 *.key
+# Public upstream TLS fixtures, used only by vendored QUIC tests.
+!/third_party/apernet-quic-go/internal/testdata/priv.key
+!/third_party/apernet-quic-go/http3/internal/testdata/priv.key
 *.mobileprovision
 *.p12
 *.exe

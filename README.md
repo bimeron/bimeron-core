@@ -1,6 +1,6 @@
 # Bimeron Core
 
-Bimeron Core is a VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` Shadowsocks access keys, VLESS over TCP with REALITY and Vision or ordinary TLS, VLESS over WebSocket with TLS and early data, VLESS over gRPC with TLS, VLESS over XHTTP with TLS or REALITY in selected modes, Trojan over TCP/TLS with UDP relay, remote SOCKS5 upstreams, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules. See [configuration](docs/CONF.MD), [VLESS transport contract](docs/VLESS_TRANSPORTS.MD), and [GUI integration](docs/GUI_INTEGRATION.MD).
+Bimeron Core is a VPN core for Windows, Linux, and macOS. It supports static `ss://` and dynamic `ssconf://` Shadowsocks access keys, VLESS over TCP with REALITY and Vision or ordinary TLS, VLESS over WebSocket with TLS and early data, VLESS over gRPC with TLS, VLESS over XHTTP with TLS or REALITY in selected modes, Trojan over TCP/TLS with UDP relay, Hysteria2 over QUIC with TCP and UDP relay, remote SOCKS5 upstreams, a local SOCKS5 proxy, system VPN integration, and profile-based routing rules. See [configuration](docs/CONF.MD), [VLESS transport contract](docs/VLESS_TRANSPORTS.MD), and [GUI integration](docs/GUI_INTEGRATION.MD).
 
 Bimeron's original code is licensed under the MIT License; see `LICENSE`. Adapted VLESS client files retain Xray-core's MPL 2.0 license; see `third_party/vless/`. Other third-party components retain their own licenses in `THIRD_PARTY_NOTICES.txt`, `third_party/wf/LICENSE`, and, for distributed Wintun DLLs, `WINTUN-LICENSE.txt`.
 
@@ -49,4 +49,3 @@ The CLI also provides `daemon`, `start`, `status`, `watch`, `stats`, `capabiliti
 ## Third-party projects
 
 Bimeron Core uses the Outline SDK, gVisor, Wintun, and other libraries listed in `go.mod` and `THIRD_PARTY_NOTICES.txt`. Their upstream names, links, and license notices are not part of this project's rebranding.
-

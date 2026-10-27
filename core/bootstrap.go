@@ -77,7 +77,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 	}
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
 		family := "ip4"
-		if p.Type == "vless" || p.Type == "trojan" {
+		if p.Type == "vless" || p.Type == "trojan" || p.Type == "hysteria2" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)

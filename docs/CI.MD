@@ -3,6 +3,17 @@
 `.github/workflows/go.yml` runs `go test ./...` and builds distribution
 artifacts on pushes and pull requests. Go is selected from `go.mod`.
 
+The fingerprint dependency matrix also tests the two local Hysteria/QUIC
+modules explicitly on Linux and Windows, including decoded UDP Initials and
+Retry/loss/HelloRetryRequest. Linux jobs run focused race checks. Root Hysteria
+tests build an independent, unmodified v2.13.0 reference server with `GOWORK=off`
+and exercise simultaneous named presets over TCP and fragmented UDP. This
+requires the Go toolchain and the fixture module's pinned dependencies.
+
+The race run excludes only `TestFrameParserAllocs/STREAM`: Go's race
+instrumentation randomly discards `sync.Pool` entries, invalidating its zero
+allocation assertion. The ordinary unit run still requires this test to pass.
+
 The `cli-dist` job builds all six Windows, Linux, and macOS CLI directories,
 including the verified Wintun DLL and license in each Windows directory. It
 runs `scripts/check-dist.go` and uploads `cli-dist` for 14 days. The
