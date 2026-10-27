@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
@@ -18,7 +17,8 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
-	utls "github.com/refraction-networking/utls"
+	"bimeron/internal/streamtransport"
+	"bimeron/internal/vless"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/websocket"
 )
@@ -29,6 +29,8 @@ type Client struct {
 	id          [16]byte
 	dialer      net.Dialer
 	rootCAs     *x509.CertPool
+	rootsOnce   sync.Once
+	httpStream  *vless.Client
 	mu          sync.Mutex
 	closed      bool
 	connections map[*streamConn]struct{}
@@ -51,6 +53,16 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		return nil, fmt.Errorf("invalid VMess user ID")
 	}
 	c := &Client{endpoint: profile.TCP, settings: profile.VMess, dialer: dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
+	if profile.VMess.Network == "grpc" || profile.VMess.Network == "xhttp" {
+		v := accesskey.VLESS{ID: profile.VMess.ID, Network: profile.VMess.Network, Security: "tls", Encryption: "none", ServerName: profile.VMess.ServerName, Fingerprint: profile.VMess.Fingerprint, ALPN: profile.VMess.ALPN,
+			GRPCServiceName: profile.VMess.GRPCServiceName, GRPCAuthority: profile.VMess.GRPCAuthority, GRPCMultiMode: profile.VMess.GRPCMultiMode,
+			XHTTPPath: profile.VMess.XHTTPPath, XHTTPHost: profile.VMess.XHTTPHost, XHTTPMode: profile.VMess.XHTTPMode}
+		transportProfile := accesskey.Profile{Type: "vless", TCP: profile.TCP, VLESS: v}
+		c.httpStream, err = vless.New(transportProfile, dialer)
+		if err != nil {
+			return nil, fmt.Errorf("invalid VMess HTTP transport: %w", err)
+		}
+	}
 	copy(c.id[:], idBytes)
 	return c, nil
 }
@@ -74,6 +86,53 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	if err != nil {
 		return nil, err
 	}
+	var conn net.Conn
+	ready := false
+	defer func() {
+		if !ready && conn != nil {
+			_ = conn.Close()
+		}
+	}()
+	if c.httpStream != nil {
+		c.rootsOnce.Do(func() { c.httpStream.SetRootCAs(c.rootCAs) })
+		conn, err = c.httpStream.DialTransport(ctx)
+	} else {
+		conn, err = c.directTransport(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	if err = writeAll(conn, header); err != nil {
+		return nil, fmt.Errorf("VMess request failed")
+	}
+	_ = conn.SetWriteDeadline(time.Time{})
+	writer, err := newChunkCodec(conn, key, iv, security)
+	if err != nil {
+		return nil, err
+	}
+	responseKey := sha256.Sum256(key[:])
+	responseIV := sha256.Sum256(iv[:])
+	var rk, ri [16]byte
+	copy(rk[:], responseKey[:16])
+	copy(ri[:], responseIV[:16])
+	reader, err := newChunkCodec(conn, rk, ri, security)
+	if err != nil {
+		return nil, err
+	}
+	owned := &streamConn{Conn: conn, owner: c, writer: writer, reader: reader, responseKey: key, responseIV: iv, expected: response}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, net.ErrClosed
+	}
+	c.connections[owned] = struct{}{}
+	c.mu.Unlock()
+	ready = true
+	return owned, nil
+}
+
+func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
@@ -95,35 +154,7 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	} else if c.settings.Network == "ws" || c.settings.Network == "httpupgrade" {
 		protocols = []string{"http/1.1"}
 	}
-	var conn net.Conn
-	if c.settings.Fingerprint == "" {
-		secure := tls.Client(raw, &tls.Config{ServerName: c.settings.ServerName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs, NextProtos: protocols})
-		err = secure.HandshakeContext(setup)
-		conn = secure
-	} else {
-		id := vmessFingerprint(c.settings.Fingerprint)
-		secure := utls.UClient(raw, &utls.Config{ServerName: c.settings.ServerName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs, NextProtos: protocols}, id)
-		if len(protocols) > 0 {
-			if err = secure.BuildHandshakeState(); err != nil {
-				return nil, fmt.Errorf("VMess TLS client hello failed")
-			}
-			found := false
-			for _, extension := range secure.Extensions {
-				if alpn, ok := extension.(*utls.ALPNExtension); ok {
-					alpn.AlpnProtocols = protocols
-					found = true
-				}
-			}
-			if !found {
-				secure.Extensions = append(secure.Extensions, &utls.ALPNExtension{AlpnProtocols: protocols})
-			}
-			if err = secure.BuildHandshakeState(); err != nil {
-				return nil, fmt.Errorf("VMess TLS client hello failed")
-			}
-		}
-		err = secure.HandshakeContext(setup)
-		conn = secure
-	}
+	conn, err := streamtransport.TLS(setup, raw, c.settings.ServerName, protocols, c.settings.Fingerprint, c.rootCAs)
 	if err != nil {
 		return nil, fmt.Errorf("VMess TLS handshake failed: %w", err)
 	}
@@ -148,33 +179,9 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 			return nil, err
 		}
 	}
-	if err = writeAll(conn, header); err != nil {
-		return nil, fmt.Errorf("VMess request failed")
-	}
-	writer, err := newChunkCodec(conn, key, iv, security)
-	if err != nil {
-		return nil, err
-	}
-	responseKey := sha256.Sum256(key[:])
-	responseIV := sha256.Sum256(iv[:])
-	var rk, ri [16]byte
-	copy(rk[:], responseKey[:16])
-	copy(ri[:], responseIV[:16])
-	reader, err := newChunkCodec(conn, rk, ri, security)
-	if err != nil {
-		return nil, err
-	}
 	_ = raw.SetDeadline(time.Time{})
-	owned := &streamConn{Conn: conn, owner: c, writer: writer, reader: reader, responseKey: key, responseIV: iv, expected: response}
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil, net.ErrClosed
-	}
-	c.connections[owned] = struct{}{}
-	c.mu.Unlock()
 	ready = true
-	return owned, nil
+	return conn, nil
 }
 
 func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
@@ -205,23 +212,6 @@ type upgradeConn struct {
 
 func (c *upgradeConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
 
-func vmessFingerprint(name string) utls.ClientHelloID {
-	switch name {
-	case "firefox":
-		return utls.HelloFirefox_Auto
-	case "safari":
-		return utls.HelloSafari_Auto
-	case "ios":
-		return utls.HelloIOS_Auto
-	case "android":
-		return utls.HelloAndroid_11_OkHttp
-	case "edge":
-		return utls.HelloEdge_Auto
-	default: // Validate accepts only chrome here.
-		return utls.HelloChrome_Auto
-	}
-}
-
 func (c *Client) DialStream(ctx context.Context, target string) (transport.StreamConn, error) {
 	return c.open(ctx, 1, target)
 }
@@ -243,6 +233,9 @@ func (c *Client) Close() error {
 	}
 	for _, x := range connections {
 		_ = x.Close()
+	}
+	if c.httpStream != nil {
+		_ = c.httpStream.Close()
 	}
 	return nil
 }

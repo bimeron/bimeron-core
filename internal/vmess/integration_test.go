@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -94,16 +95,24 @@ func TestXrayVMessAEAD(t *testing.T) {
 			_, _ = udpListener.WriteTo(b[:n], addr)
 		}
 	}()
-	for _, network := range []string{"tcp", "ws", "httpupgrade"} {
+	for _, scenario := range []struct{ network, mode string }{{"tcp", ""}, {"ws", ""}, {"httpupgrade", ""}, {"grpc", ""}, {"grpc", "multi"}, {"xhttp", "packet-up"}, {"xhttp", "stream-up"}, {"xhttp", "auto"}} {
+		network, mode := scenario.network, scenario.mode
 		for _, security := range []string{"aes-128-gcm", "chacha20-poly1305"} {
 			for _, fingerprint := range []string{"", "chrome"} {
-				t.Run(network+"/"+security+"/"+fingerprint, func(t *testing.T) {
+				t.Run(network+"/"+mode+"/"+security+"/"+fingerprint, func(t *testing.T) {
 					port := freePort(t)
 					settings := `{"network":"tcp","security":"tls"}`
 					if network == "ws" {
 						settings = `{"network":"ws","security":"tls","wsSettings":{"path":"/vmess"}}`
 					} else if network == "httpupgrade" {
 						settings = `{"network":"httpupgrade","security":"tls","httpupgradeSettings":{"path":"/vmess"}}`
+					} else if network == "grpc" {
+						settings = `{"network":"grpc","security":"tls","grpcSettings":{"serviceName":"vmess"}}`
+						if mode == "multi" {
+							settings = `{"network":"grpc","security":"tls","grpcSettings":{"serviceName":"vmess","multiMode":true}}`
+						}
+					} else if network == "xhttp" {
+						settings = fmt.Sprintf(`{"network":"xhttp","security":"tls","xhttpSettings":{"path":"/vmess","mode":%q}}`, mode)
 					}
 					config := fmt.Sprintf(`{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":"vmess","settings":{"clients":[{"id":%q,"alterId":0}]},"streamSettings":%s}],"outbounds":[{"protocol":"freedom"}]}`, port, id, settings)
 					// Add the certificate through streamSettings without relying on a system trust store.
@@ -137,6 +146,13 @@ func TestXrayVMessAEAD(t *testing.T) {
 					if network == "ws" || network == "httpupgrade" {
 						v.WSPath = "/vmess"
 						v.ALPN = "http/1.1"
+					} else if network == "grpc" {
+						v.GRPCServiceName = "vmess"
+						v.GRPCMultiMode = mode == "multi"
+						v.ALPN = "h2"
+					} else if network == "xhttp" {
+						v.XHTTPPath, v.XHTTPMode = "/vmess", mode
+						v.ALPN = "h2"
 					}
 					p := accesskey.Profile{Type: "vmess", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, VMess: v}
 					client, err := New(p, net.Dialer{})
@@ -173,6 +189,24 @@ func TestXrayVMessAEAD(t *testing.T) {
 					n, _, err := packet.ReadFrom(udpEcho[:])
 					if err != nil || string(udpEcho[:n]) != "dns" {
 						t.Fatalf("VMess UDP echo: %q, %v; Xray: %s", udpEcho[:n], err, logs.String())
+					}
+					_ = stream.Close()
+					reopened, err := client.DialStream(ctx, tcpListener.Addr().String())
+					if err != nil {
+						t.Fatalf("VMess reconnect: %v; Xray: %s", err, logs.String())
+					}
+					reopened.SetDeadline(time.Now().Add(5 * time.Second))
+					if _, err := reopened.Write([]byte("again")); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := io.ReadFull(reopened, echo[:]); err != nil || string(echo[:]) != "again" {
+						t.Fatalf("VMess reconnect echo: %q, %v; Xray: %s", echo, err, logs.String())
+					}
+					_ = reopened.Close()
+					_ = packet.Close()
+					_ = client.Close()
+					if _, err := client.DialStream(ctx, tcpListener.Addr().String()); !errors.Is(err, net.ErrClosed) {
+						t.Fatalf("VMess dial after close: %v", err)
 					}
 				})
 			}

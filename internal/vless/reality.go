@@ -20,27 +20,13 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/streamtransport"
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/crypto/hkdf"
 )
 
 func fingerprint(name string) (utls.ClientHelloID, error) {
-	switch name {
-	case "chrome":
-		return utls.HelloChrome_Auto, nil
-	case "firefox":
-		return utls.HelloFirefox_Auto, nil
-	case "safari":
-		return utls.HelloSafari_Auto, nil
-	case "ios":
-		return utls.HelloIOS_Auto, nil
-	case "android":
-		return utls.HelloAndroid_11_OkHttp, nil
-	case "edge":
-		return utls.HelloEdge_Auto, nil
-	default:
-		return utls.ClientHelloID{}, fmt.Errorf("unsupported REALITY fingerprint")
-	}
+	return streamtransport.Fingerprint(name)
 }
 
 func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLESS, publicKey, shortID []byte) (*utls.UConn, error) {

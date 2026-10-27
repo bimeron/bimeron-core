@@ -29,11 +29,27 @@ func TestParseVMess(t *testing.T) {
 	if p, err := ParseVMess(vmessLink(upgrade)); err != nil || p.VMess.Network != "httpupgrade" {
 		t.Fatalf("VMess HTTPUpgrade: %#v, %v", p.VMess, err)
 	}
+	grpc := strings.Replace(strings.Replace(base, `"net":"ws"`, `"net":"grpc"`, 1), `"path":"/vpn"`, `"path":"vmess"`, 1)
+	if p, err := ParseVMess(vmessLink(grpc)); err != nil || p.VMess.GRPCServiceName != "vmess" || p.VMess.GRPCAuthority != "front.example.com" {
+		t.Fatalf("VMess gRPC: %#v, %v", p.VMess, err)
+	}
+	grpcMulti := strings.Replace(grpc, `"net":"grpc"`, `"net":"grpc","mode":"multi"`, 1)
+	if p, err := ParseVMess(vmessLink(grpcMulti)); err != nil || !p.VMess.GRPCMultiMode {
+		t.Fatalf("VMess gRPC multi: %#v, %v", p.VMess, err)
+	}
+	xhttp := strings.Replace(base, `"net":"ws"`, `"net":"xhttp"`, 1)
+	if p, err := ParseVMess(vmessLink(xhttp)); err != nil || p.VMess.XHTTPPath != "/vpn" || p.VMess.XHTTPMode != "auto" {
+		t.Fatalf("VMess XHTTP: %#v, %v", p.VMess, err)
+	}
+	xhttpStream := strings.Replace(xhttp, `"net":"xhttp"`, `"net":"xhttp","mode":"stream-up"`, 1)
+	if p, err := ParseVMess(vmessLink(xhttpStream)); err != nil || p.VMess.XHTTPMode != "stream-up" {
+		t.Fatalf("VMess XHTTP stream-up: %#v, %v", p.VMess, err)
+	}
 	for _, bad := range []string{
 		strings.Replace(base, `"aid":"0"`, `"aid":"1"`, 1),
 		strings.Replace(base, `"tls":"tls"`, `"tls":""`, 1),
 		strings.Replace(base, `"scy":"auto"`, `"scy":"none"`, 1),
-		strings.Replace(base, `"net":"ws"`, `"net":"grpc"`, 1),
+		strings.Replace(base, `"net":"ws"`, `"net":"kcp"`, 1),
 		strings.Replace(base, `"id":"123e4567-e89b-12d3-a456-426614174000"`, `"id":"private-id"`, 1),
 		strings.Replace(base, `"path":"/vpn"`, `"path":"https://invalid"`, 1),
 		strings.Replace(base, `"v":"2"`, `"v":"2","evil":true`, 1),
@@ -42,6 +58,11 @@ func TestParseVMess(t *testing.T) {
 		strings.Replace(base, `"scy":"auto"`, `"scy":false`, 1),
 		strings.Replace(base, `"sni":"example.com"`, `"sni":"example.com","alpn":"h2"`, 1),
 		strings.Replace(base, `"sni":"example.com"`, `"sni":"example.com","fp":"unknown"`, 1),
+		strings.Replace(xhttp, `"net":"xhttp"`, `"net":"xhttp","mode":"stream-one"`, 1),
+		strings.Replace(grpc, `"path":"vmess"`, `"path":""`, 1),
+		strings.Replace(grpc, `"path":"vmess"`, `"path":"bad/service"`, 1),
+		strings.Replace(grpc, `"host":"front.example.com"`, `"host":":invalid"`, 1),
+		strings.Replace(xhttp, `"sni":"example.com"`, `"sni":"example.com","alpn":"http/1.1"`, 1),
 	} {
 		_, err := ParseVMess(vmessLink(bad))
 		if err == nil {

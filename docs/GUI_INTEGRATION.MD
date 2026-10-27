@@ -357,9 +357,12 @@ replace it when developing a full-fledged editor for all settings.
 
 Accept base64 JSON `vmess://` links as the sole `VMess`, `Key`, or `File`
 source. Preserve the complete link; the core validates AEAD (`aid=0`),
-TCP/TLS or WebSocket/TLS, SNI, path, and encryption. Unsupported fields and
-transports produce validation errors. The core supports VMess TCP and UDP in
-VPN mode. Do not display the user ID or full link in diagnostics.
+TCP/TLS, WebSocket/TLS, HTTPUpgrade/TLS, gRPC/TLS, or basic XHTTP/TLS,
+including SNI, path, optional TLS fingerprint and ALPN, and encryption.
+The XHTTP importer accepts `auto`, `packet-up`, and `stream-up` over HTTP/2.
+Unsupported fields and transports produce validation errors. The core
+supports VMess TCP and UDP in VPN mode. Do not display the user ID or full
+link in diagnostics. See [VMess transport matrix](VMESS_TRANSPORTS.MD).
 
 ### Trojan profile editor
 

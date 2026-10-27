@@ -2,6 +2,8 @@
 
 Status: accepted, October 26, 2026.
 
+The supported transport scope was expanded by ADR 0010 on October 27, 2026.
+
 ## Context
 
 Users need VMess share links. The VPN backend requires both TCP streams and UDP

@@ -16,6 +16,9 @@ import (
 type VMess struct {
 	ID, Security, Network, TLS, ServerName, WSPath, WSHost string
 	ALPN, Fingerprint                                      string
+	GRPCServiceName, GRPCAuthority                         string
+	GRPCMultiMode                                          bool
+	XHTTPPath, XHTTPHost, XHTTPMode                        string
 }
 
 func (v VMess) Validate(host string, port int) error {
@@ -25,14 +28,14 @@ func (v VMess) Validate(host string, port int) error {
 	if v.Security != "auto" && v.Security != "aes-128-gcm" && v.Security != "chacha20-poly1305" {
 		return fmt.Errorf("unsupported VMess encryption")
 	}
-	if v.TLS != "tls" || (v.Network != "tcp" && v.Network != "ws" && v.Network != "httpupgrade") {
+	if v.TLS != "tls" || (v.Network != "tcp" && v.Network != "ws" && v.Network != "httpupgrade" && v.Network != "grpc" && v.Network != "xhttp") {
 		return fmt.Errorf("unsupported VMess transport")
 	}
 	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid VMess server name")
 	}
 	for _, protocol := range strings.Split(v.ALPN, ",") {
-		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || ((v.Network == "ws" || v.Network == "httpupgrade") && protocol != "http/1.1")) {
+		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || ((v.Network == "ws" || v.Network == "httpupgrade") && protocol != "http/1.1") || ((v.Network == "grpc" || v.Network == "xhttp") && protocol != "h2")) {
 			return fmt.Errorf("invalid VMess ALPN")
 		}
 	}
@@ -55,6 +58,30 @@ func (v VMess) Validate(host string, port int) error {
 			u, err := url.Parse("https://" + v.WSHost)
 			if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || strings.ContainsAny(v.WSHost, " \t\r\n") {
 				return fmt.Errorf("invalid VMess WebSocket host")
+			}
+		}
+	}
+	if v.Network != "grpc" && (v.GRPCServiceName != "" || v.GRPCAuthority != "" || v.GRPCMultiMode) {
+		return fmt.Errorf("VMess gRPC options require grpc")
+	}
+	if v.Network == "grpc" && (v.GRPCServiceName == "" || strings.ContainsAny(v.GRPCServiceName, "?\\# \t\r\n") || (strings.Contains(v.GRPCServiceName, "/") && (!strings.HasPrefix(v.GRPCServiceName, "/") || strings.HasSuffix(v.GRPCServiceName, "/") || strings.Contains(v.GRPCServiceName, "//"))) || strings.ContainsAny(v.GRPCAuthority, " /\\@?#\t\r\n") || strings.HasPrefix(v.GRPCAuthority, ":")) {
+		return fmt.Errorf("invalid VMess gRPC settings")
+	}
+	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "") {
+		return fmt.Errorf("VMess XHTTP options require xhttp")
+	}
+	if v.Network == "xhttp" {
+		if v.XHTTPMode != "auto" && v.XHTTPMode != "packet-up" && v.XHTTPMode != "stream-up" {
+			return fmt.Errorf("unsupported VMess XHTTP mode")
+		}
+		path, err := url.ParseRequestURI(v.XHTTPPath)
+		if v.XHTTPPath == "" || err != nil || path.IsAbs() || !strings.HasPrefix(v.XHTTPPath, "/") || strings.ContainsAny(v.XHTTPPath, "#\\ \t\r\n") {
+			return fmt.Errorf("invalid VMess XHTTP path")
+		}
+		if v.XHTTPHost != "" {
+			u, err := url.Parse("https://" + v.XHTTPHost)
+			if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" {
+				return fmt.Errorf("invalid VMess XHTTP host")
 			}
 		}
 	}
@@ -109,7 +136,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if _, err = dec.Token(); err != io.EOF {
 		return Profile{}, fmt.Errorf("invalid VMess JSON")
 	}
-	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true, "alpn": true, "fp": true}
+	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true, "alpn": true, "fp": true, "mode": true}
 	for k := range fields {
 		if !allowed[k] {
 			return Profile{}, fmt.Errorf("unsupported VMess field")
@@ -155,6 +182,25 @@ func ParseVMess(raw string) (Profile, error) {
 	}
 	if (v.Network == "ws" || v.Network == "httpupgrade") && v.WSPath == "" {
 		v.WSPath = "/"
+	}
+	if v.Network == "grpc" {
+		v.GRPCServiceName, v.GRPCAuthority = get("path"), get("host")
+		v.WSPath, v.WSHost = "", ""
+		v.GRPCMultiMode = get("mode") == "multi"
+		if get("mode") != "" && get("mode") != "multi" {
+			return Profile{}, fmt.Errorf("unsupported VMess gRPC mode")
+		}
+	} else if v.Network == "xhttp" {
+		v.XHTTPPath, v.XHTTPHost, v.XHTTPMode = get("path"), get("host"), get("mode")
+		v.WSPath, v.WSHost = "", ""
+		if v.XHTTPPath == "" {
+			v.XHTTPPath = "/"
+		}
+		if v.XHTTPMode == "" {
+			v.XHTTPMode = "auto"
+		}
+	} else if get("mode") != "" {
+		return Profile{}, fmt.Errorf("unsupported VMess mode")
 	}
 	if err := v.Validate(get("add"), port); err != nil {
 		return Profile{}, err

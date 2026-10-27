@@ -2,6 +2,11 @@
 
 `.github/workflows/go.yml` runs `go test ./...` and builds distribution
 artifacts on pushes and pull requests. Go is selected from `go.mod`.
+The Go job also builds pinned Xray-core `v1.260327.0` outside Bimeron's module
+graph and checks VMess TCP, UDP, reconnect, and cleanup over every documented
+TLS transport, both AEAD ciphers, and representative TLS fingerprints. The
+compiled dependency and notice checks reject unwanted modules. The Linux job
+also runs VLESS and VMess transport tests with Go's race detector.
 
 The `cli-dist` job builds all six Windows, Linux, and macOS CLI directories,
 including the verified Wintun DLL and license in each Windows directory. It

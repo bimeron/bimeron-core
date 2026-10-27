@@ -175,13 +175,18 @@ of `File`. For example, the JSON inside a supported link has this shape:
 ```
 
 The `vmess://` payload is standard or URL-safe base64 of the UTF-8 JSON.
-`net` may be `tcp`, `ws`, or `httpupgrade`; all require TLS certificate verification. `scy`
+`net` may be `tcp`, `ws`, `httpupgrade`, `grpc`, or `xhttp`; all require TLS
+certificate verification. `scy`
 may be `auto` (AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
 Optional `fp` selects a TLS client fingerprint: `chrome`, `firefox`, `safari`,
 `ios`, `android`, or `edge`. Optional `alpn` supplies comma-separated TLS ALPN
-protocols; WebSocket and HTTPUpgrade accept only `http/1.1`. Without `alpn`,
-these HTTP transports use `http/1.1` and TCP leaves ALPN unspecified. The
-`host` and `path` fields apply to WebSocket and HTTPUpgrade.
+protocols; WebSocket and HTTPUpgrade accept only `http/1.1`, while gRPC and
+basic XHTTP accept only `h2`. Without `alpn`, the transport selects its
+default. For WebSocket and HTTPUpgrade, `path` and optional `host` specify the
+HTTP request. For gRPC, `path` is the required service name, optional `host`
+is the authority, and `mode=multi` selects multi mode. For XHTTP, `path` and
+optional `host` specify the HTTP request; `mode` may be `auto` (the default),
+`packet-up`, or `stream-up`. See [VMess transport matrix](VMESS_TRANSPORTS.MD).
 The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
 the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
 transport, other networks, and unknown JSON fields are rejected. VMess has no
