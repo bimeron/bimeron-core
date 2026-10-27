@@ -94,7 +94,7 @@ func TestXrayVMessAEAD(t *testing.T) {
 			_, _ = udpListener.WriteTo(b[:n], addr)
 		}
 	}()
-	for _, network := range []string{"tcp", "ws"} {
+	for _, network := range []string{"tcp", "ws", "httpupgrade"} {
 		for _, security := range []string{"aes-128-gcm", "chacha20-poly1305"} {
 			for _, fingerprint := range []string{"", "chrome"} {
 				t.Run(network+"/"+security+"/"+fingerprint, func(t *testing.T) {
@@ -102,6 +102,8 @@ func TestXrayVMessAEAD(t *testing.T) {
 					settings := `{"network":"tcp","security":"tls"}`
 					if network == "ws" {
 						settings = `{"network":"ws","security":"tls","wsSettings":{"path":"/vmess"}}`
+					} else if network == "httpupgrade" {
+						settings = `{"network":"httpupgrade","security":"tls","httpupgradeSettings":{"path":"/vmess"}}`
 					}
 					config := fmt.Sprintf(`{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":"vmess","settings":{"clients":[{"id":%q,"alterId":0}]},"streamSettings":%s}],"outbounds":[{"protocol":"freedom"}]}`, port, id, settings)
 					// Add the certificate through streamSettings without relying on a system trust store.
@@ -132,7 +134,7 @@ func TestXrayVMessAEAD(t *testing.T) {
 						t.Fatalf("Xray did not start: %s", logs.String())
 					}
 					v := accesskey.VMess{ID: id, Security: security, Network: network, TLS: "tls", ServerName: "localhost", Fingerprint: fingerprint}
-					if network == "ws" {
+					if network == "ws" || network == "httpupgrade" {
 						v.WSPath = "/vmess"
 						v.ALPN = "http/1.1"
 					}

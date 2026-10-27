@@ -1,6 +1,7 @@
 package vmess
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,7 +92,7 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	protocols := []string(nil)
 	if c.settings.ALPN != "" {
 		protocols = strings.Split(c.settings.ALPN, ",")
-	} else if c.settings.Network == "ws" {
+	} else if c.settings.Network == "ws" || c.settings.Network == "httpupgrade" {
 		protocols = []string{"http/1.1"}
 	}
 	var conn net.Conn
@@ -139,6 +142,11 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 		}
 		ws.PayloadType = websocket.BinaryFrame
 		conn = ws
+	} else if c.settings.Network == "httpupgrade" {
+		conn, err = c.httpUpgrade(conn)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err = writeAll(conn, header); err != nil {
 		return nil, fmt.Errorf("VMess request failed")
@@ -168,6 +176,34 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	ready = true
 	return owned, nil
 }
+
+func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
+	host := c.settings.WSHost
+	if host == "" {
+		host = c.settings.ServerName
+	}
+	request := &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "https", Host: host, Path: c.settings.WSPath}, Header: http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}}}
+	if err := request.Write(conn); err != nil {
+		return nil, fmt.Errorf("VMess HTTPUpgrade request failed: %w", err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, request)
+	if err != nil {
+		return nil, fmt.Errorf("VMess HTTPUpgrade response failed: %w", err)
+	}
+	if response.StatusCode != http.StatusSwitchingProtocols || !strings.EqualFold(response.Header.Get("Upgrade"), "websocket") || !strings.EqualFold(response.Header.Get("Connection"), "upgrade") {
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("VMess HTTPUpgrade rejected")
+	}
+	return &upgradeConn{Conn: conn, reader: reader}, nil
+}
+
+type upgradeConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *upgradeConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
 
 func vmessFingerprint(name string) utls.ClientHelloID {
 	switch name {

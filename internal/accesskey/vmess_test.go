@@ -25,6 +25,10 @@ func TestParseVMess(t *testing.T) {
 	if err != nil || withOptions.VMess.ALPN != "http/1.1" || withOptions.VMess.Fingerprint != "chrome" {
 		t.Fatalf("VMess TLS options: %#v, %v", withOptions.VMess, err)
 	}
+	upgrade := strings.Replace(base, `"net":"ws"`, `"net":"httpupgrade"`, 1)
+	if p, err := ParseVMess(vmessLink(upgrade)); err != nil || p.VMess.Network != "httpupgrade" {
+		t.Fatalf("VMess HTTPUpgrade: %#v, %v", p.VMess, err)
+	}
 	for _, bad := range []string{
 		strings.Replace(base, `"aid":"0"`, `"aid":"1"`, 1),
 		strings.Replace(base, `"tls":"tls"`, `"tls":""`, 1),

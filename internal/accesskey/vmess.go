@@ -25,14 +25,14 @@ func (v VMess) Validate(host string, port int) error {
 	if v.Security != "auto" && v.Security != "aes-128-gcm" && v.Security != "chacha20-poly1305" {
 		return fmt.Errorf("unsupported VMess encryption")
 	}
-	if v.TLS != "tls" || (v.Network != "tcp" && v.Network != "ws") {
+	if v.TLS != "tls" || (v.Network != "tcp" && v.Network != "ws" && v.Network != "httpupgrade") {
 		return fmt.Errorf("unsupported VMess transport")
 	}
 	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid VMess server name")
 	}
 	for _, protocol := range strings.Split(v.ALPN, ",") {
-		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1")) {
+		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || ((v.Network == "ws" || v.Network == "httpupgrade") && protocol != "http/1.1")) {
 			return fmt.Errorf("invalid VMess ALPN")
 		}
 	}
@@ -43,10 +43,10 @@ func (v VMess) Validate(host string, port int) error {
 			return fmt.Errorf("unsupported VMess fingerprint")
 		}
 	}
-	if v.Network != "ws" && (v.WSPath != "" || v.WSHost != "") {
-		return fmt.Errorf("VMess WebSocket options require ws")
+	if v.Network == "tcp" && (v.WSPath != "" || v.WSHost != "") {
+		return fmt.Errorf("VMess HTTP options require ws or httpupgrade")
 	}
-	if v.Network == "ws" {
+	if v.Network == "ws" || v.Network == "httpupgrade" {
 		path, err := url.ParseRequestURI(v.WSPath)
 		if v.WSPath == "" || err != nil || path.IsAbs() || !strings.HasPrefix(v.WSPath, "/") || strings.ContainsAny(v.WSPath, "#\\ \t\r\n") {
 			return fmt.Errorf("invalid VMess WebSocket path")
@@ -153,7 +153,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if v.ServerName == "" {
 		v.ServerName = get("add")
 	}
-	if v.Network == "ws" && v.WSPath == "" {
+	if (v.Network == "ws" || v.Network == "httpupgrade") && v.WSPath == "" {
 		v.WSPath = "/"
 	}
 	if err := v.Validate(get("add"), port); err != nil {
