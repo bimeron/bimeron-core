@@ -37,6 +37,7 @@ type Profile struct {
 	Trojan    Trojan
 	Hysteria2 Hysteria2
 	SSH       SSH
+	TUIC      TUIC
 }
 
 // SSH describes a TCP-only SSH upstream. Paths never contain key material.
@@ -619,6 +620,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	}
 	if strings.HasPrefix(key, "hysteria2://") || strings.HasPrefix(key, "hy2://") {
 		return ParseHysteria2(key)
+	}
+	if strings.HasPrefix(key, "tuic://") {
+		return ParseTUIC(key)
 	}
 	if strings.HasPrefix(key, "ss://") {
 		return ParseSS(key)

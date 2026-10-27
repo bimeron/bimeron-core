@@ -41,6 +41,7 @@ type Access struct {
 	Trojan          string
 	Hysteria2       string
 	SSH             string
+	TUIC            string
 	Key             string
 	KeyFile         string
 	Type            string
@@ -194,6 +195,8 @@ func parse(b []byte) (*File, error) {
 				c.Access.Hysteria2 = value
 			case "SSH":
 				c.Access.SSH = value
+			case "TUIC":
+				c.Access.TUIC = value
 			case "SS":
 				c.Access.SS = value
 			case "SSConf":
@@ -416,6 +419,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SSH != "" && !strings.HasPrefix(c.Access.SSH, "ssh://") {
 		return nil, fmt.Errorf("[AccessKey] SSH must start with ssh://")
 	}
+	if c.Access.TUIC != "" && !strings.HasPrefix(c.Access.TUIC, "tuic://") {
+		return nil, fmt.Errorf("[AccessKey] TUIC must start with tuic://")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
@@ -438,6 +444,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SSH != "" {
 		sources++
 	}
+	if c.Access.TUIC != "" {
+		sources++
+	}
 	if c.Access.Key != "" {
 		sources++
 	}
@@ -454,7 +463,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, Trojan, Hysteria2, SSH, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, Trojan, Hysteria2, SSH, TUIC, Key, or explicit parameters")
 	}
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
@@ -567,6 +576,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SSH != "" {
 		key = c.Access.SSH
 	}
+	if c.Access.TUIC != "" {
+		key = c.Access.TUIC
+	}
 	if c.Access.KeyFile != "" {
 		keyPath := c.Access.KeyFile
 		if !filepath.IsAbs(keyPath) {
@@ -638,8 +650,16 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "tuic://") {
+		p, err := accesskey.ParseTUIC(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, trojan://, hysteria2://, hy2://, or ssh://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, trojan://, hysteria2://, hy2://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

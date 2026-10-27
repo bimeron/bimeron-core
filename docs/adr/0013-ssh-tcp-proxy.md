@@ -1,4 +1,4 @@
-# ADR 0012: Built-in SSH TCP upstream
+# ADR 0013: Built-in SSH TCP upstream
 
 Status: accepted, October 27, 2026. Tracks issue #26.
 

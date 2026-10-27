@@ -336,7 +336,8 @@ Action = direct
 
 For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
 choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
-SOCKS5=socks5://..., Trojan=trojan://..., Hysteria2=hysteria2://..., SSH=ssh://..., Key, or explicit parameters. File is allowed
+SOCKS5=socks5://..., Trojan=trojan://..., Hysteria2=hysteria2://...,
+SSH=ssh://..., TUIC=tuic://..., Key, or explicit parameters. File is allowed
 relative to `.conf`, not the GUI working directory. The keys are now plaintext:
 limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
 DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
@@ -430,6 +431,13 @@ required (Ed25519 is not offered). VPN mode uses TCP and UDP relay; local proxy
 mode exposes TCP CONNECT. The server must support UDP relay. The existing
 upstream UDP message-size and TCP half-close limitations still apply; see
 [CONF.MD](CONF.MD#hysteria2-over-quic).
+
+### TUIC profile editor
+
+Write one `TUIC = tuic://...` source, a generic `Key = tuic://...`, or a
+`File` containing the link. Require a UUID and password. The supported UDP
+relay mode is `quic`; reject native mode and unknown options. Certificate
+verification is mandatory. See [CONF.MD](CONF.MD) for the URI contract.
 
 ### Remote SOCKS5 profile editor
 

@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `SSH`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,8 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`, `hysteria2://...`, or `ssh://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, `trojan://...`,
+`hysteria2://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -264,6 +265,24 @@ Unknown or duplicate query options, obfuscation, and bandwidth options are
 rejected. The server must allow UDP relay. In VPN mode, both TCP and UDP
 traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.
 
+### TUIC v5 over QUIC
+
+Use a complete URI as the sole `[AccessKey]` source:
+
+```ini
+[AccessKey]
+TUIC = tuic://123e4567-e89b-12d3-a456-426614174000:replace-me@server.example.com:443?udp_relay_mode=quic&sni=server.example.com&alpn=h3
+```
+
+`Key` and `File` also accept this URI. The UUID and password are required;
+percent-encode reserved password characters. `sni` defaults to the server
+hostname, and `alpn` defaults to `h3`. TLS verifies the certificate and SNI.
+The only supported UDP relay mode is `quic`, which sends each packet in a
+QUIC unidirectional stream. `udp_relay_mode=quic` may be omitted. Native
+QUIC datagram mode, insecure certificates, 0-RTT, explicit TUIC parameters,
+and other URI options are rejected. The local SOCKS5 listener supports TCP
+CONNECT only. See [`examples/tuic.conf`](../examples/tuic.conf).
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -273,8 +292,10 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, or `trojan://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `trojan://`,
+`hysteria2://`, `hy2://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `Trojan`, `Hysteria2`,
+`SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters
