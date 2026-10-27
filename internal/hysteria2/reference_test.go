@@ -53,7 +53,7 @@ func referenceServer(t *testing.T) map[string]string {
 
 func TestUnmodifiedReference(t *testing.T) {
 	endpoints := referenceServer(t)
-	for _, fp := range []string{"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"} {
+	for _, fp := range []string{"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146"} {
 		t.Run(fp, func(t *testing.T) { t.Parallel(); testUnmodifiedReference(t, endpoints, fp) })
 	}
 }

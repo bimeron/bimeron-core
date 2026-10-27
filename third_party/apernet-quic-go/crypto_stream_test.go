@@ -286,3 +286,19 @@ func testInitialCryptoStreamClientRandomizedSizes(t *testing.T, clientHello []by
 		require.Contains(t, string(reassembled), expectedServerName)
 	}
 }
+
+// A tail sent early must still count toward the next TLS message's offset.
+func TestCryptoStreamTailThenNextMessage(t *testing.T) {
+	s := newCryptoStream()
+	_, err := s.Write([]byte("0123456789"))
+	require.NoError(t, err)
+	tail := s.PopCryptoFrameTail(4)
+	require.Equal(t, protocol.ByteCount(6), tail.Offset)
+	head := s.PopCryptoFrame(100)
+	require.Equal(t, []byte("012345"), head.Data)
+	_, err = s.Write([]byte("next"))
+	require.NoError(t, err)
+	next := s.PopCryptoFrame(100)
+	require.Equal(t, protocol.ByteCount(10), next.Offset)
+	require.Equal(t, []byte("next"), next.Data)
+}

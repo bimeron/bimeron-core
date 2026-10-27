@@ -134,3 +134,30 @@ func encodeTrustAnchorIDs(ids [][]byte) []byte {
 	}
 	return append([]byte{byte(len(list) >> 8), byte(len(list))}, list...)
 }
+
+// Versioned presets adapted from uquic u_parrot.go (MIT; see LICENSE.uquic).
+// Keep the legacy apernet preset unchanged, including its trust-anchor extension.
+func versionedChromeQUICClientHelloSpec(alpn []string, version uint16) *utls.ClientHelloSpec {
+	spec := chromeQUICClientHelloSpec(alpn)
+	extensions := spec.Extensions[:0]
+	for _, ext := range spec.Extensions {
+		if e, ok := ext.(*utls.GenericExtension); ok && e.Id == extensionTrustAnchors {
+			continue
+		}
+		if version == 115 {
+			switch e := ext.(type) {
+			case *utls.SupportedCurvesExtension:
+				e.Curves = []utls.CurveID{utls.X25519, utls.CurveP256, utls.CurveP384}
+			case *utls.KeyShareExtension:
+				e.KeyShares = []utls.KeyShare{{Group: utls.X25519}}
+			case *utls.ApplicationSettingsExtensionNew:
+				ext = &utls.ApplicationSettingsExtension{SupportedProtocols: e.SupportedProtocols}
+			case *utls.GREASEEncryptedClientHelloExtension:
+				continue
+			}
+		}
+		extensions = append(extensions, ext)
+	}
+	spec.Extensions = extensions
+	return spec
+}

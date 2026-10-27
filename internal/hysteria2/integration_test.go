@@ -53,7 +53,7 @@ func testCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 }
 
 func TestReferenceServerTCPUDP(t *testing.T) {
-	for _, fp := range []string{"", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"} {
+	for _, fp := range []string{"", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146"} {
 		t.Run("fp="+fp, func(t *testing.T) { testReferenceServerTCPUDP(t, fp) })
 	}
 }

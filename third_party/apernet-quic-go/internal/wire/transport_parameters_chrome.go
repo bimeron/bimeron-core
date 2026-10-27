@@ -66,15 +66,37 @@ func (p *TransportParameters) marshalChrome() []byte {
 	b = quicvarint.Append(b, uint64(p.InitialSourceConnectionID.Len()))
 	add(append(b, p.InitialSourceConnectionID.Bytes()...))
 
-	add(marshalChromeVersionInformation())
+	if p.ChromeVersion == 115 {
+		v := binary.BigEndian.AppendUint32(nil, 1)
+		v = binary.BigEndian.AppendUint32(v, greaseQUICVersion())
+		v = binary.BigEndian.AppendUint32(v, 1)
+		b := quicvarint.Append(nil, 0xff73db)
+		b = quicvarint.Append(b, uint64(len(v)))
+		add(append(b, v...))
+		b = quicvarint.Append(nil, 0x4752)
+		b = quicvarint.Append(b, 4)
+		add(append(b, 0, 0, 0, 1))
+	} else {
+		add(marshalChromeVersionInformation())
+	}
+	if p.ChromeVersion == 146 {
+		add(p.marshalVarintParam(nil, googleInitialRTTParameterID, 1000+randUint64n(19001)))
+	}
 
 	if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
 		add(p.marshalVarintParam(nil, maxDatagramFrameSizeParameterID, uint64(p.MaxDatagramFrameSize)))
 	}
 
+	options := chromeConnectionOptions
+	if p.ChromeVersion == 115 {
+		options = []byte("RVCM")
+	}
+	if p.ChromeVersion == 146 {
+		options = []byte("10AF")
+	}
 	b = quicvarint.Append(nil, uint64(googleConnectionOptionsParameterID))
-	b = quicvarint.Append(b, uint64(len(chromeConnectionOptions)))
-	add(append(b, chromeConnectionOptions...))
+	b = quicvarint.Append(b, uint64(len(options)))
+	add(append(b, options...))
 
 	add(marshalChromeGREASE())
 

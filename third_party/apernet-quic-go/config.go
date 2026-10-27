@@ -68,7 +68,7 @@ func populateConfig(config *Config) *Config {
 	}
 	copyConfig := *config
 	config = &copyConfig
-	if config.Fingerprint == QUICChrome {
+	if config.Fingerprint == QUICChrome || config.Fingerprint.IsVersionedChrome() {
 		config.ChromeParrot = true
 	}
 	versions := config.Versions

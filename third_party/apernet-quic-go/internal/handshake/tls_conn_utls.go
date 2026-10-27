@@ -30,16 +30,19 @@ var _ tlsQUICConn = (*utlsQUICConn)(nil)
 // own SessionState with unexported internals, so a uTLS session cannot be
 // converted into the *tls.SessionState the resumption path expects. The events
 // are turned off at the source rather than half-supported.
-func newUTLSQUICClient(tlsConf *tls.Config, firefox ...bool) (*utlsQUICConn, error) {
+func newUTLSQUICClient(tlsConf *tls.Config, firefox bool, chromeVersion uint16) (*utlsQUICConn, error) {
 	uConf, err := utlsConfigFromStd(tlsConf)
 	if err != nil {
 		return nil, err
 	}
 	spec := chromeQUICClientHelloSpec(tlsConf.NextProtos)
-	if len(firefox) > 0 && firefox[0] {
+	if firefox {
 		spec = firefoxQUICClientHelloSpec()
 	}
 
+	if chromeVersion != 0 {
+		spec = versionedChromeQUICClientHelloSpec(tlsConf.NextProtos, chromeVersion)
+	}
 	conn := utls.UQUICClient(&utls.QUICConfig{TLSConfig: uConf}, utls.HelloCustom)
 	if err := conn.ApplyPreset(spec); err != nil {
 		return nil, fmt.Errorf("applying Chrome ClientHello spec: %w", err)

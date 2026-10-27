@@ -138,6 +138,10 @@ func TestFirefoxWireInitial(t *testing.T) {
 }
 
 func captureFingerprintInitial(t testing.TB, network string, fp QUICFingerprint) []byte {
+	return captureFingerprintFlight(t, network, fp, 1)[0]
+}
+
+func captureFingerprintFlight(t testing.TB, network string, fp QUICFingerprint, count int) [][]byte {
 	t.Helper()
 	address := "127.0.0.1:0"
 	if network == "udp6" {
@@ -165,13 +169,16 @@ func captureFingerprintInitial(t testing.TB, network string, fp QUICFingerprint)
 		_, _ = tr.Dial(ctx, server.LocalAddr(), &tls.Config{ServerName: "fixture.example", NextProtos: []string{"h3"}}, &Config{Fingerprint: fp})
 	}()
 	require.NoError(t, server.SetReadDeadline(time.Now().Add(2*time.Second)))
-	b := make([]byte, 2048)
-	n, _, err := server.ReadFrom(b)
-	require.NoError(t, err)
-	b = b[:n]
+	var packets [][]byte
+	for range count {
+		b := make([]byte, 2048)
+		n, _, err := server.ReadFrom(b)
+		require.NoError(t, err)
+		packets = append(packets, b[:n])
+	}
 	cancel()
 	<-done
-	return b
+	return packets
 }
 
 func TestChromeWireNegativeControl(t *testing.T) {
@@ -191,7 +198,7 @@ func TestChromeWireNegativeControl(t *testing.T) {
 // Measures complete first-Initial construction and UDP emission, including
 // socket setup and TLS allocation. It is not a WAN throughput benchmark.
 func BenchmarkFingerprintInitial(b *testing.B) {
-	for _, fp := range []QUICFingerprint{QUICChrome, QUICFirefox116} {
+	for _, fp := range []QUICFingerprint{QUICChrome, QUICFirefox116, QUICChrome115, QUICChrome146} {
 		b.Run(string(fp), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {

@@ -262,6 +262,11 @@ func (t *Transport) dial(ctx context.Context, addr net.Addr, host string, tlsCon
 		return nil, err
 	}
 	conf = populateConfig(conf)
+	if conf.Fingerprint.IsVersionedChrome() {
+		if a, ok := addr.(*net.UDPAddr); ok && a.IP.To4() == nil {
+			conf.InitialPacketSize = 1230
+		}
+	}
 	tlsConf = tlsConf.Clone()
 	// setTLSConfigServerName(tlsConf, addr, host)
 	// The first Initial packet is numbered 1, not 0.
@@ -420,10 +425,12 @@ func (t *Transport) init(allowZeroLengthConnIDs bool) error {
 		}
 
 		t.logger = utils.DefaultLogger // TODO: make this configurable
-		if t.AllowQUICBitGrease {
+		// Zero-ID Chrome transports advertise 1472-byte receives, above the
+		// ordinary 1452-byte pool. Initialize capacity before starting the read loop.
+		if t.AllowQUICBitGrease || (t.ConnectionIDGenerator != nil && t.ConnectionIDGenerator.ConnectionIDLen() == 0) {
 			large, ok := conn.(interface{ enableLargeReceive() })
 			if !ok {
-				t.initErr = fmt.Errorf("Firefox QUIC requires large UDP receive support")
+				t.initErr = fmt.Errorf("QUIC fingerprint requires large UDP receive support")
 				return
 			}
 			large.enableLargeReceive()

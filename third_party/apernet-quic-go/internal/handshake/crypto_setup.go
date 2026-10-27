@@ -96,7 +96,7 @@ func NewCryptoSetupClient(
 	cs.allow0RTT = enable0RTT && !chromeParrot && !tp.FirefoxFingerprint
 
 	if chromeParrot || tp.FirefoxFingerprint {
-		conn, err := newUTLSQUICClient(tlsConf, tp.FirefoxFingerprint)
+		conn, err := newUTLSQUICClient(tlsConf, tp.FirefoxFingerprint, tp.ChromeVersion)
 		if err != nil {
 			return nil, err
 		}

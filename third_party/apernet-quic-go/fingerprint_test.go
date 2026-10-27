@@ -2,6 +2,7 @@ package quic
 
 import (
 	"bytes"
+	"context"
 	"github.com/apernet/quic-go/internal/protocol"
 	"github.com/apernet/quic-go/internal/qerr"
 	"github.com/apernet/quic-go/internal/wire"
@@ -72,4 +73,28 @@ func TestFirefoxGreasedBitParsing(t *testing.T) {
 	require.Error(t, err)
 	_, _, _, _, err = wire.ParseShortHeader(short, 3, true)
 	require.NoError(t, err)
+}
+
+func TestChromeTransportReceive1472(t *testing.T) {
+	socket, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer socket.Close()
+	tr := &Transport{Conn: socket, ConnectionIDGenerator: ZeroLengthConnectionIDGenerator{}}
+	defer tr.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = tr.ReadNonQUICPacket(ctx, make([]byte, 1472))
+	require.ErrorIs(t, err, context.Canceled)
+	sender, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer sender.Close()
+	payload := bytes.Repeat([]byte{42}, 1472)
+	_, err = sender.WriteTo(payload, socket.LocalAddr())
+	require.NoError(t, err)
+	ctx, cancel = context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	b := make([]byte, 2000)
+	n, _, err := tr.ReadNonQUICPacket(ctx, b)
+	require.NoError(t, err)
+	require.Equal(t, payload, b[:n])
 }

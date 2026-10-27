@@ -142,6 +142,7 @@ type packetPacker struct {
 	// chaosProtection applies Chrome's chaos protection to Initial packets.
 	// See appendChaosProtectedPayload.
 	chaosProtection bool
+	fingerprint     QUICFingerprint
 	firefoxParrot   bool
 }
 
@@ -600,6 +601,11 @@ func (p *packetPacker) maybeGetCryptoPacket(
 
 	hdr := p.getLongHeader(encLevel, v)
 	maxPacketSize -= hdr.GetLength(v)
+	if p.fingerprint.IsVersionedChrome() && encLevel == protocol.EncryptionInitial && hasCryptoData() {
+		// Reserve space for up to fourteen CRYPTO headers, PINGs and
+		// padding runs. Keep the final datagram size unchanged.
+		maxPacketSize -= 160
+	}
 
 	if ack != nil {
 		ack.Truncate(maxPacketSize, v)
@@ -943,6 +949,9 @@ func (p *packetPacker) PackPathProbePacket(connID protocol.ConnectionID, frames 
 
 func (p *packetPacker) getLongHeader(encLevel protocol.EncryptionLevel, v protocol.Version) *wire.ExtendedHeader {
 	pn, pnLen := p.pnManager.PeekPacketNumber(encLevel)
+	if p.fingerprint == QUICChrome146 && encLevel == protocol.EncryptionInitial && pn >= 2 {
+		pnLen = max(pnLen, protocol.PacketNumberLen2)
+	}
 	hdr := &wire.ExtendedHeader{
 		PacketNumber:    pn,
 		PacketNumberLen: pnLen,
