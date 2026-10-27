@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/hysteria2"
 	"bimeron/internal/proxy"
+	"bimeron/internal/sshtunnel"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
 	"bimeron/internal/vpn"
@@ -111,6 +112,8 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("invalid_udp_transport", true)
 		}
 		tcp, udp, closeTransport = client, client, client.Close
+	} else if p.Type == "ssh" {
+		return nil, nil, nil, nil, fault("ssh_requires_proxy_mode", false)
 	} else {
 		tcp, err = proxy.OutlineTCP(p.TCP, path.dialer)
 		if err != nil {
@@ -340,6 +343,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		client, clientErr := hysteria2.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
 			return nil, fault("invalid_udp_transport", true)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "ssh" {
+		client, clientErr := sshtunnel.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, c.SSHDefaultKeys)
+		if clientErr != nil {
+			return nil, fault("ssh_connection_failed", false)
 		}
 		d, closeTransport = client, client.Close
 	} else {

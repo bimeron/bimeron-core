@@ -55,6 +55,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		}
 		return Profile{}, d, sessionEndpoints{}, fault("access_key_resolve_failed", true)
 	}
+	if p.Type == "ssh" { return Profile{}, d, sessionEndpoints{}, fault("ssh_requires_proxy_mode", false) }
 	original := p
 	if p.Type == "vless" && p.VLESS.XHTTPOptions != nil && p.VLESS.XHTTPOptions.DownloadSettings != nil {
 		options := *p.VLESS.XHTTPOptions

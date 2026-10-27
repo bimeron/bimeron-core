@@ -11,6 +11,7 @@ import (
 )
 
 func runSession(cfg core.SessionConfig) error {
+	cfg.SSHPrompt = terminalSSHPrompt
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	e := core.New(core.Options{})
