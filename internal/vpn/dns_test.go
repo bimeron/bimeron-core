@@ -352,6 +352,32 @@ func TestNetstackDNSFallsBackToTCP(t *testing.T) {
 		t.Fatalf("TCP DNS fallback failed: answer=%v events=%v", answer, events)
 	}
 }
+
+func TestNetstackDNSWithoutUDP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	upstream := tcpDNSFixture(t, dnsmessage.RCodeSuccess)
+	h := NewHandler(ctx)
+	h.DNS = []string{"203.0.113.1"}
+	h.TCP = transport.FuncStreamDialer(func(ctx context.Context, _ string) (transport.StreamConn, error) {
+		return (&transport.TCPDialer{}).DialStream(ctx, upstream)
+	})
+	var events []string
+	h.Report = func(code, _ string) { events = append(events, code) }
+	link := testStack(t, h)
+	query := dnsQuery(t)
+	udp := make([]byte, 8+len(query))
+	binary.BigEndian.PutUint16(udp, 40000)
+	binary.BigEndian.PutUint16(udp[2:], 53)
+	binary.BigEndian.PutUint16(udp[4:], uint16(len(udp)))
+	copy(udp[8:], query)
+	inject(link, ipPacket(net.ParseIP(DNSAddress), 17, udp))
+	response := nextPacket(t, ctx, link)
+	var answer dnsmessage.Message
+	if answer.Unpack(response[28:]) != nil || len(answer.Answers) != 1 || len(events) != 0 {
+		t.Fatalf("TCP-only DNS failed: answer=%v events=%v", answer, events)
+	}
+}
 func TestDNSFailureAnswer(t *testing.T) {
 	var response dnsmessage.Message
 	if response.Unpack(dnsFailure(dnsQuery(t))) != nil || response.RCode != dnsmessage.RCodeServerFailure {

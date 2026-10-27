@@ -48,6 +48,20 @@ func TestUnavailableKeyStopsWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestResolveSSHOnVPNPathPreservesHostKeyName(t *testing.T) {
+	configuration := DefaultConfig()
+	configuration.Resolve = func(context.Context) (Profile, error) {
+		return Profile{Type: "ssh", TCP: Endpoint{Host: "ssh.example.com", Port: 22}, SSH: accesskey.SSH{User: "alice"}}, nil
+	}
+	profile, _, endpoints, err := resolveOnPath(t.Context(), configuration, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.TCP.Host != "ssh.example.com" || endpoints.tcp != "ssh.example.com:22" || endpoints.udp != "" {
+		t.Fatalf("SSH name or TCP-only endpoint lost: %+v %+v", profile, endpoints)
+	}
+}
+
 func TestProxyEngineListenerLifecycle(t *testing.T) {
 	// Only loopback is used; no DNS, external network, or system VPN operations.
 	l, err := net.Listen("tcp", "127.0.0.1:0")

@@ -47,3 +47,27 @@ func TestCheckDNSFallsBackToTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckDNSWithoutUDP(t *testing.T) {
+	tcp := checkStreamDialer(func(context.Context, string) (transport.StreamConn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			var size [2]byte
+			if _, err := io.ReadFull(server, size[:]); err != nil {
+				return
+			}
+			query := make([]byte, binary.BigEndian.Uint16(size[:]))
+			if _, err := io.ReadFull(server, query); err != nil {
+				return
+			}
+			answer := dnsAnswer(query, dnsmessage.RCodeSuccess)
+			binary.BigEndian.PutUint16(size[:], uint16(len(answer)))
+			_, _ = server.Write(append(size[:], answer...))
+		}()
+		return checkStreamConn{client}, nil
+	})
+	if err := checkDNS(t.Context(), tcp, nil, []string{"203.0.113.1"}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -212,8 +212,13 @@ func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
 			query := buffer[:n]
 			h.Stats.DNSQuery()
 			resolver := h.resolver()
-			answer, err := resolver.Exchange(h.ctx, query, false)
-			if err != nil {
+			var answer []byte
+			if h.UDP != nil {
+				answer, err = resolver.Exchange(h.ctx, query, false)
+			} else {
+				answer, err = resolver.Exchange(h.ctx, query, true)
+			}
+			if err != nil && h.UDP != nil {
 				udpErr := err
 				answer, err = resolver.Exchange(h.ctx, query, true)
 				if err != nil {

@@ -2,11 +2,19 @@
 
 Bimeron can establish an SSH connection itself and use SSH direct TCP forwarding
 as the upstream of its local SOCKS5 proxy. An SSH server with TCP forwarding
-enabled is required. This feature supports `[Interface] Mode = proxy` only.
-Ordinary SSH forwarding has no UDP relay, so SSH profiles cannot run Bimeron's
-system VPN. The local SOCKS5 listener accepts TCP `CONNECT`; UDP `ASSOCIATE`
-is not supported. Configure applications to use the local SOCKS5 proxy and use
-remote hostname resolution where available (for example, `socks5h` in curl).
+enabled is required. In `[Interface] Mode = proxy`, applications use the local
+SOCKS5 listener, which accepts TCP `CONNECT` only. Configure remote hostname
+resolution where available (for example, `socks5h` in curl).
+
+`[Interface] Mode = vpn` carries system TCP flows through SSH without per-app
+proxy settings. It is **TCP-only**, not a full VPN: ordinary SSH forwarding has
+no UDP relay. Proxied UDP flows other than DNS are dropped, not sent directly.
+DNS requests captured by Bimeron, whether received over UDP or TCP, are sent
+to configured resolvers over TCP through SSH. Explicit `direct` routing rules
+still use the physical network, including for UDP. The SSH server itself is
+resolved on the physical network before the tunnel starts. Some applications
+may use their own DNS or bypass the system tunnel; this mode does not guarantee
+that all traffic is protected. Use a UDP-capable upstream for full VPN behavior.
 
 ## Connect with explicit fields
 
@@ -60,6 +68,9 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 use SOCKS5 with remote DNS resolution to avoid resolving website names outside
 the SSH connection. The DNS lookup for the SSH server itself uses the system
 resolver before the tunnel is established.
+
+To use TCP-only system routing instead, change `Mode = proxy` to `Mode = vpn`
+in the profile. The local SOCKS5 listener is not started in that mode.
 
 ## Connect with an SSH string
 

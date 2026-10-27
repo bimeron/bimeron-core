@@ -94,8 +94,10 @@ The `validate` command checks the URL without fetching it.
 
 ### SSH TCP forwarding
 
-SSH profiles run in `Mode = proxy` and expose TCP through the local SOCKS5
-listener. They do not support system VPN mode or UDP. Use either explicit
+SSH profiles can run in `Mode = proxy` (local SOCKS5) or `Mode = vpn` (system
+TCP routing through SSH). VPN mode does not relay UDP; proxied non-DNS UDP is
+dropped, and captured DNS uses TCP through SSH. Explicit `direct` rules still
+use the physical network. Use either explicit
 `Type = ssh`, `Server`, `Port`, `Username` fields or an `SSH = ssh://user@host:22`
 link. `Key` and `File` can also contain an SSH link. `IdentityFile` and
 `KnownHostsFile` are optional file-path settings for explicit or inline SSH
