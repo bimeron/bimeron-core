@@ -177,6 +177,10 @@ of `File`. For example, the JSON inside a supported link has this shape:
 The `vmess://` payload is standard or URL-safe base64 of the UTF-8 JSON.
 `net` may be `tcp` or `ws`; both require TLS certificate verification. `scy`
 may be `auto` (AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
+Optional `fp` selects a TLS client fingerprint: `chrome`, `firefox`, `safari`,
+`ios`, `android`, or `edge`. Optional `alpn` supplies comma-separated TLS ALPN
+protocols; WebSocket accepts only `http/1.1`. Without `alpn`, WebSocket uses
+`http/1.1` and TCP leaves ALPN unspecified.
 The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
 the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
 transport, other networks, and unknown JSON fields are rejected. VMess has no

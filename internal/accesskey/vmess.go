@@ -15,6 +15,7 @@ import (
 // VMess describes the supported VMess AEAD client settings.
 type VMess struct {
 	ID, Security, Network, TLS, ServerName, WSPath, WSHost string
+	ALPN, Fingerprint                                      string
 }
 
 func (v VMess) Validate(host string, port int) error {
@@ -29,6 +30,18 @@ func (v VMess) Validate(host string, port int) error {
 	}
 	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid VMess server name")
+	}
+	for _, protocol := range strings.Split(v.ALPN, ",") {
+		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1")) {
+			return fmt.Errorf("invalid VMess ALPN")
+		}
+	}
+	if v.Fingerprint != "" {
+		switch v.Fingerprint {
+		case "chrome", "firefox", "safari", "ios", "android", "edge":
+		default:
+			return fmt.Errorf("unsupported VMess fingerprint")
+		}
 	}
 	if v.Network != "ws" && (v.WSPath != "" || v.WSHost != "") {
 		return fmt.Errorf("VMess WebSocket options require ws")
@@ -96,7 +109,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if _, err = dec.Token(); err != io.EOF {
 		return Profile{}, fmt.Errorf("invalid VMess JSON")
 	}
-	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true}
+	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true, "alpn": true, "fp": true}
 	for k := range fields {
 		if !allowed[k] {
 			return Profile{}, fmt.Errorf("unsupported VMess field")
@@ -130,7 +143,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("invalid VMess port")
 	}
-	v := VMess{ID: get("id"), Security: get("scy"), Network: get("net"), TLS: get("tls"), ServerName: get("sni"), WSPath: get("path"), WSHost: get("host")}
+	v := VMess{ID: get("id"), Security: get("scy"), Network: get("net"), TLS: get("tls"), ServerName: get("sni"), WSPath: get("path"), WSHost: get("host"), ALPN: get("alpn"), Fingerprint: get("fp")}
 	if v.Security == "" {
 		v.Security = "auto"
 	}

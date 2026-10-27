@@ -10,10 +10,12 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bimeron/internal/accesskey"
+	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/websocket"
 )
@@ -84,16 +86,44 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	stop := context.AfterFunc(setup, func() { _ = raw.Close() })
 	defer stop()
 	_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
-	tlsConn := tls.Client(raw, &tls.Config{ServerName: c.settings.ServerName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs, NextProtos: func() []string {
-		if c.settings.Network == "ws" {
-			return []string{"http/1.1"}
+	protocols := []string(nil)
+	if c.settings.ALPN != "" {
+		protocols = strings.Split(c.settings.ALPN, ",")
+	} else if c.settings.Network == "ws" {
+		protocols = []string{"http/1.1"}
+	}
+	var conn net.Conn
+	if c.settings.Fingerprint == "" {
+		secure := tls.Client(raw, &tls.Config{ServerName: c.settings.ServerName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs, NextProtos: protocols})
+		err = secure.HandshakeContext(setup)
+		conn = secure
+	} else {
+		id := vmessFingerprint(c.settings.Fingerprint)
+		secure := utls.UClient(raw, &utls.Config{ServerName: c.settings.ServerName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs, NextProtos: protocols}, id)
+		if len(protocols) > 0 {
+			if err = secure.BuildHandshakeState(); err != nil {
+				return nil, fmt.Errorf("VMess TLS client hello failed")
+			}
+			found := false
+			for _, extension := range secure.Extensions {
+				if alpn, ok := extension.(*utls.ALPNExtension); ok {
+					alpn.AlpnProtocols = protocols
+					found = true
+				}
+			}
+			if !found {
+				secure.Extensions = append(secure.Extensions, &utls.ALPNExtension{AlpnProtocols: protocols})
+			}
+			if err = secure.BuildHandshakeState(); err != nil {
+				return nil, fmt.Errorf("VMess TLS client hello failed")
+			}
 		}
-		return nil
-	}()})
-	if err = tlsConn.HandshakeContext(setup); err != nil {
+		err = secure.HandshakeContext(setup)
+		conn = secure
+	}
+	if err != nil {
 		return nil, fmt.Errorf("VMess TLS handshake failed: %w", err)
 	}
-	var conn net.Conn = tlsConn
 	if c.settings.Network == "ws" {
 		host := c.settings.WSHost
 		if host == "" {
@@ -137,6 +167,23 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 	c.mu.Unlock()
 	ready = true
 	return owned, nil
+}
+
+func vmessFingerprint(name string) utls.ClientHelloID {
+	switch name {
+	case "firefox":
+		return utls.HelloFirefox_Auto
+	case "safari":
+		return utls.HelloSafari_Auto
+	case "ios":
+		return utls.HelloIOS_Auto
+	case "android":
+		return utls.HelloAndroid_11_OkHttp
+	case "edge":
+		return utls.HelloEdge_Auto
+	default: // Validate accepts only chrome here.
+		return utls.HelloChrome_Auto
+	}
 }
 
 func (c *Client) DialStream(ctx context.Context, target string) (transport.StreamConn, error) {

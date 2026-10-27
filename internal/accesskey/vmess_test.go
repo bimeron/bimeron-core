@@ -20,6 +20,11 @@ func TestParseVMess(t *testing.T) {
 	if _, err := ParseVMess(urlSafe); err != nil {
 		t.Fatalf("URL-safe VMess profile: %v", err)
 	}
+	withTLSOptions := strings.Replace(base, `"sni":"example.com"`, `"sni":"example.com","alpn":"http/1.1","fp":"chrome"`, 1)
+	withOptions, err := ParseVMess(vmessLink(withTLSOptions))
+	if err != nil || withOptions.VMess.ALPN != "http/1.1" || withOptions.VMess.Fingerprint != "chrome" {
+		t.Fatalf("VMess TLS options: %#v, %v", withOptions.VMess, err)
+	}
 	for _, bad := range []string{
 		strings.Replace(base, `"aid":"0"`, `"aid":"1"`, 1),
 		strings.Replace(base, `"tls":"tls"`, `"tls":""`, 1),
@@ -31,6 +36,8 @@ func TestParseVMess(t *testing.T) {
 		strings.Replace(base, `"v":"2"`, `"v":"2","v":"2"`, 1),
 		base + `{"extra":true}`,
 		strings.Replace(base, `"scy":"auto"`, `"scy":false`, 1),
+		strings.Replace(base, `"sni":"example.com"`, `"sni":"example.com","alpn":"h2"`, 1),
+		strings.Replace(base, `"sni":"example.com"`, `"sni":"example.com","fp":"unknown"`, 1),
 	} {
 		_, err := ParseVMess(vmessLink(bad))
 		if err == nil {
