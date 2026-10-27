@@ -88,6 +88,8 @@ fi
 cat > "$tmp/notes.md" <<EOF
 Bimeron Core $tag.
 
+For the capabilities of these packages, see the [README at this release tag](https://github.com/$repo/blob/$tag/README.md).
+
 The assets contain six CLI packages for Windows, Linux, and macOS (amd64 and arm64) and one Android AAR package. Each package includes LICENSE and THIRD_PARTY_NOTICES.txt. The Windows packages include the matching Wintun DLL and its license.
 
 Verify archives with SHA256SUMS. Windows/Linux service update clients can verify update-manifest.json with update-manifest.json.sig and a separately trusted Ed25519 public key. Android is an AAR, not an installable app. Apple NetworkExtension is not included.

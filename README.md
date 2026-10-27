@@ -26,7 +26,10 @@ the core from separate repositories.
 
 ## Supported upstreams
 
-These upstreams currently support TCP. The UDP column describes system VPN mode; the local
+This table describes the current source tree. Published packages reflect the code at their
+release tag; read the README at that tag to check a downloaded version's capabilities.
+
+All upstreams shown here support TCP. The UDP column describes system VPN mode; the local
 SOCKS5 listener accepts TCP `CONNECT` only.
 
 | Upstream | Input or transport | UDP in VPN mode |
