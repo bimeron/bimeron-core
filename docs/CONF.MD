@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,8 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, or `trojan://...` key. Relative paths are resolved against the `.conf` directory,
+`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, `trojan://...`,
+`hysteria2://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -229,6 +230,77 @@ VPN mode; UDP datagrams travel over a TLS connection. The local SOCKS5
 listener in `proxy` mode accepts TCP CONNECT only. WebSocket, gRPC, REALITY,
 TLS fingerprints, custom ALPN, and insecure TLS are unsupported.
 
+### Hysteria2 over QUIC
+
+Use a complete `hysteria2://` or `hy2://` URI as the sole access key source.
+See [`examples/hysteria2.conf`](../examples/hysteria2.conf):
+
+```ini
+[AccessKey]
+Hysteria2 = hysteria2://server.example.com:443?auth=replace-me&sni=server.example.com&insecure=0&alpn=h3
+```
+
+The password may be supplied as `auth` or as URI userinfo
+(`hysteria2://replace-me@server.example.com:443`). Supplying both is an error.
+Percent-encode reserved characters, such as `@` as `%40`. The server port and
+password are required. `sni` is optional and defaults to the server hostname.
+`insecure=0` keeps certificate and name verification enabled; `insecure=1`
+is rejected. `alpn=h3` asserts the HTTP/3 protocol offered by the Hysteria2
+client; other ALPN values are rejected. The fragment is the profile label.
+Supported `fp` values are case-sensitive:
+
+- `firefox` and `firefox-116`: Firefox 116A QUIC Initial/ClientHello preset (8-byte initial DCID).
+- `firefox-116b`: Firefox 116B (9-byte initial DCID).
+- `firefox-116c`: Firefox 116C (15-byte initial DCID).
+- `chrome-115`: versioned Chrome 115 QUIC preset (X25519, legacy ALPS).
+- `chrome-146`: versioned Chrome 146 QUIC preset (X25519MLKEM768 + X25519,
+  new ALPS and GREASE ECH, two-datagram Initial flight).
+- `chrome`: the existing apernet ChromeParrot preset, pinned to the vendored
+  apernet revision documented in `third_party/apernet-quic-go/BIMERON_PATCHES.md`.
+  It is not an alias for uquic Chrome 115 or Chrome 146.
+
+Omitting `fp` retains the existing ChromeParrot default. An explicit empty or
+unsupported value is rejected; there is no fallback or automatic preset upgrade.
+For example, append `&fp=chrome-146` to the example above. Safari, Edge,
+and VLESS/TCP-only fingerprints are not supported. Versioned Chrome selects
+1250-byte IPv4 or 1230-byte IPv6 Initial datagrams from the actual remote
+address; this is not inferred from the SNI. Neither versioned name is an alias
+for `chrome`. See [ADR 0011](adr/0011-versioned-chrome-quic.md) for reference
+provenance, corrections, and the limits of browser-fidelity evidence.
+
+Fingerprint selection changes the TLS ClientHello, QUIC transport parameters,
+and Initial packet layout. Certificate and hostname verification remain enabled.
+These are historical handshake presets; subsequent transport behavior remains
+apernet QUIC and application traffic remains Hysteria2. Full browser
+indistinguishability is not promised. TLS resumption and 0-RTT are disabled.
+The presets do not offer Ed25519 server signatures; use a compatible RSA/ECDSA
+certificate. Firefox advertises 1200-byte QUIC DATAGRAM frames; Hysteria2
+fragmentation handles larger relay messages within the upstream size limit
+(4096 bytes including the Hysteria message header). Oversized messages may be
+silently discarded by upstream. Existing TCP half-close limitations remain.
+
+Unknown or duplicate query options, obfuscation, and bandwidth options are
+rejected. The server must allow UDP relay. In VPN mode, both TCP and UDP
+traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.
+
+### TUIC v5 over QUIC
+
+Use a complete URI as the sole `[AccessKey]` source:
+
+```ini
+[AccessKey]
+TUIC = tuic://123e4567-e89b-12d3-a456-426614174000:replace-me@server.example.com:443?udp_relay_mode=quic&sni=server.example.com&alpn=h3
+```
+
+`Key` and `File` also accept this URI. The UUID and password are required;
+percent-encode reserved password characters. `sni` defaults to the server
+hostname, and `alpn` defaults to `h3`. TLS verifies the certificate and SNI.
+The only supported UDP relay mode is `quic`, which sends each packet in a
+QUIC unidirectional stream. `udp_relay_mode=quic` may be omitted. Native
+QUIC datagram mode, insecure certificates, 0-RTT, explicit TUIC parameters,
+and other URI options are rejected. The local SOCKS5 listener supports TCP
+CONNECT only. See [`examples/tuic.conf`](../examples/tuic.conf).
+
 ### Compatibility: Key
 
 The generic `Key` option is retained for existing configurations:
@@ -238,8 +310,10 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, or `trojan://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, or the explicit parameters below.
+It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, `trojan://`,
+`hysteria2://`, `hy2://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`,
+`Hysteria2`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
 ### Alternative: explicit Shadowsocks parameters

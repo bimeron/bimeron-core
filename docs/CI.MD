@@ -8,6 +8,17 @@ TLS transport, both AEAD ciphers, and representative TLS fingerprints. The
 compiled dependency and notice checks reject unwanted modules. The Linux job
 also runs VLESS and VMess transport tests with Go's race detector.
 
+The fingerprint dependency matrix also tests the two local Hysteria/QUIC
+modules explicitly on Linux and Windows, including decoded UDP Initials and
+Retry/loss/HelloRetryRequest. Linux jobs run focused race checks. Root Hysteria
+tests build an independent, unmodified v2.13.0 reference server with `GOWORK=off`
+and exercise simultaneous named presets over TCP and fragmented UDP. This
+requires the Go toolchain and the fixture module's pinned dependencies.
+
+The race run excludes only `TestFrameParserAllocs/STREAM`: Go's race
+instrumentation randomly discards `sync.Pool` entries, invalidating its zero
+allocation assertion. The ordinary unit run still requires this test to pass.
+
 The `cli-dist` job builds all six Windows, Linux, and macOS CLI directories,
 including the verified Wintun DLL and license in each Windows directory. It
 runs `scripts/check-dist.go` and uploads `cli-dist` for 14 days. The

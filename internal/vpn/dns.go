@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +25,40 @@ type DNSResolver struct {
 	TCP         transport.StreamDialer
 	UDP         transport.PacketListener
 	Timeout     time.Duration
+}
+
+type dnsAttemptError struct {
+	stage string
+	err   error
+}
+
+func (e dnsAttemptError) Error() string { return e.stage + ": " + e.err.Error() }
+func (e dnsAttemptError) Unwrap() error { return e.err }
+
+// Keep transport errors out of the journal: they may contain destinations or profile data.
+func dnsAttemptDetail(err error) string {
+	var attempt dnsAttemptError
+	if !errors.As(err, &attempt) {
+		return "transport error"
+	}
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) {
+		return fmt.Sprintf("%s upstream HTTP %d", attempt.stage, status.HTTPStatusCode())
+	}
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return attempt.stage + " timeout"
+	case errors.Is(err, net.ErrClosed):
+		return attempt.stage + " connection closed"
+	case errors.Is(err, io.EOF):
+		return attempt.stage + " end of stream"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return attempt.stage + " truncated stream"
+	case err.Error() == "UDP read: invalid XUDP metadata", err.Error() == "UDP read: invalid XUDP command", err.Error() == "UDP read: invalid XUDP payload":
+		return err.Error()
+	default:
+		return attempt.stage + " failed"
+	}
 }
 
 func (r DNSResolver) Exchange(ctx context.Context, query []byte, tcp bool) ([]byte, error) {
@@ -42,18 +78,26 @@ func (r DNSResolver) Exchange(ctx context.Context, query []byte, tcp bool) ([]by
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
-	for _, server := range r.Servers {
+	var failures []string
+	for i, server := range r.Servers {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		attempt, cancel := context.WithTimeout(ctx, timeout)
 		response, err := r.exchangeOne(attempt, query, request, server, tcp)
+		if errors.Is(attempt.Err(), context.DeadlineExceeded) {
+			var staged dnsAttemptError
+			if errors.As(err, &staged) {
+				err = dnsAttemptError{staged.stage, context.DeadlineExceeded}
+			}
+		}
 		cancel()
 		if err == nil {
 			return response, nil
 		}
+		failures = append(failures, fmt.Sprintf("resolver %d: %s", i+1, dnsAttemptDetail(err)))
 	}
-	return nil, fmt.Errorf("all DNS resolvers failed")
+	return nil, fmt.Errorf("all DNS resolvers failed (%s)", strings.Join(failures, "; "))
 }
 func validDNSResponse(b []byte, request dnsmessage.Message) bool {
 	var p dnsmessage.Parser
@@ -82,7 +126,7 @@ func (r DNSResolver) exchangeOne(ctx context.Context, query []byte, request dnsm
 		}
 		c, err := r.TCP.DialStream(ctx, address)
 		if err != nil {
-			return nil, err
+			return nil, dnsAttemptError{"TCP dial", err}
 		}
 		defer c.Close()
 		stop := context.AfterFunc(ctx, func() { _ = c.Close() })
@@ -92,18 +136,18 @@ func (r DNSResolver) exchangeOne(ctx context.Context, query []byte, request dnsm
 		binary.BigEndian.PutUint16(frame, uint16(len(query)))
 		copy(frame[2:], query)
 		if _, err := io.Copy(c, bytes.NewReader(frame)); err != nil {
-			return nil, err
+			return nil, dnsAttemptError{"TCP write", err}
 		}
 		var size [2]byte
 		if _, err := io.ReadFull(c, size[:]); err != nil {
-			return nil, err
+			return nil, dnsAttemptError{"TCP read", err}
 		}
 		b := make([]byte, int(binary.BigEndian.Uint16(size[:])))
 		if _, err := io.ReadFull(c, b); err != nil {
-			return nil, err
+			return nil, dnsAttemptError{"TCP read", err}
 		}
 		if !validDNSResponse(b, request) {
-			return nil, fmt.Errorf("unusable DNS TCP answer")
+			return nil, dnsAttemptError{"TCP response", errors.New("unusable answer")}
 		}
 		return b, nil
 	}
@@ -112,7 +156,7 @@ func (r DNSResolver) exchangeOne(ctx context.Context, query []byte, request dnsm
 	}
 	c, err := r.UDP.ListenPacket(ctx)
 	if err != nil {
-		return nil, err
+		return nil, dnsAttemptError{"UDP open", err}
 	}
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
@@ -120,13 +164,13 @@ func (r DNSResolver) exchangeOne(ctx context.Context, query []byte, request dnsm
 	_ = c.SetDeadline(deadline)
 	destination := &net.UDPAddr{IP: net.ParseIP(server), Port: 53}
 	if _, err := c.WriteTo(query, destination); err != nil {
-		return nil, err
+		return nil, dnsAttemptError{"UDP write", err}
 	}
 	b := make([]byte, 16*1024)
 	for {
 		n, source, err := c.ReadFrom(b)
 		if err != nil {
-			return nil, err
+			return nil, dnsAttemptError{"UDP read", err}
 		}
 		if source == nil || source.String() != destination.String() {
 			continue
@@ -138,7 +182,7 @@ func (r DNSResolver) exchangeOne(ctx context.Context, query []byte, request dnsm
 			continue
 		}
 		if !validDNSResponse(b[:n], request) {
-			return nil, fmt.Errorf("unusable DNS UDP answer")
+			return nil, dnsAttemptError{"UDP response", errors.New("unusable answer")}
 		}
 		return append([]byte(nil), b[:n]...), nil
 	}
@@ -167,11 +211,21 @@ func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
 			h.Stats.Sent(int64(n))
 			query := buffer[:n]
 			h.Stats.DNSQuery()
-			answer, err := h.resolver().Exchange(h.ctx, query, false)
+			resolver := h.resolver()
+			answer, err := resolver.Exchange(h.ctx, query, false)
+			if err != nil {
+				udpErr := err
+				answer, err = resolver.Exchange(h.ctx, query, true)
+				if err != nil {
+					err = fmt.Errorf("UDP: %v; TCP: %w", udpErr, err)
+				} else {
+					h.report("dns_tcp_fallback", "DNS resolved over TCP after UDP failed")
+				}
+			}
 			if err != nil {
 				h.Stats.DNSFailure()
 				answer = dnsFailure(query)
-				h.report("dns_failed", "All configured DNS resolvers failed")
+				h.report("dns_failed", err.Error())
 			} else {
 				h.Metadata.Observe(query, answer, h.Policy)
 			}
@@ -203,7 +257,7 @@ func (h *Handler) handleDNSTCP(c adapter.TCPConn) {
 			if err != nil {
 				h.Stats.DNSFailure()
 				answer = dnsFailure(query)
-				h.report("dns_failed", "All configured DNS resolvers failed")
+				h.report("dns_failed", err.Error())
 			} else {
 				h.Metadata.Observe(query, answer, h.Policy)
 			}

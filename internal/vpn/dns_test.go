@@ -1,15 +1,17 @@
 package vpn
 
 import (
+	"bimeron/internal/routing"
+	"bimeron/internal/telemetry"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/dns/dnsmessage"
 	"io"
 	"net"
 	"reflect"
-	"bimeron/internal/routing"
-	"bimeron/internal/telemetry"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,18 @@ import (
 )
 
 type packetListenerFunc func(context.Context) (net.PacketConn, error)
+
+type diagnosticHTTPError struct{}
+
+func (diagnosticHTTPError) Error() string       { return "private upstream request metadata" }
+func (diagnosticHTTPError) HTTPStatusCode() int { return 502 }
+
+func TestDNSDiagnosticHTTPStatusRedactsMetadata(t *testing.T) {
+	err := dnsAttemptError{"TCP read", fmt.Errorf("private wrapper: %w", diagnosticHTTPError{})}
+	if got := dnsAttemptDetail(err); got != "TCP read upstream HTTP 502" {
+		t.Fatalf("diagnostic: %q", got)
+	}
+}
 
 func (f packetListenerFunc) ListenPacket(ctx context.Context) (net.PacketConn, error) { return f(ctx) }
 
@@ -133,6 +147,45 @@ func TestDNSPriorityAndFallback(t *testing.T) {
 				t.Fatalf("resolver order: %v", calls)
 			}
 		})
+	}
+}
+
+func TestDNSFailureReportsSafeAttemptStages(t *testing.T) {
+	secret := "vless://private-profile"
+	listener := packetListenerFunc(func(context.Context) (net.PacketConn, error) {
+		return nil, fmt.Errorf("UDP open failed for %s", secret)
+	})
+	resolver := DNSResolver{Servers: []string{"203.0.113.1", "203.0.113.2"}, UDP: listener}
+	_, err := resolver.Exchange(t.Context(), dnsQuery(t), false)
+	if err == nil || !strings.Contains(err.Error(), "resolver 1: UDP open failed") || !strings.Contains(err.Error(), "resolver 2: UDP open failed") || strings.Contains(err.Error(), secret) {
+		t.Fatalf("unsafe or incomplete DNS diagnostic: %v", err)
+	}
+}
+
+func TestDNSFailureReportsTimeout(t *testing.T) {
+	listener := packetListenerFunc(func(context.Context) (net.PacketConn, error) {
+		c, err := net.ListenPacket("udp", "127.0.0.1:0")
+		return &routedDNSPacket{PacketConn: c, routes: map[string]string{}, record: func(string) {}}, err
+	})
+	resolver := DNSResolver{Servers: []string{"203.0.113.1"}, UDP: listener, Timeout: 20 * time.Millisecond}
+	_, err := resolver.Exchange(t.Context(), dnsQuery(t), false)
+	if err == nil || !strings.Contains(err.Error(), "resolver 1: UDP read timeout") {
+		t.Fatalf("missing DNS timeout stage: %v", err)
+	}
+}
+
+func TestDNSReadFailureCategories(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{dnsAttemptError{"UDP read", io.EOF}, "UDP read end of stream"},
+		{dnsAttemptError{"UDP read", io.ErrUnexpectedEOF}, "UDP read truncated stream"},
+		{dnsAttemptError{"UDP read", fmt.Errorf("private endpoint: %s", "vless://secret")}, "UDP read failed"},
+	} {
+		if got := dnsAttemptDetail(tc.err); got != tc.want {
+			t.Fatalf("got %q, want %q", got, tc.want)
+		}
 	}
 }
 func tcpDNSFixture(t *testing.T, rcode dnsmessage.RCode) string {
@@ -271,6 +324,32 @@ func TestNetstackDNSFailoverAndTranslation(t *testing.T) {
 	}
 	if _, action, err := h.target("1.2.3.4:443"); err != nil || action != routing.Proxy {
 		t.Fatal("DNS metadata was not applied before the response", action, err)
+	}
+}
+func TestNetstackDNSFallsBackToTCP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	upstream := tcpDNSFixture(t, dnsmessage.RCodeSuccess)
+	h := NewHandler(ctx)
+	h.DNS = []string{"203.0.113.1"}
+	h.UDP = packetListenerFunc(func(context.Context) (net.PacketConn, error) { return nil, fmt.Errorf("UDP unavailable") })
+	h.TCP = transport.FuncStreamDialer(func(ctx context.Context, _ string) (transport.StreamConn, error) {
+		return (&transport.TCPDialer{}).DialStream(ctx, upstream)
+	})
+	var events []string
+	h.Report = func(code, _ string) { events = append(events, code) }
+	link := testStack(t, h)
+	query := dnsQuery(t)
+	udp := make([]byte, 8+len(query))
+	binary.BigEndian.PutUint16(udp, 40000)
+	binary.BigEndian.PutUint16(udp[2:], 53)
+	binary.BigEndian.PutUint16(udp[4:], uint16(len(udp)))
+	copy(udp[8:], query)
+	inject(link, ipPacket(net.ParseIP(DNSAddress), 17, udp))
+	response := nextPacket(t, ctx, link)
+	var answer dnsmessage.Message
+	if answer.Unpack(response[28:]) != nil || len(answer.Answers) != 1 || !reflect.DeepEqual(events, []string{"dns_tcp_fallback"}) {
+		t.Fatalf("TCP DNS fallback failed: answer=%v events=%v", answer, events)
 	}
 }
 func TestDNSFailureAnswer(t *testing.T) {

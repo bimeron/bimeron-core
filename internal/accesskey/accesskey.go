@@ -28,14 +28,87 @@ type Endpoint struct {
 	Prefix string
 }
 type Profile struct {
-	Name     string
-	TCP      Endpoint
-	UDP      Endpoint
-	Type     string // Empty means Shadowsocks for existing API callers.
-	Username string // SOCKS5 only; Secret contains its password.
-	VLESS    VLESS
-	Trojan   Trojan
-	VMess    VMess
+	Name      string
+	TCP       Endpoint
+	UDP       Endpoint
+	Type      string // Empty means Shadowsocks for existing API callers.
+	Username  string // SOCKS5 only; Secret contains its password.
+	VLESS     VLESS
+	Trojan    Trojan
+	VMess     VMess
+	Hysteria2 Hysteria2
+	TUIC      TUIC
+}
+
+// Hysteria2 contains the authentication and verified TLS settings.
+type Hysteria2 struct{ Password, ServerName, ALPN, Fingerprint string }
+
+func (h Hysteria2) Validate(host string, port int) error {
+	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid Hysteria2 server endpoint")
+	}
+	if h.Password == "" || strings.ContainsAny(h.Password, "\r\n") {
+		return fmt.Errorf("invalid Hysteria2 password")
+	}
+	if h.ServerName == "" || strings.ContainsAny(h.ServerName, " /\t\r\n") {
+		return fmt.Errorf("invalid Hysteria2 server name")
+	}
+	if h.ALPN != "" && h.ALPN != "h3" {
+		return fmt.Errorf("unsupported Hysteria2 ALPN")
+	}
+	switch h.Fingerprint {
+	case "", "firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146":
+	default:
+		return fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
+	}
+	return nil
+}
+
+// ParseHysteria2 never includes credentials or the input URI in errors.
+func ParseHysteria2(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "hysteria2" && u.Scheme != "hy2") || u.Hostname() == "" || u.Path != "" || u.Opaque != "" {
+		return Profile{}, fmt.Errorf("invalid Hysteria2 URI")
+	}
+	if u.User != nil {
+		if _, ok := u.User.Password(); ok {
+			return Profile{}, fmt.Errorf("invalid Hysteria2 password")
+		}
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid Hysteria2 port")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid Hysteria2 options")
+	}
+	for key, values := range q {
+		if (key != "sni" && key != "auth" && key != "insecure" && key != "alpn" && key != "fp") || len(values) != 1 {
+			return Profile{}, fmt.Errorf("unsupported or duplicate Hysteria2 option")
+		}
+	}
+	if q.Has("auth") && u.User != nil {
+		return Profile{}, fmt.Errorf("duplicate Hysteria2 password source")
+	}
+	if q.Has("insecure") && q.Get("insecure") != "0" {
+		return Profile{}, fmt.Errorf("unsupported Hysteria2 insecure TLS option")
+	}
+	if q.Has("fp") && q.Get("fp") == "" {
+		return Profile{}, fmt.Errorf("unsupported Hysteria2 QUIC fingerprint")
+	}
+	h := Hysteria2{Password: q.Get("auth"), ServerName: q.Get("sni"), ALPN: q.Get("alpn"), Fingerprint: q.Get("fp")}
+	if u.User != nil {
+		h.Password = u.User.Username()
+	}
+	if !q.Has("sni") {
+		h.ServerName = u.Hostname()
+	}
+	if err := h.Validate(u.Hostname(), port); err != nil {
+		return Profile{}, err
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port}
+	return Profile{Type: "hysteria2", Name: u.Fragment, TCP: e, UDP: e, Hysteria2: h}, nil
 }
 
 // Trojan holds settings for the standard TCP/TLS transport.
@@ -506,6 +579,12 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	}
 	if strings.HasPrefix(key, "trojan://") {
 		return ParseTrojan(key)
+	}
+	if strings.HasPrefix(key, "hysteria2://") || strings.HasPrefix(key, "hy2://") {
+		return ParseHysteria2(key)
+	}
+	if strings.HasPrefix(key, "tuic://") {
+		return ParseTUIC(key)
 	}
 	if strings.HasPrefix(key, "vmess://") {
 		return ParseVMess(key)

@@ -14,7 +14,7 @@ tests. It describes the Bimeron share-link importer, not every Xray JSON option.
 | `tcp` | REALITY | Supported | `sni`, `fp`, `pbk`, optional `sid` and `spx` |
 | `grpc` | REALITY | Supported | gRPC fields plus `sni`, `fp`, `pbk`, optional `sid` and `spx` |
 | `xhttp` | REALITY over HTTP/2 | Supported | XHTTP fields plus `sni`, `fp`, `pbk`, optional `sid` and `spx`; `mode=auto`, `stream-up`, or `stream-one` |
-| `kcp`/`mkcp`, `hysteria` | Protected combinations | Unsupported | See [ADR 0011](adr/0011-vmess-udp-transport-limits.md) |
+| `kcp`/`mkcp`, `hysteria` | Protected combinations | Unsupported | See [ADR 0015](adr/0015-vmess-udp-transport-limits.md) |
 
 The supported rows use VMess AEAD with `aid=0` and `scy=auto`, `aes-128-gcm`,
 or `chacha20-poly1305`. The core supports TCP and UDP upstream requests on

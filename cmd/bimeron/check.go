@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bimeron/internal/dnsconfig"
+	"bimeron/internal/hysteria2"
 	"bimeron/internal/proxy"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
@@ -66,6 +67,13 @@ func check(args []string) error {
 		tcp, udp = client, client
 	} else if p.Type == "vmess" {
 		client, err := vmess.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp, udp = client, client
+	} else if p.Type == "hysteria2" {
+		client, err := hysteria2.New(ctx, p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
 		}
