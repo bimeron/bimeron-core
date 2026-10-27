@@ -118,7 +118,7 @@ func (v VLESS) Validate(host string, port int) error {
 		return fmt.Errorf("unsupported VLESS transport, security, encryption or flow")
 	}
 	vision := v.Flow == "xtls-rprx-vision" || v.Flow == "xtls-rprx-vision-udp443"
-	if !((v.Network == "tcp" && v.Security == "reality" && (vision || v.Flow == "")) || (v.Network == "tcp" && v.Security == "tls" && v.Flow == "") || (v.Network == "ws" && v.Security == "tls" && v.Flow == "") || (v.Network == "grpc" && (v.Security == "tls" || v.Security == "reality") && v.Flow == "") || (v.Network == "xhttp" && v.Security == "tls" && v.Flow == "" && (v.XHTTPMode == "packet-up" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "auto")) || (v.Network == "xhttp" && v.Security == "reality" && v.Flow == "" && (v.XHTTPMode == "stream-one" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "auto"))) {
+	if !((v.Network == "tcp" && v.Security == "reality" && (vision || v.Flow == "")) || (v.Network == "tcp" && v.Security == "tls" && v.Flow == "") || (v.Network == "ws" && v.Security == "tls" && v.Flow == "") || (v.Network == "grpc" && (v.Security == "tls" || v.Security == "reality") && v.Flow == "") || (v.Network == "xhttp" && v.Security == "tls" && v.Flow == "" && (v.XHTTPMode == "packet-up" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "stream-one" || v.XHTTPMode == "auto")) || (v.Network == "xhttp" && v.Security == "reality" && v.Flow == "" && (v.XHTTPMode == "stream-one" || v.XHTTPMode == "stream-up" || v.XHTTPMode == "auto"))) {
 		return fmt.Errorf("unsupported VLESS transport, security or flow")
 	}
 	if strings.ContainsAny(v.ServerName, " /\t\r\n") {

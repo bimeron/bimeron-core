@@ -192,7 +192,7 @@ func (c *Client) xhttpClientTransport() (http.RoundTripper, error) {
 		if name == "" {
 			name = c.endpoint.Host
 		}
-		h3 := &http3.Transport{TLSClientConfig: &tls.Config{ServerName: name, NextProtos: []string{"h3"}, MinVersion: tls.VersionTLS13}, Dial: func(ctx context.Context, _ string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+		h3 := &http3.Transport{TLSClientConfig: &tls.Config{ServerName: name, NextProtos: []string{"h3"}, MinVersion: tls.VersionTLS13, RootCAs: c.rootCAs}, Dial: func(ctx context.Context, _ string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 			return qt.DialEarly(ctx, remote, tlsCfg, cfg)
 		}}
 		c.xhttpPacket, c.xhttpQUIC, c.xhttpH3Transport = packet, qt, h3

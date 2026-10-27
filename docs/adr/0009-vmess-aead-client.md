@@ -2,7 +2,8 @@
 
 Status: accepted, October 26, 2026.
 
-The supported transport scope was expanded by ADR 0010 on October 27, 2026.
+The supported transport scope was expanded by ADR 0010 and ADR 0011 on
+October 27, 2026. The options below describe the initial release decision.
 
 ## Context
 

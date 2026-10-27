@@ -122,8 +122,5 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	if !verified {
 		return nil, fmt.Errorf("REALITY authentication failed")
 	}
-	if (settings.Network == "xhttp" || settings.Network == "grpc") && secure.ConnectionState().NegotiatedProtocol != "h2" {
-		return nil, fmt.Errorf("REALITY HTTP/2 negotiation failed")
-	}
 	return secure, nil
 }

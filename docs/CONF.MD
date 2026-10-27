@@ -175,22 +175,26 @@ of `File`. For example, the JSON inside a supported link has this shape:
 ```
 
 The `vmess://` payload is standard or URL-safe base64 of the UTF-8 JSON.
-`net` may be `tcp`, `ws`, `httpupgrade`, `grpc`, or `xhttp`; all require TLS
-certificate verification. `scy`
-may be `auto` (AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
+`net` may be `tcp`, `ws`, `httpupgrade`, `grpc`, or `xhttp`. Supported
+combinations use verified TLS or REALITY authentication. `scy` may be `auto`
+(AES-128-GCM), `aes-128-gcm`, or `chacha20-poly1305`.
 Optional `fp` selects a TLS client fingerprint: `chrome`, `firefox`, `safari`,
 `ios`, `android`, or `edge`. Optional `alpn` supplies comma-separated TLS ALPN
-protocols; WebSocket and HTTPUpgrade accept only `http/1.1`, while gRPC and
-basic XHTTP accept only `h2`. Without `alpn`, the transport selects its
-default. For WebSocket and HTTPUpgrade, `path` and optional `host` specify the
+protocols; WebSocket and HTTPUpgrade accept only `http/1.1`, gRPC accepts `h2`,
+and XHTTP accepts `h2` or `h3` (HTTP/3 requires TLS and no `fp`). Without
+`alpn`, the transport selects its default. For WebSocket and HTTPUpgrade,
+`path` and optional `host` specify the
 HTTP request. For gRPC, `path` is the required service name, optional `host`
 is the authority, and `mode=multi` selects multi mode. For XHTTP, `path` and
 optional `host` specify the HTTP request; `mode` may be `auto` (the default),
-`packet-up`, or `stream-up`. See [VMess transport matrix](VMESS_TRANSPORTS.MD).
+`packet-up`, `stream-up`, or `stream-one`. The optional `extra` field holds
+validated XHTTP settings as a JSON string. REALITY uses `tls=reality`, `sni`,
+`fp`, `pbk`, and optional `sid` and `spx` on TCP, gRPC, or XHTTP over HTTP/2.
+See [VMess transport matrix](VMESS_TRANSPORTS.MD).
 The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
 the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
-transport, other networks, and unknown JSON fields are rejected. VMess has no
-explicit parameter form in this release.
+transport, `scy=zero`, other networks, and unknown JSON fields are rejected.
+VMess has no explicit parameter form in this release.
 
 ### Trojan over TCP/TLS
 

@@ -3,6 +3,7 @@ package accesskey
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ type VMess struct {
 	GRPCServiceName, GRPCAuthority                         string
 	GRPCMultiMode                                          bool
 	XHTTPPath, XHTTPHost, XHTTPMode                        string
+	XHTTPOptions                                           *XHTTPOptions
+	PublicKey, ShortID, SpiderX                            string
 }
 
 func (v VMess) Validate(host string, port int) error {
@@ -28,14 +31,28 @@ func (v VMess) Validate(host string, port int) error {
 	if v.Security != "auto" && v.Security != "aes-128-gcm" && v.Security != "chacha20-poly1305" {
 		return fmt.Errorf("unsupported VMess encryption")
 	}
-	if v.TLS != "tls" || (v.Network != "tcp" && v.Network != "ws" && v.Network != "httpupgrade" && v.Network != "grpc" && v.Network != "xhttp") {
+	if (v.TLS != "tls" && v.TLS != "reality") || (v.Network != "tcp" && v.Network != "ws" && v.Network != "httpupgrade" && v.Network != "grpc" && v.Network != "xhttp") {
 		return fmt.Errorf("unsupported VMess transport")
+	}
+	if v.TLS == "reality" {
+		if v.Network != "tcp" && v.Network != "grpc" && v.Network != "xhttp" || v.Fingerprint == "" || (v.Network == "tcp" && v.ALPN != "") || (v.Network == "xhttp" && v.XHTTPMode != "auto" && v.XHTTPMode != "stream-one" && v.XHTTPMode != "stream-up") {
+			return fmt.Errorf("invalid VMess REALITY settings")
+		}
+		key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
+		if err != nil || len(key) != 32 || len(v.ShortID) > 16 || len(v.ShortID)%2 != 0 {
+			return fmt.Errorf("invalid VMess REALITY key")
+		}
+		if _, err := hex.DecodeString(v.ShortID); err != nil {
+			return fmt.Errorf("invalid VMess REALITY short ID")
+		}
+	} else if v.PublicKey != "" || v.ShortID != "" || v.SpiderX != "" {
+		return fmt.Errorf("REALITY options require VMess reality security")
 	}
 	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid VMess server name")
 	}
 	for _, protocol := range strings.Split(v.ALPN, ",") {
-		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || ((v.Network == "ws" || v.Network == "httpupgrade") && protocol != "http/1.1") || ((v.Network == "grpc" || v.Network == "xhttp") && protocol != "h2")) {
+		if v.ALPN != "" && (protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || ((v.Network == "ws" || v.Network == "httpupgrade") && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && protocol != "h2" && protocol != "h3")) {
 			return fmt.Errorf("invalid VMess ALPN")
 		}
 	}
@@ -67,12 +84,21 @@ func (v VMess) Validate(host string, port int) error {
 	if v.Network == "grpc" && (v.GRPCServiceName == "" || strings.ContainsAny(v.GRPCServiceName, "?\\# \t\r\n") || (strings.Contains(v.GRPCServiceName, "/") && (!strings.HasPrefix(v.GRPCServiceName, "/") || strings.HasSuffix(v.GRPCServiceName, "/") || strings.Contains(v.GRPCServiceName, "//"))) || strings.ContainsAny(v.GRPCAuthority, " /\\@?#\t\r\n") || strings.HasPrefix(v.GRPCAuthority, ":")) {
 		return fmt.Errorf("invalid VMess gRPC settings")
 	}
-	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "") {
+	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "" || v.XHTTPOptions != nil) {
 		return fmt.Errorf("VMess XHTTP options require xhttp")
 	}
 	if v.Network == "xhttp" {
-		if v.XHTTPMode != "auto" && v.XHTTPMode != "packet-up" && v.XHTTPMode != "stream-up" {
+		if v.XHTTPMode != "auto" && v.XHTTPMode != "packet-up" && v.XHTTPMode != "stream-up" && v.XHTTPMode != "stream-one" {
 			return fmt.Errorf("unsupported VMess XHTTP mode")
+		}
+		if strings.Contains(v.ALPN, ",") {
+			return fmt.Errorf("invalid VMess XHTTP ALPN")
+		}
+		if v.ALPN == "h3" && (v.Fingerprint != "" || v.TLS != "tls") {
+			return fmt.Errorf("VMess HTTP/3 does not support TLS fingerprints")
+		}
+		if err := v.XHTTPOptions.Validate(v.XHTTPMode, v.TLS, v.ALPN); err != nil {
+			return err
 		}
 		path, err := url.ParseRequestURI(v.XHTTPPath)
 		if v.XHTTPPath == "" || err != nil || path.IsAbs() || !strings.HasPrefix(v.XHTTPPath, "/") || strings.ContainsAny(v.XHTTPPath, "#\\ \t\r\n") {
@@ -136,7 +162,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if _, err = dec.Token(); err != io.EOF {
 		return Profile{}, fmt.Errorf("invalid VMess JSON")
 	}
-	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true, "alpn": true, "fp": true, "mode": true}
+	allowed := map[string]bool{"v": true, "ps": true, "add": true, "port": true, "id": true, "aid": true, "scy": true, "net": true, "type": true, "host": true, "path": true, "tls": true, "sni": true, "alpn": true, "fp": true, "mode": true, "extra": true, "pbk": true, "sid": true, "spx": true}
 	for k := range fields {
 		if !allowed[k] {
 			return Profile{}, fmt.Errorf("unsupported VMess field")
@@ -170,7 +196,7 @@ func ParseVMess(raw string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("invalid VMess port")
 	}
-	v := VMess{ID: get("id"), Security: get("scy"), Network: get("net"), TLS: get("tls"), ServerName: get("sni"), WSPath: get("path"), WSHost: get("host"), ALPN: get("alpn"), Fingerprint: get("fp")}
+	v := VMess{ID: get("id"), Security: get("scy"), Network: get("net"), TLS: get("tls"), ServerName: get("sni"), WSPath: get("path"), WSHost: get("host"), ALPN: get("alpn"), Fingerprint: get("fp"), PublicKey: get("pbk"), ShortID: get("sid"), SpiderX: get("spx")}
 	if v.Security == "" {
 		v.Security = "auto"
 	}
@@ -199,8 +225,17 @@ func ParseVMess(raw string) (Profile, error) {
 		if v.XHTTPMode == "" {
 			v.XHTTPMode = "auto"
 		}
+		if _, present := fields["extra"]; present {
+			v.XHTTPOptions, err = ParseXHTTPExtra(get("extra"))
+			if err != nil {
+				return Profile{}, err
+			}
+		}
 	} else if get("mode") != "" {
 		return Profile{}, fmt.Errorf("unsupported VMess mode")
+	}
+	if _, present := fields["extra"]; present && v.Network != "xhttp" {
+		return Profile{}, fmt.Errorf("VMess extra requires xhttp")
 	}
 	if err := v.Validate(get("add"), port); err != nil {
 		return Profile{}, err

@@ -243,11 +243,43 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 // DialTransport opens a protocol-neutral gRPC or XHTTP byte stream. The caller
 // owns the returned stream and writes its own protocol request framing.
 func (c *Client) DialTransport(ctx context.Context) (net.Conn, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, net.ErrClosed
+	}
 	switch c.settings.Network {
 	case "grpc":
 		return c.grpcStream(ctx)
 	case "xhttp":
 		return c.xhttpStream(ctx)
+	case "tcp":
+		if c.settings.Security != "reality" {
+			return nil, fmt.Errorf("unsupported raw transport")
+		}
+		setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+		if err != nil {
+			return nil, err
+		}
+		ready := false
+		defer func() {
+			if !ready {
+				_ = raw.Close()
+			}
+		}()
+		stop := context.AfterFunc(setup, func() { _ = raw.Close() })
+		defer stop()
+		_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
+		conn, err := realityHandshake(setup, raw, c.settings, c.publicKey, c.shortID)
+		if err != nil {
+			return nil, err
+		}
+		_ = raw.SetDeadline(time.Time{})
+		ready = true
+		return conn, nil
 	default:
 		return nil, fmt.Errorf("unsupported raw transport")
 	}

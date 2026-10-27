@@ -53,10 +53,11 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		return nil, fmt.Errorf("invalid VMess user ID")
 	}
 	c := &Client{endpoint: profile.TCP, settings: profile.VMess, dialer: dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
-	if profile.VMess.Network == "grpc" || profile.VMess.Network == "xhttp" {
-		v := accesskey.VLESS{ID: profile.VMess.ID, Network: profile.VMess.Network, Security: "tls", Encryption: "none", ServerName: profile.VMess.ServerName, Fingerprint: profile.VMess.Fingerprint, ALPN: profile.VMess.ALPN,
+	if profile.VMess.Network == "grpc" || profile.VMess.Network == "xhttp" || profile.VMess.TLS == "reality" {
+		v := accesskey.VLESS{ID: profile.VMess.ID, Network: profile.VMess.Network, Security: profile.VMess.TLS, Encryption: "none", ServerName: profile.VMess.ServerName, Fingerprint: profile.VMess.Fingerprint, ALPN: profile.VMess.ALPN,
+			PublicKey: profile.VMess.PublicKey, ShortID: profile.VMess.ShortID, SpiderX: profile.VMess.SpiderX,
 			GRPCServiceName: profile.VMess.GRPCServiceName, GRPCAuthority: profile.VMess.GRPCAuthority, GRPCMultiMode: profile.VMess.GRPCMultiMode,
-			XHTTPPath: profile.VMess.XHTTPPath, XHTTPHost: profile.VMess.XHTTPHost, XHTTPMode: profile.VMess.XHTTPMode}
+			XHTTPPath: profile.VMess.XHTTPPath, XHTTPHost: profile.VMess.XHTTPHost, XHTTPMode: profile.VMess.XHTTPMode, XHTTPOptions: profile.VMess.XHTTPOptions}
 		transportProfile := accesskey.Profile{Type: "vless", TCP: profile.TCP, VLESS: v}
 		c.httpStream, err = vless.New(transportProfile, dialer)
 		if err != nil {
