@@ -31,17 +31,29 @@ jobs:
             fi
           done
       - run: go test ./...
+      - run: go vet ./...
       - name: Check VLESS and VMess transport races
         run: CGO_ENABLED=1 go test -race ./internal/vless ./internal/vmess
+      - name: Check core and control races
+        run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
       - name: VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
           go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXrayVMessAEAD$' -count=1 -v
-      - name: Linux TUN lifecycle
+      - name: Install Linux integration tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
+      - name: Isolated Linux network integration
         run: |
-          go test -c -o /tmp/bimeron-core.test ./core
-          sudo unshare -n env BIMERON_NETNS_TEST=1 /tmp/bimeron-core.test -test.run='TestLinuxTUN(HTTP|CleanupAndImmediateReopen)$' -test.v
+          go test -c -o "$RUNNER_TEMP/bimeron-core.test" ./core
+          go test -c -o "$RUNNER_TEMP/bimeron-linuxnet.test" ./internal/linuxnet
+          sudo unshare -n env BIMERON_NETNS_TEST=1 "$RUNNER_TEMP/bimeron-core.test" -test.run='TestLinuxTUN(HTTP|CleanupAndImmediateReopen)$' -test.v
+          sudo unshare -n env BIMERON_NETNS_TEST=1 BIMERON_NFT_BIN="$(command -v nft)" "$RUNNER_TEMP/bimeron-linuxnet.test" -test.run='^TestNativeNetworkConfigureRecover$' -test.v
+      - name: Isolated Linux daemon integration
+        run: |
+          go build -o "$RUNNER_TEMP/bimeron" ./cmd/bimeron
+          go test -c -o "$RUNNER_TEMP/bimeron-control.test" ./internal/control
+          sudo unshare -nm sh -c 'mount -t tmpfs tmpfs /run && BIMERON_CLI_TEST="$1" "$2" -test.run="^TestLinuxDaemonBinary$" -test.v' sh "$RUNNER_TEMP/bimeron" "$RUNNER_TEMP/bimeron-control.test"
 
   test-windows:
     runs-on: windows-latest
@@ -52,6 +64,22 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
+      - run: go vet ./...
+      - name: Check core and control races
+        run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
+
+  test-apple-unsigned:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build system extension and check C ABI
+        run: sh scripts/build-apple.sh
+      - name: Build app extension and check C ABI
+        run: APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
 
   test-fingerprint-dependencies:
     strategy:
