@@ -2,7 +2,8 @@
 
 Status: Accepted, October 28, 2026. The user authorized the embedded approach
 and staged implementation. Configuration and transport are implemented and
-verified locally; CI wiring and user documentation remain pending.
+verified locally. CI wiring, user documentation, and examples are present;
+hosted CI results and final review remain pending.
 
 Tracking issue: [#61](https://github.com/bimeron/bimeron-core/issues/61).
 
@@ -45,7 +46,7 @@ v0.0.5 build needs `CFLAGS="-O2 -fcommon -Wno-error=stringop-overread"` to
 build unchanged upstream source with its historical warnings. Do not apply
 that compiler-warning relaxation to Bimeron's build.
 
-The next Low stage should wire these exact test controls into Linux CI:
+The Linux workflow wires these test controls into its mandatory checks:
 
 ```sh
 export BIMERON_OBFS_SERVER_BIN=/absolute/path/to/pinned/obfs-server

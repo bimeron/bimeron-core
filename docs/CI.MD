@@ -111,6 +111,56 @@ throughput. All test credentials, certificates, and endpoints are synthetic
 and local. A successful local run does not replace a successful hosted CI run
 or testing a real VPN deployment.
 
+## simple-obfs reference checks
+
+The Linux test job builds two original simple-obfs server revisions:
+
+| Revision | simple-obfs commit | libcork submodule commit |
+| --- | --- | --- |
+| Final upstream | `486bebd9208539058e57e23a12f23103016e09b4` | `f02984545061c924808e4b9ea7cc6749a41f1979` |
+| v0.0.5 | `a9c43588e4cb038e6ac02f050e4cab81f8228dff` | `29d7cbafc4b983192baeb0c962ab1ff591418f56` |
+
+The workflow verifies both checkouts and submodule commits before building.
+It installs autoconf, automake, libtool, libev, PCRE, OpenSSL development
+headers, and pkg-config; runs `./autogen.sh` and
+`./configure --disable-documentation`; and builds with `make -j2`.
+v0.0.5 needs `-O2 -fcommon -Wno-error=stringop-overread` with modern GCC.
+This permits a historical upstream warning without modifying its source and
+does not relax Bimeron's compiler settings. Reference sources retain their
+licenses. The GPL reference binaries run as separate test processes and are
+not shipped or linked into Bimeron.
+
+Both servers use the existing independent Xray v1.260327.0 backend. The
+mandatory step sets `BIMERON_REQUIRE_SIMPLEOBFS_INTEROP=1`; missing reference
+binaries fail instead of skipping. Wrapper tests and both reference matrices
+run with the race detector. Coverage includes HTTP/TLS, six AEAD/2022 methods,
+AES identity chains, parallel streams, reconnects, large transfers, and
+shutdown. Final upstream additionally tests custom HTTP URI/method and Host.
+The v0.0.5 run sets `BIMERON_SIMPLEOBFS_RELEASE=1` to omit custom-option cases.
+
+For local reproduction, use the binaries from the pinned source builds in
+[the workflow](../.github/workflows/go.yml):
+
+```sh
+export BIMERON_XRAY_BIN=/absolute/path/to/xray
+export BIMERON_OBFS_SERVER_BIN=/absolute/path/to/final/obfs-server
+export BIMERON_REQUIRE_SIMPLEOBFS_INTEROP=1
+go test -race ./internal/simpleobfs -count=1
+go test -race ./internal/ssplugin -run 'SimpleObfs' -count=1 -v
+go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalSimpleObfs$' -benchtime=10x -count=1
+
+export BIMERON_OBFS_SERVER_BIN=/absolute/path/to/v0.0.5/obfs-server
+BIMERON_SIMPLEOBFS_RELEASE=1 go test -race ./internal/ssplugin -run '^TestOriginalSimpleObfs' -count=1 -v
+```
+
+The benchmark reuses a connection to echo a 56 KiB payload through each mode,
+the original server, and Xray. It reports timing and allocations without a
+hardware-dependent threshold. Its result measures the entire reference chain,
+including TCP buffering and scheduling, rather than a client throughput limit.
+Without the reference variables, ordinary local tests still run the synthetic
+framing, configuration, lifecycle, and runtime-resolution tests. Local success
+does not establish hosted CI or mobile/VPN data-plane success.
+
 ## Proposed test and build workflow
 
 Additional jobs could cover:

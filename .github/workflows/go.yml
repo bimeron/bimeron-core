@@ -92,6 +92,36 @@ jobs:
         run: |
           CGO_ENABLED=1 BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ssplugin ./internal/v2raymux -count=1 -v
           BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalPlugin$' -benchtime=20x -count=1
+      - name: Build pinned original simple-obfs servers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool libev-dev libpcre3-dev libssl-dev pkg-config
+          for pin in final:486bebd9208539058e57e23a12f23103016e09b4:f02984545061c924808e4b9ea7cc6749a41f1979 v005:a9c43588e4cb038e6ac02f050e4cab81f8228dff:29d7cbafc4b983192baeb0c962ab1ff591418f56; do
+            IFS=: read -r version revision cork_revision <<< "$pin"
+            source_dir="$RUNNER_TEMP/simple-obfs-$version"
+            git clone --quiet https://github.com/shadowsocks/simple-obfs.git "$source_dir"
+            git -C "$source_dir" checkout --quiet "$revision"
+            git -C "$source_dir" submodule update --init --depth 1
+            test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
+            test "$(git -C "$source_dir/libcork" rev-parse HEAD)" = "$cork_revision"
+            flags=-O2
+            if [ "$version" = v005 ]; then
+              flags='-O2 -fcommon -Wno-error=stringop-overread'
+            fi
+            (cd "$source_dir" && ./autogen.sh && CFLAGS="$flags" ./configure --disable-documentation && make -j2 CFLAGS="$flags")
+            test -x "$source_dir/src/obfs-server"
+          done
+      - name: Shadowsocks simple-obfs HTTP and TLS interoperability
+        env:
+          BIMERON_REQUIRE_SIMPLEOBFS_INTEROP: '1'
+        run: |
+          export BIMERON_XRAY_BIN="$RUNNER_TEMP/xray"
+          export BIMERON_OBFS_SERVER_BIN="$RUNNER_TEMP/simple-obfs-final/src/obfs-server"
+          CGO_ENABLED=1 go test -race ./internal/simpleobfs -count=1
+          CGO_ENABLED=1 go test -race ./internal/ssplugin -run 'SimpleObfs' -count=1 -v
+          go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalSimpleObfs$' -benchtime=10x -count=1
+          export BIMERON_OBFS_SERVER_BIN="$RUNNER_TEMP/simple-obfs-v005/src/obfs-server"
+          BIMERON_SIMPLEOBFS_RELEASE=1 CGO_ENABLED=1 go test -race ./internal/ssplugin -run '^TestOriginalSimpleObfs' -count=1 -v
       - name: ShadowTLS v3 interoperability with independent servers
         run: |
           curl --fail --location --silent --show-error https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl --output "$RUNNER_TEMP/shadow-tls"
