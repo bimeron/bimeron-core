@@ -298,6 +298,13 @@ func (s *RequestStream) Context() context.Context {
 	return s.str.Context()
 }
 
+// SendCompletionContext reports transport completion of the send direction.
+// See quic.SendStream.SendCompletionContext. A normal Close queues FIN and
+// returns before this context is canceled.
+func (s *RequestStream) SendCompletionContext() context.Context {
+	return s.str.QUICStream().SendCompletionContext()
+}
+
 // SetReadDeadline sets the deadline for [RequestStream.Read] calls.
 func (s *RequestStream) SetReadDeadline(t time.Time) error {
 	return s.str.SetReadDeadline(t)

@@ -34,8 +34,10 @@ type SendStream struct {
 	numOutstandingFrames int64 // outstanding STREAM and RESET_STREAM frames
 	retransmissionQueue  []*wire.StreamFrame
 
-	ctx       context.Context
-	ctxCancel context.CancelCauseFunc
+	ctx              context.Context
+	ctxCancel        context.CancelCauseFunc
+	completionCtx    context.Context
+	completionCancel context.CancelFunc
 
 	streamID protocol.StreamID
 	sender   streamSender
@@ -561,7 +563,7 @@ func (s *SendStream) isNewlyCompleted() bool {
 	}
 	// The stream is completed if we sent the FIN.
 	if s.finSent {
-		s.completed = true
+		s.markCompleted()
 		return true
 	}
 	// The stream is also completed if:
@@ -570,7 +572,7 @@ func (s *SendStream) isNewlyCompleted() bool {
 	// 		* the application consumed the error via Write, or
 	//		* the application called Close
 	if s.resetErr != nil && (s.cancellationFlagged || s.finishedWriting) {
-		s.completed = true
+		s.markCompleted()
 		return true
 	}
 	return false
@@ -834,6 +836,31 @@ func (s *SendStream) Context() context.Context {
 	return s.ctx
 }
 
+// SendCompletionContext is canceled when QUIC no longer needs to transmit on
+// this stream: all data and FIN have been acknowledged, a reset has completed,
+// or the connection has terminated. Unlike Context, a normal Close does not
+// cancel it. Cancellation alone does not indicate successful delivery: the
+// stream or connection might have been aborted.
+func (s *SendStream) SendCompletionContext() context.Context {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.completionCtx == nil {
+		s.completionCtx, s.completionCancel = context.WithCancel(context.Background())
+		if s.completed {
+			s.completionCancel()
+		}
+	}
+	return s.completionCtx
+}
+
+// markCompleted is called with mutex held.
+func (s *SendStream) markCompleted() {
+	s.completed = true
+	if s.completionCancel != nil {
+		s.completionCancel()
+	}
+}
+
 // SetWriteDeadline sets the deadline for future [SendStream.Write] calls
 // and any currently blocked call.
 // Even if write times out, it may return n > 0, indicating that
@@ -852,7 +879,7 @@ func (s *SendStream) SetWriteDeadline(t time.Time) error {
 // The peer will NOT be informed about this: the stream is closed without sending a FIN or RST.
 func (s *SendStream) closeForShutdown(err error) {
 	s.mutex.Lock()
-	s.completed = true
+	s.markCompleted()
 	if s.shutdownErr == nil && !s.finishedWriting {
 		s.shutdownErr = err
 		s.returnFramesToPool()

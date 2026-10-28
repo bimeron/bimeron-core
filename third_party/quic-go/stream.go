@@ -112,6 +112,12 @@ func (s *Stream) StreamID() StreamID {
 	return s.sendStr.StreamID()
 }
 
+// SendCompletionContext reports transport completion of the send direction.
+// See [SendStream.SendCompletionContext].
+func (s *Stream) SendCompletionContext() context.Context {
+	return s.sendStr.SendCompletionContext()
+}
+
 // SetPriority sets the scheduling priority for data sent on the stream.
 // See [SendStream.SetPriority] for details.
 func (s *Stream) SetPriority(urgency int8, incremental bool) {

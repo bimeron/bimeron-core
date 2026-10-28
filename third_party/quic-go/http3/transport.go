@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/net/http/httpguts"
 
@@ -98,6 +99,11 @@ type Transport struct {
 	// However, if the user explicitly requested gzip it is not automatically uncompressed.
 	DisableCompression bool
 
+	// GoAwayCloseDelay delays local connection closure after GOAWAY and the
+	// last request completes. Tunnel clients can allow the peer to consume
+	// buffered data after an early response FIN. Zero preserves immediate close.
+	GoAwayCloseDelay time.Duration
+
 	Logger *slog.Logger
 
 	mutex sync.Mutex
@@ -135,6 +141,7 @@ func (t *Transport) init() error {
 				t.AdditionalSettings,
 				t.MaxResponseHeaderBytes,
 				t.DisableCompression,
+				t.GoAwayCloseDelay,
 				t.Logger,
 			)
 		}
@@ -439,6 +446,7 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.AdditionalSettings,
 		t.MaxResponseHeaderBytes,
 		t.DisableCompression,
+		t.GoAwayCloseDelay,
 		t.Logger,
 	)
 	go func() {
@@ -465,6 +473,7 @@ func (t *Transport) NewRawClientConn(conn *quic.Conn) *RawClientConn {
 			t.AdditionalSettings,
 			t.MaxResponseHeaderBytes,
 			t.DisableCompression,
+			t.GoAwayCloseDelay,
 			t.Logger,
 		),
 	}

@@ -41,6 +41,7 @@ type Profile struct {
 	AnyTLS    AnyTLS
 	SSH       SSH
 	TUIC      TUIC
+	MASQUE    MASQUE
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -780,6 +781,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	}
 	if strings.HasPrefix(key, "http://") {
 		return ParseHTTPConnect(key)
+	}
+	if strings.HasPrefix(key, "masque://") {
+		return ParseMASQUE(key)
 	}
 	if !strings.HasPrefix(key, "ssconf://") {
 		return Profile{}, fmt.Errorf("unsupported access key scheme")

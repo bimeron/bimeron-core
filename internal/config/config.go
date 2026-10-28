@@ -38,6 +38,9 @@ type Access struct {
 	SSConf            string
 	SOCKS5            string
 	HTTP              string
+	MASQUE            string
+	MASQUEPath        string
+	CAFile            string
 	VLESS             string
 	VMess             string
 	Trojan            string
@@ -216,6 +219,12 @@ func parse(b []byte) (*File, error) {
 				c.Access.SOCKS5 = value
 			case "HTTP":
 				c.Access.HTTP = value
+			case "MASQUE":
+				c.Access.MASQUE = value
+			case "MASQUEPath":
+				c.Access.MASQUEPath = value
+			case "CAFile":
+				c.Access.CAFile = value
 			case "Type":
 				c.Access.Type = value
 			case "Username":
@@ -452,6 +461,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.TUIC != "" && !strings.HasPrefix(c.Access.TUIC, "tuic://") {
 		return nil, fmt.Errorf("[AccessKey] TUIC must start with tuic://")
 	}
+	if c.Access.MASQUE != "" && !strings.HasPrefix(c.Access.MASQUE, "masque://") {
+		return nil, fmt.Errorf("[AccessKey] MASQUE must start with masque://")
+	}
+	if c.Access.Type != "masque" && (c.Access.MASQUEPath != "" || c.Access.CAFile != "") {
+		return nil, fmt.Errorf("[AccessKey] MASQUEPath and CAFile require Type = masque")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
@@ -463,6 +478,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.HTTP != "" {
+		sources++
+	}
+	if c.Access.MASQUE != "" {
 		sources++
 	}
 	if c.Access.VLESS != "" {
@@ -505,7 +523,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, VLESS, VMess, Trojan, Naive, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, MASQUE, VLESS, VMess, Trojan, Naive, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
 	}
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
@@ -520,6 +538,30 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] Server and Port are required")
 		}
 		s := c.Access.Parameters
+		if c.Access.Type == "masque" {
+			if s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil {
+				return nil, fmt.Errorf("[AccessKey] invalid MASQUE parameters")
+			}
+			m := accesskey.MASQUE{ProxyHost: s.Server, ServerName: c.Access.ServerName, UDPPath: c.Access.MASQUEPath, CAFile: c.Access.CAFile}
+			if m.ServerName == "" {
+				m.ServerName = s.Server
+			}
+			if m.UDPPath == "" {
+				m.UDPPath = accesskey.DefaultMASQUEPath
+			}
+			if m.CAFile != "" && !filepath.IsAbs(m.CAFile) {
+				if path == "" {
+					return nil, fmt.Errorf("in-memory configuration requires an absolute CAFile")
+				}
+				m.CAFile = filepath.Join(filepath.Dir(path), m.CAFile)
+			}
+			if err := m.Validate(s.Server, s.Port, c.Access.Username, s.Password); err != nil {
+				return nil, err
+			}
+			e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Secret: s.Password}
+			c.profile = &accesskey.Profile{Name: c.Name, Type: "masque", TCP: e, UDP: e, Username: c.Access.Username, MASQUE: m}
+			return c, nil
+		}
 		if c.Access.Type == "ssh" {
 			if c.Access.Username == "" || s.Server == "" || s.Port < 1 || s.Port > 65535 || s.Method != "" || s.Password != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || c.Access.ServerName != "" {
 				return nil, fmt.Errorf("[AccessKey] invalid SSH parameters")
@@ -640,6 +682,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.HTTP != "" {
 		key = c.Access.HTTP
 	}
+	if c.Access.MASQUE != "" {
+		key = c.Access.MASQUE
+	}
 	if c.Access.VLESS != "" {
 		key = c.Access.VLESS
 	}
@@ -686,6 +731,14 @@ func loadBytes(b []byte, path string) (*File, error) {
 	}
 	if strings.HasPrefix(c.key, "socks5://") {
 		p, err := accesskey.ParseSOCKS5(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
+	if strings.HasPrefix(c.key, "masque://") {
+		p, err := accesskey.ParseMASQUE(c.key)
 		if err != nil {
 			return nil, err
 		}

@@ -69,10 +69,12 @@ type ClientConn struct {
 	// However, if the user explicitly requested gzip it is not automatically uncompressed.
 	disableCompression bool
 
-	streamMx     sync.Mutex
-	maxStreamID  quic.StreamID // set once a GOAWAY frame is received
-	goAwayCtx    context.Context
-	goAwayCancel context.CancelFunc
+	streamMx         sync.Mutex
+	maxStreamID      quic.StreamID // set once a GOAWAY frame is received
+	goAwayCtx        context.Context
+	goAwayCancel     context.CancelFunc
+	goAwayCloseDelay time.Duration
+	goAwayCloseOnce  sync.Once
 
 	qlogger qlogwriter.Recorder
 	logger  *slog.Logger
@@ -88,6 +90,7 @@ func newClientConn(
 	additionalSettings map[uint64]uint64,
 	maxResponseHeaderBytes int,
 	disableCompression bool,
+	goAwayCloseDelay time.Duration,
 	logger *slog.Logger,
 ) *ClientConn {
 	var qlogger qlogwriter.Recorder
@@ -96,6 +99,7 @@ func newClientConn(
 	}
 	c := &ClientConn{
 		conn:               conn,
+		goAwayCloseDelay:   goAwayCloseDelay,
 		additionalSettings: additionalSettings,
 		disableCompression: disableCompression,
 		maxStreamID:        invalidStreamID,
@@ -239,9 +243,9 @@ func (c *ClientConn) handleControlStream(str *quic.ReceiveStream, fp *frameParse
 		c.streamMx.Unlock()
 
 		hasActiveStreams := c.rawConn.hasActiveStreams()
-		// immediately close the connection if there are currently no active requests
+		// Close (with the configured grace) if there are no active requests.
 		if !hasActiveStreams {
-			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeNoError), "")
+			c.closeAfterGoAway()
 			return
 		}
 	}
@@ -253,8 +257,28 @@ func (c *ClientConn) onStreamsEmpty() {
 
 	// The server is performing a graceful shutdown.
 	if c.maxStreamID != invalidStreamID {
-		c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeNoError), "")
+		c.closeAfterGoAway()
 	}
+}
+
+// Transport completion does not imply the peer application consumed buffered
+// data. An opt-in grace interval lets tunnel peers finish after an early EOF.
+func (c *ClientConn) closeAfterGoAway() {
+	c.goAwayCloseOnce.Do(func() {
+		if c.goAwayCloseDelay <= 0 {
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeNoError), "")
+			return
+		}
+		go func() {
+			timer := time.NewTimer(c.goAwayCloseDelay)
+			defer timer.Stop()
+			select {
+			case <-c.conn.Context().Done():
+			case <-timer.C:
+				c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeNoError), "")
+			}
+		}()
+	})
 }
 
 // RoundTrip executes a request and returns a response

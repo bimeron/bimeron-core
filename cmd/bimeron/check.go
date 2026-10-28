@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/anytls"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/masque"
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
@@ -54,6 +55,13 @@ func check(args []string) error {
 	if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 		tcp, udp = s, s
+	} else if p.Type == "masque" {
+		client, err := masque.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp, udp = client, client
 	} else if p.Type == "http" {
 		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {

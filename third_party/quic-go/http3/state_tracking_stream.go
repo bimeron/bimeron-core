@@ -46,7 +46,14 @@ func newStateTrackingStream(s *quic.Stream, clearer streamClearer, sendDatagram 
 		hasData:      make(chan struct{}, 1),
 	}
 
-	context.AfterFunc(s.Context(), t.closeSend)
+	context.AfterFunc(s.SendCompletionContext(), t.closeSend)
+	context.AfterFunc(s.Context(), func() {
+		// A normal Close queues FIN, but must keep HTTP/3 tracking alive until
+		// QUIC has acknowledged it. Errors and resets can still abort promptly.
+		if !errors.Is(context.Cause(s.Context()), quic.ErrStreamClosed) {
+			t.closeSend()
+		}
+	})
 
 	return t
 }
@@ -81,7 +88,6 @@ func (s *stateTrackingStream) closeReceive(e error) {
 }
 
 func (s *stateTrackingStream) Close() error {
-	s.closeSend()
 	return s.Stream.Close()
 }
 
@@ -92,7 +98,7 @@ func (s *stateTrackingStream) CancelWrite(e quic.StreamErrorCode) {
 
 func (s *stateTrackingStream) Write(b []byte) (int, error) {
 	n, err := s.Stream.Write(b)
-	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, quic.ErrStreamClosed) {
 		s.closeSend()
 	}
 	return n, err
@@ -100,7 +106,7 @@ func (s *stateTrackingStream) Write(b []byte) (int, error) {
 
 func (s *stateTrackingStream) TryWriteAll(b []byte) error {
 	err := s.Stream.TryWriteAll(b)
-	if err != nil && !errors.Is(err, quic.ErrWouldBlock) {
+	if err != nil && !errors.Is(err, quic.ErrWouldBlock) && !errors.Is(err, quic.ErrStreamClosed) {
 		s.closeSend()
 	}
 	return err
