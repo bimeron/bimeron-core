@@ -12,8 +12,9 @@ import (
 	"golang.org/x/crypto/cryptobyte"
 )
 
-// Expectations are recorded from the versioned uquic reference, independently
-// of the production marshaller. Random bytes and shuffled order are normalized.
+// Expectations come from the Chrome for Testing captures in testdata and the
+// versioned uquic reference, independently of the production marshaller.
+// Random bytes and shuffled order are normalized.
 func TestChromeVersionedWire(t *testing.T) {
 	for _, fp := range []QUICFingerprint{QUICChrome115, QUICChrome146} {
 		for _, network := range []string{"udp4", "udp6"} {
@@ -116,15 +117,18 @@ func TestChromeVersionedWire(t *testing.T) {
 				}
 				want := []uint16{0, 10, 13, 16, 27, 43, 45, 51, 57}
 				if fp == QUICChrome115 {
-					want = append(want, 17513)
+					want = append(want, 17513, 65037)
 				} else {
-					want = append(want, 17613, 65037)
+					want = append(want, 17613, 65037, 51764)
 				}
 				var ids []uint16
 				for id := range fields {
 					ids = append(ids, id)
 				}
 				require.ElementsMatch(t, want, ids)
+				if fp == QUICChrome146 {
+					require.Equal(t, []byte{0, 0}, fields[51764])
+				}
 				require.Equal(t, []byte{0, 3, 2, 'h', '3'}, fields[16])
 				require.Equal(t, []byte{2, 3, 4}, fields[43])
 				require.Equal(t, []byte{1, 1}, fields[45])
@@ -175,7 +179,11 @@ func TestChromeVersionedWire(t *testing.T) {
 					params[id] = tp[:size]
 					tp = tp[size:]
 				}
-				for id, want := range map[uint64]uint64{1: 30000, 3: 1472, 4: 15728640, 5: 6291456, 6: 6291456, 7: 6291456, 8: 100, 9: 103, 32: 65536} {
+				idle := uint64(30000)
+				if fp == QUICChrome146 {
+					idle = 300000
+				}
+				for id, want := range map[uint64]uint64{1: idle, 3: 1472, 4: 15728640, 5: 6291456, 6: 6291456, 7: 6291456, 8: 100, 9: 103, 32: 65536} {
 					value, n, e := quicvarint.Parse(params[id])
 					require.NoError(t, e)
 					require.Equal(t, want, value)
@@ -192,12 +200,7 @@ func TestChromeVersionedWire(t *testing.T) {
 					delete(params, 0x4752)
 					require.Equal(t, []byte("RVCM"), params[0x3128])
 				} else {
-					require.Equal(t, []byte("10AF"), params[0x3128])
-					rtt, _, e := quicvarint.Parse(params[0x3127])
-					require.NoError(t, e)
-					require.GreaterOrEqual(t, rtt, uint64(1000))
-					require.LessOrEqual(t, rtt, uint64(20000))
-					delete(params, 0x3127)
+					require.Equal(t, []byte("ORIG"), params[0x3128])
 				}
 				delete(params, 0x3128)
 				versions := params[versionID]

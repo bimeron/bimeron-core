@@ -422,8 +422,8 @@ client. Use a Hysteria2-specific QUIC fingerprint selector:
 - Firefox 116A: `firefox` or `firefox-116` (aliases; preserve the imported spelling).
 - Firefox 116B: `firefox-116b`.
 - Firefox 116C: `firefox-116c`.
-- Chrome 115: `chrome-115`.
-- Chrome 146: `chrome-146`.
+- Chrome 115: `chrome-115` (legacy ALPS and GREASE ECH).
+- Chrome 146: `chrome-146` (hybrid key share and two-datagram Initial flight).
 - Chrome: `chrome`, the pinned apernet ChromeParrot preset, not a versioned
   uquic Chrome 115/146 preset.
 
@@ -432,6 +432,9 @@ and duplicate options. Never remove `fp` silently or fall back to a different
 preset. Do not reuse VLESS/TCP's fingerprint list. The core applies the chosen
 preset to the wire handshake. Address-family selection is automatic from the
 resolved endpoint; the GUI must not append IPv4/IPv6 suffixes.
+The versioned names describe the recorded Initial handshakes of official Chrome
+for Testing 115.0.5790.170 and 146.0.7680.165; they do not promise complete
+browser emulation. Keep `chrome` and an omitted `fp` unchanged.
 
 For bimeron-desktop, this changes the previous contract as follows:
 

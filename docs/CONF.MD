@@ -267,9 +267,10 @@ Supported `fp` values are case-sensitive:
 - `firefox` and `firefox-116`: Firefox 116A QUIC Initial/ClientHello preset (8-byte initial DCID).
 - `firefox-116b`: Firefox 116B (9-byte initial DCID).
 - `firefox-116c`: Firefox 116C (15-byte initial DCID).
-- `chrome-115`: versioned Chrome 115 QUIC preset (X25519, legacy ALPS).
+- `chrome-115`: versioned Chrome 115 QUIC preset (X25519, legacy ALPS,
+  GREASE ECH).
 - `chrome-146`: versioned Chrome 146 QUIC preset (X25519MLKEM768 + X25519,
-  new ALPS and GREASE ECH, two-datagram Initial flight).
+  new ALPS and GREASE ECH, empty trust anchors, two-datagram Initial flight).
 - `chrome`: the existing apernet ChromeParrot preset, pinned to the vendored
   apernet revision documented in `third_party/apernet-quic-go/BIMERON_PATCHES.md`.
   It is not an alias for uquic Chrome 115 or Chrome 146.
