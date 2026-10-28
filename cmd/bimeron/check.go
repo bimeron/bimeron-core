@@ -55,7 +55,7 @@ func check(args []string) error {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 		tcp, udp = s, s
 	} else if p.Type == "http" {
-		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, err := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {

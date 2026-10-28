@@ -60,6 +60,10 @@ jobs:
           go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.5 build v2.11.7 --output "$RUNNER_TEMP/naive-caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@c096d6a00cb28e019cc1995b04bdc6a9311d8024
           cd "$GITHUB_WORKSPACE"
           BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
+      - name: HTTPS CONNECT interoperability with independent proxy
+        run: |
+          BIMERON_HTTP_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/proxy -run '^TestReferenceHTTPSConnect$' -count=1 -v
+          go test ./internal/proxy -run '^$' -bench '^BenchmarkHTTPSConnect$' -benchtime=20x -count=1
       - name: Check core and control races
         run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
       - name: VLESS and VMess transport interoperability with Xray
@@ -99,7 +103,9 @@ jobs:
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
 
   test-apple-unsigned:
-    runs-on: macos-15
+    # ARM64 hosted runners currently fail before acquiring a machine.
+    # Run the ABI test natively on Intel and cross-build both ARM64 extensions.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -110,6 +116,10 @@ jobs:
         run: sh scripts/build-apple.sh
       - name: Build app extension and check C ABI
         run: APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
+      - name: Cross-build ARM64 system extension and link C ABI test
+        run: APPLE_ARCH=arm64 sh scripts/build-apple.sh
+      - name: Cross-build ARM64 app extension and link C ABI test
+        run: APPLE_ARCH=arm64 APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
 
   test-fingerprint-dependencies:
     strategy:
