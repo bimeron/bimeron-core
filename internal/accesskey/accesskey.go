@@ -28,20 +28,21 @@ type Endpoint struct {
 	Prefix string
 }
 type Profile struct {
-	Name      string
-	TCP       Endpoint
-	UDP       Endpoint
-	Type      string // Empty means Shadowsocks for existing API callers.
-	Username  string // SOCKS5 and HTTP CONNECT; Secret contains the password.
-	VLESS     VLESS
-	Trojan    Trojan
-	Naive     Naive
-	VMess     VMess
-	Hysteria2 Hysteria2
-	AnyTLS    AnyTLS
-	SSH       SSH
-	TUIC      TUIC
-	ShadowTLS *ShadowTLS
+	Name           string
+	TCP            Endpoint
+	UDP            Endpoint
+	Type           string // Empty means Shadowsocks for existing API callers.
+	HTTPServerName string // Nonempty enables verified TLS for HTTP CONNECT.
+	Username       string // SOCKS5 and HTTP CONNECT; Secret contains the password.
+	VLESS          VLESS
+	Trojan         Trojan
+	Naive          Naive
+	VMess          VMess
+	Hysteria2      Hysteria2
+	AnyTLS         AnyTLS
+	SSH            SSH
+	TUIC           TUIC
+	ShadowTLS      *ShadowTLS
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -617,7 +618,7 @@ func ParseSOCKS5(raw string) (Profile, error) {
 // ParseHTTPConnect accepts an HTTP proxy URI without exposing credentials in errors.
 func ParseHTTPConnect(raw string) (Profile, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return Profile{}, fmt.Errorf("invalid HTTP proxy URI")
 	}
 	port, err := strconv.Atoi(u.Port())
@@ -634,7 +635,11 @@ func ParseHTTPConnect(raw string) (Profile, error) {
 		}
 	}
 	e := Endpoint{Host: u.Hostname(), Port: port, Secret: password}
-	return Profile{Type: "http", Username: username, TCP: e}, nil
+	p := Profile{Type: "http", Username: username, TCP: e}
+	if u.Scheme == "https" {
+		p.HTTPServerName = u.Hostname()
+	}
+	return p, nil
 }
 
 type wireEndpoint struct {
@@ -775,7 +780,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "socks5://") {
 		return ParseSOCKS5(key)
 	}
-	if strings.HasPrefix(key, "http://") {
+	if strings.HasPrefix(key, "http://") || strings.HasPrefix(key, "https://") {
 		return ParseHTTPConnect(key)
 	}
 	if !strings.HasPrefix(key, "ssconf://") {

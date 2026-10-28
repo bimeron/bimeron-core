@@ -458,8 +458,8 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
 		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
 	}
-	if c.Access.HTTP != "" && !strings.HasPrefix(c.Access.HTTP, "http://") {
-		return nil, fmt.Errorf("[AccessKey] HTTP must start with http://")
+	if c.Access.HTTP != "" && !(strings.HasPrefix(c.Access.HTTP, "http://") || strings.HasPrefix(c.Access.HTTP, "https://")) {
+		return nil, fmt.Errorf("[AccessKey] HTTP must start with http:// or https://")
 	}
 	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
 		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
@@ -635,11 +635,11 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 			c.profile = &p
 			return c, nil
 		}
-		if c.Access.Type == "http" {
+		if c.Access.Type == "http" || c.Access.Type == "https" {
 			if s.Method != "" || s.Prefix != "" || (c.Access.Username == "") != (s.Password == "") || strings.ContainsAny(c.Access.Username, ":\r\n") || strings.ContainsAny(s.Password, "\r\n") {
 				return nil, fmt.Errorf("[AccessKey] invalid HTTP proxy parameters")
 			}
-			p, err := accesskey.ParseHTTPConnect("http://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
+			p, err := accesskey.ParseHTTPConnect(c.Access.Type + "://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
 			if err != nil {
 				return nil, err
 			}
@@ -651,7 +651,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] unsupported Type")
 		}
 		if c.Access.Username != "" {
-			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5 or http")
+			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5, http, or https")
 		}
 		e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Cipher: s.Method, Secret: s.Password, Prefix: s.Prefix}
 		if err := e.Validate(); err != nil {
@@ -725,7 +725,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "http://") {
+	if strings.HasPrefix(c.key, "http://") || strings.HasPrefix(c.key, "https://") {
 		p, err := accesskey.ParseHTTPConnect(c.key)
 		if err != nil {
 			return nil, err
@@ -806,7 +806,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, https://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

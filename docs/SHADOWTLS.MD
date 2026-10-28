@@ -123,4 +123,4 @@ ALPN; its settings are fixed. This does not claim browser-identical traffic,
 resistance to a particular censorship system, every inner fingerprint/extra-
 option combination, or live mobile/system-VPN validation. See
 [the recorded matrix and evidence](SHADOWTLS_V3_RESEARCH.md),
-[ADR 0023](adr/0023-shadowtls-v3-wrapper.md) and [CI checks](CI.MD).
+[ADR 0024](adr/0024-shadowtls-v3-wrapper.md) and [CI checks](CI.MD).
