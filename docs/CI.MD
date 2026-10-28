@@ -138,3 +138,16 @@ Unsigned Apple builds must be identified as such and cannot run the NetworkExten
 
 Configure branch protection using the actual CI job names after the required
 jobs are in place.
+
+## Shadowsocks 2022 identity chains
+
+The pinned external Xray binary also verifies SIP022 single-key clients for
+all three methods and SIP023 for both AES methods. The SIP023 matrix covers
+two users on a shared server, a relay followed by a multi-user server (two
+identity headers), and rejection of wrong identity keys, wrong user keys,
+and reordered chains over TCP and UDP. Xray remains outside the module graph.
+The SS2022 step runs all package tests under the race detector, including
+independent wire fixtures and datagram-size boundaries. Parser fuzz seeds
+run with normal accesskey tests; a bounded fuzz campaign and identity-header
+benchmarks run in the same Linux job. Benchmarks report results without a
+hardware-dependent pass/fail threshold.

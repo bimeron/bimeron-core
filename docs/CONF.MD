@@ -72,11 +72,12 @@ SS = ss://chacha20-ietf-poly1305:replace-me@server.example.com:8388
 cipher, and password come from the key. Plain parameters, base64-encoded
 credentials, and legacy keys with the entire connection portion base64-encoded
 are supported. The `#...` fragment is retained as the key label.
-The `outline`, `prefix`, and `plugin` options are supported; unknown options are
-rejected. `plugin=v2ray-plugin` enables the embedded WS/WSS client with Mux.
-See [Shadowsocks transports](SHADOWSOCKS_TRANSPORTS.MD) for encoded URI examples,
-supported options, TLS verification, and TCP-only VPN behavior.
-Shadowsocks 2022 keys use a base64-encoded fixed-length key as the password.
+The `outline`, `prefix`, and `plugin` options are supported; unknown options are rejected.
+`plugin=v2ray-plugin` enables embedded WS/WSS with Mux. See [Shadowsocks transports](SHADOWSOCKS_TRANSPORTS.MD) for URI examples, supported options, TLS verification, and TCP-only VPN behavior.
+Shadowsocks 2022 uses a base64-encoded fixed-length key as the password.
+The AES methods also accept SIP023 chains: `iPSK0:iPSK1:...:uPSK`. Each
+component is separately base64-encoded; identity keys come first and the user
+key comes last. All keys must have the length required by the selected method.
 Use base64-encoded `method:key` credentials in an `ss://` URI so characters
 such as `/` and `+` are preserved. The `prefix` option is not supported with
 2022 methods.
@@ -449,7 +450,7 @@ Password = replace-me
 | `Server` | Required for the explicit group | Server name or IP address. Without a plugin, system VPN requires IPv4; the embedded plugin transport also supports IPv6. |
 | `Port` | Required for the explicit group | Server port, an integer from `1` to `65535`. |
 | `Method` | Required for the explicit group | Cipher: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`, `aes-256-gcm`, `2022-blake3-aes-128-gcm`, `2022-blake3-aes-256-gcm`, or `2022-blake3-chacha20-poly1305`. |
-| `Password` | Required for the explicit group | Nonempty server password for older methods; a standard base64-encoded 16-byte key for 2022 AES-128 or 32-byte key for 2022 AES-256/ChaCha20. |
+| `Password` | Required for the explicit group | Nonempty server password for older methods; a standard base64-encoded 16-byte key for 2022 AES-128 or 32-byte key for 2022 AES-256/ChaCha20. AES also accepts colon-separated SIP023 key chains. |
 | `Prefix` | Optional; empty string | Shadowsocks salt prefix for older methods. It is rejected for 2022 methods. |
 | `Plugin` | Optional; absent | `v2ray-plugin` enables the embedded WebSocket transport. Other plugins and executable paths are rejected. |
 | `PluginOpts` | Optional; upstream defaults | SIP003 options: `mode=websocket`, `tls`, `host`, `path`, and `mux`. Requires `Plugin = v2ray-plugin`. See [transport examples and defaults](SHADOWSOCKS_TRANSPORTS.MD). |
@@ -459,8 +460,13 @@ dynamic key for separate endpoints. With `v2ray-plugin`, only TCP is proxied
 and captured DNS uses TCP. This group cannot be combined with other sources.
 Generate a fresh Shadowsocks 2022 key with `openssl rand -base64 16` or
 `openssl rand -base64 32`, according to the selected method. The client supports
-single-user servers without extensible identity headers (EIH). TCP works in
-local proxy and VPN modes; UDP works in VPN mode without the plugin.
+single-user servers and, for AES methods, SIP023 multi-user servers and identity
+relay chains over TCP and UDP. For a chain, generate each key separately and
+join the base64 strings with `:` in relay-to-server-to-user order. For example,
+`Password = <base64-server-identity-key>:<base64-user-key>` connects directly
+to a multi-user server. These placeholders must be replaced with real keys.
+ChaCha20 accepts one key only. No new protocol type or server hosting is added.
+TCP works in local proxy and VPN modes; UDP works in VPN mode without the plugin.
 
 ### Alternative: explicit SOCKS5 parameters
 
