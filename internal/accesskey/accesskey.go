@@ -507,9 +507,8 @@ func (e Endpoint) Validate() error {
 		if e.Prefix != "" {
 			return fmt.Errorf("Shadowsocks 2022 does not support salt prefixes")
 		}
-		key, err := base64.StdEncoding.Strict().DecodeString(e.Secret)
-		if err != nil || len(key) != map[string]int{"2022-blake3-aes-128-gcm": 16, "2022-blake3-aes-256-gcm": 32, "2022-blake3-chacha20-poly1305": 32}[e.Cipher] {
-			return fmt.Errorf("invalid Shadowsocks 2022 key")
+		if _, err := ParseSS2022Keys(e.Cipher, e.Secret); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported Shadowsocks cipher")
@@ -539,7 +538,12 @@ func ParseSS(raw string) (Profile, error) {
 		if err != nil {
 			return Profile{}, err
 		}
-		raw = "ss://" + decoded
+		at := strings.LastIndex(decoded, "@")
+		if at < 0 {
+			return Profile{}, fmt.Errorf("invalid ss URI")
+		}
+		// Protect base64 key characters and password delimiters from URL parsing.
+		raw = "ss://" + base64.RawURLEncoding.EncodeToString([]byte(decoded[:at])) + decoded[at:]
 		if len(parts) == 2 {
 			raw += "#" + parts[1]
 		}
@@ -811,4 +815,30 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 		p.Name = name
 	}
 	return p, err
+}
+
+// ParseSS2022Keys returns identity keys followed by the user key.
+// Errors never include credentials. SIP023 chains require an AES method.
+func ParseSS2022Keys(method, secret string) ([][]byte, error) {
+	size := 32
+	switch method {
+	case "2022-blake3-aes-128-gcm":
+		size = 16
+	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+	default:
+		return nil, fmt.Errorf("unsupported Shadowsocks 2022 method")
+	}
+	parts := strings.Split(secret, ":")
+	if len(parts) > 1 && method == "2022-blake3-chacha20-poly1305" {
+		return nil, fmt.Errorf("Shadowsocks 2022 identity chains require an AES method")
+	}
+	keys := make([][]byte, len(parts))
+	for i, part := range parts {
+		key, err := base64.StdEncoding.Strict().DecodeString(part)
+		if err != nil || len(key) != size || strings.ContainsAny(part, "\r\n") {
+			return nil, fmt.Errorf("invalid Shadowsocks 2022 key")
+		}
+		keys[i] = key
+	}
+	return keys, nil
 }
