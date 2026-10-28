@@ -3,11 +3,11 @@
 package control
 
 import (
+	core "bimeron/core"
 	"context"
 	"fmt"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
-	core "bimeron/core"
 	"runtime"
 	"testing"
 	"time"
@@ -137,7 +137,9 @@ func TestServicePipeOwnerAndForeignACL(t *testing.T) {
 	if err != nil {
 		t.Fatal("owner rejected", err)
 	}
-	conn.Close()
+	// Keep the client alive until Accept completes. go-winio retries Accept
+	// when a client disconnects before ConnectNamedPipe finishes.
+	defer conn.Close()
 	select {
 	case err := <-accepted:
 		if err != nil {

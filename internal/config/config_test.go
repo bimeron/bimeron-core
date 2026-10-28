@@ -3,12 +3,26 @@ package config
 import (
 	"bimeron/internal/routing"
 	"context"
+	"encoding/base64"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSS2022ExplicitIdentityChain(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 16))
+	chain := key + ":" + key + ":" + key
+	c, err := loadText(t, "[Profile]\nVersion = 1\n[AccessKey]\nType = shadowsocks\nServer = example.com\nPort = 8388\nMethod = 2022-blake3-aes-128-gcm\nPassword = "+chain+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Resolve(context.Background())
+	if err != nil || p.TCP.Secret != chain || p.UDP.Secret != chain {
+		t.Fatalf("explicit chain: %v", err)
+	}
+}
 
 func loadText(t *testing.T, text string) (*File, error) {
 	t.Helper()

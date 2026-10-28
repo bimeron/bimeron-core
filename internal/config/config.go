@@ -35,12 +35,16 @@ type File struct {
 	interfaceOptions bool
 	key              string
 	profile          *accesskey.Profile
+	ShadowTLS        *accesskey.ShadowTLS
 }
 type Access struct {
 	SS                string
 	SSConf            string
 	SOCKS5            string
 	HTTP              string
+	MASQUE            string
+	MASQUEPath        string
+	CAFile            string
 	VLESS             string
 	VMess             string
 	Trojan            string
@@ -58,6 +62,8 @@ type Access struct {
 	KnownHostsFile    string
 	VLESSParameters   *accesskey.VLESS
 	ServerName        string
+	Plugin            string
+	PluginOpts        string
 	xhttpExtraUsed    bool
 	xhttpFieldsUsed   bool
 	trojanUnsupported bool
@@ -117,13 +123,16 @@ func parse(b []byte) (*File, error) {
 			}
 			section = strings.TrimSpace(text[1 : len(text)-1])
 			switch section {
-			case "Profile", "AccessKey", "Interface", "Routing", "IKEv2":
+			case "Profile", "AccessKey", "Interface", "Routing", "IKEv2", "ShadowTLS":
 				if sections[section] {
 					return nil, fmt.Errorf("duplicate section at line %d", line)
 				}
 				sections[section] = true
 				if section == "IKEv2" {
 					c.IKEv2 = &systemvpn.Config{}
+				}
+				if section == "ShadowTLS" {
+					c.ShadowTLS = &accesskey.ShadowTLS{}
 				}
 			case "Rule":
 				c.Routing.Rules = append(c.Routing.Rules, routing.Rule{})
@@ -165,6 +174,15 @@ func parse(b []byte) (*File, error) {
 		recognized := true
 		var err error
 		switch section {
+		case "ShadowTLS":
+			switch key {
+			case "ServerName":
+				c.ShadowTLS.ServerName = value
+			case "Password":
+				c.ShadowTLS.Password = value
+			default:
+				recognized = false
+			}
 		case "Profile":
 			switch key {
 			case "Version":
@@ -215,6 +233,10 @@ func parse(b []byte) (*File, error) {
 			}
 		case "AccessKey":
 			switch key {
+			case "Plugin":
+				c.Access.Plugin = value
+			case "PluginOpts":
+				c.Access.PluginOpts = value
 			case "VLESS":
 				c.Access.VLESS = value
 			case "VMess":
@@ -239,6 +261,12 @@ func parse(b []byte) (*File, error) {
 				c.Access.SOCKS5 = value
 			case "HTTP":
 				c.Access.HTTP = value
+			case "MASQUE":
+				c.Access.MASQUE = value
+			case "MASQUEPath":
+				c.Access.MASQUEPath = value
+			case "CAFile":
+				c.Access.CAFile = value
 			case "Type":
 				c.Access.Type = value
 			case "Username":
@@ -393,6 +421,26 @@ func ParseData(b []byte) (*File, error) {
 	return loadBytes(b, "")
 }
 func loadBytes(b []byte, path string) (*File, error) {
+	c, err := loadBaseBytes(b, path)
+	if err != nil {
+		return nil, err
+	}
+	if c.ShadowTLS != nil {
+		if err := c.ShadowTLS.Validate(); err != nil {
+			return nil, err
+		}
+		if c.profile != nil {
+			p, err := c.withShadowTLS(*c.profile, nil)
+			if err != nil {
+				return nil, err
+			}
+			c.profile = &p
+		}
+	}
+	return c, nil
+}
+
+func loadBaseBytes(b []byte, path string) (*File, error) {
 	c, err := parse(b)
 	if err != nil {
 		return nil, err
@@ -404,7 +452,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		if err := c.IKEv2.Validate(); err != nil {
 			return nil, err
 		}
-		if c.Access != (Access{}) || c.Tunnel.Mode != "vpn" || c.interfaceOptions || c.Routing.Default != routing.Proxy || len(c.Routing.Rules) != 0 {
+		if c.ShadowTLS != nil || c.Access != (Access{}) || c.Tunnel.Mode != "vpn" || c.interfaceOptions || c.Routing.Default != routing.Proxy || len(c.Routing.Rules) != 0 {
 			return nil, fmt.Errorf("IKEv2 requires VPN mode without AccessKey, interface overrides or routing rules")
 		}
 		// Do not inherit packet-backend defaults into an OS-managed tunnel.
@@ -459,8 +507,8 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
 		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
 	}
-	if c.Access.HTTP != "" && !strings.HasPrefix(c.Access.HTTP, "http://") {
-		return nil, fmt.Errorf("[AccessKey] HTTP must start with http://")
+	if c.Access.HTTP != "" && !(strings.HasPrefix(c.Access.HTTP, "http://") || strings.HasPrefix(c.Access.HTTP, "https://")) {
+		return nil, fmt.Errorf("[AccessKey] HTTP must start with http:// or https://")
 	}
 	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
 		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
@@ -471,8 +519,8 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" && !strings.HasPrefix(c.Access.Trojan, "trojan://") {
 		return nil, fmt.Errorf("[AccessKey] Trojan must start with trojan://")
 	}
-	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") {
-		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https://")
+	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") && !strings.HasPrefix(c.Access.Naive, "naive+quic://") {
+		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https:// or naive+quic://")
 	}
 	if c.Access.Hysteria2 != "" && !strings.HasPrefix(c.Access.Hysteria2, "hysteria2://") && !strings.HasPrefix(c.Access.Hysteria2, "hy2://") {
 		return nil, fmt.Errorf("[AccessKey] Hysteria2 must start with hysteria2:// or hy2://")
@@ -486,6 +534,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.TUIC != "" && !strings.HasPrefix(c.Access.TUIC, "tuic://") {
 		return nil, fmt.Errorf("[AccessKey] TUIC must start with tuic://")
 	}
+	if c.Access.MASQUE != "" && !strings.HasPrefix(c.Access.MASQUE, "masque://") {
+		return nil, fmt.Errorf("[AccessKey] MASQUE must start with masque://")
+	}
+	if c.Access.Type != "masque" && (c.Access.MASQUEPath != "" || c.Access.CAFile != "") {
+		return nil, fmt.Errorf("[AccessKey] MASQUEPath and CAFile require Type = masque")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
@@ -497,6 +551,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.HTTP != "" {
+		sources++
+	}
+	if c.Access.MASQUE != "" {
 		sources++
 	}
 	if c.Access.VLESS != "" {
@@ -532,14 +589,19 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		sources++
 	}
-	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
+	if c.Access.Plugin != "" || c.Access.PluginOpts != "" {
+		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
+			return nil, fmt.Errorf("[AccessKey] plugin options require explicit Shadowsocks parameters")
+		}
+	}
+	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" || c.Access.Plugin != "" || c.Access.PluginOpts != "" {
 		if c.Access.xhttpExtraUsed && c.Access.xhttpFieldsUsed {
 			return nil, fmt.Errorf("[AccessKey] XHTTPExtra cannot be combined with separate XHTTP options")
 		}
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, VLESS, VMess, Trojan, Naive, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, MASQUE, VLESS, VMess, Trojan, Naive, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
 	}
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
@@ -554,6 +616,30 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] Server and Port are required")
 		}
 		s := c.Access.Parameters
+		if c.Access.Type == "masque" {
+			if s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil {
+				return nil, fmt.Errorf("[AccessKey] invalid MASQUE parameters")
+			}
+			m := accesskey.MASQUE{ProxyHost: s.Server, ServerName: c.Access.ServerName, UDPPath: c.Access.MASQUEPath, CAFile: c.Access.CAFile}
+			if m.ServerName == "" {
+				m.ServerName = s.Server
+			}
+			if m.UDPPath == "" {
+				m.UDPPath = accesskey.DefaultMASQUEPath
+			}
+			if m.CAFile != "" && !filepath.IsAbs(m.CAFile) {
+				if path == "" {
+					return nil, fmt.Errorf("in-memory configuration requires an absolute CAFile")
+				}
+				m.CAFile = filepath.Join(filepath.Dir(path), m.CAFile)
+			}
+			if err := m.Validate(s.Server, s.Port, c.Access.Username, s.Password); err != nil {
+				return nil, err
+			}
+			e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Secret: s.Password}
+			c.profile = &accesskey.Profile{Name: c.Name, Type: "masque", TCP: e, UDP: e, Username: c.Access.Username, MASQUE: m}
+			return c, nil
+		}
 		if c.Access.Type == "ssh" {
 			if c.Access.Username == "" || s.Server == "" || s.Port < 1 || s.Port > 65535 || s.Method != "" || s.Password != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || c.Access.ServerName != "" {
 				return nil, fmt.Errorf("[AccessKey] invalid SSH parameters")
@@ -636,11 +722,11 @@ func loadBytes(b []byte, path string) (*File, error) {
 			c.profile = &p
 			return c, nil
 		}
-		if c.Access.Type == "http" {
+		if c.Access.Type == "http" || c.Access.Type == "https" {
 			if s.Method != "" || s.Prefix != "" || (c.Access.Username == "") != (s.Password == "") || strings.ContainsAny(c.Access.Username, ":\r\n") || strings.ContainsAny(s.Password, "\r\n") {
 				return nil, fmt.Errorf("[AccessKey] invalid HTTP proxy parameters")
 			}
-			p, err := accesskey.ParseHTTPConnect("http://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
+			p, err := accesskey.ParseHTTPConnect(c.Access.Type + "://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
 			if err != nil {
 				return nil, err
 			}
@@ -652,13 +738,20 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] unsupported Type")
 		}
 		if c.Access.Username != "" {
-			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5 or http")
+			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5, http, or https")
 		}
 		e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Cipher: s.Method, Secret: s.Password, Prefix: s.Prefix}
 		if err := e.Validate(); err != nil {
 			return nil, err
 		}
 		c.profile = &accesskey.Profile{Name: c.Name, TCP: e, UDP: e}
+		c.profile.SSPlugin, err = accesskey.ParseSSPlugin(c.Access.Plugin, c.Access.PluginOpts)
+		if err != nil {
+			return nil, err
+		}
+		if c.profile.SSPlugin != nil {
+			c.profile.UDP = accesskey.Endpoint{}
+		}
 		return c, nil
 	}
 	key := c.Access.Key
@@ -673,6 +766,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	}
 	if c.Access.HTTP != "" {
 		key = c.Access.HTTP
+	}
+	if c.Access.MASQUE != "" {
+		key = c.Access.MASQUE
 	}
 	if c.Access.VLESS != "" {
 		key = c.Access.VLESS
@@ -726,7 +822,15 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "http://") {
+	if strings.HasPrefix(c.key, "masque://") {
+		p, err := accesskey.ParseMASQUE(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
+	if strings.HasPrefix(c.key, "http://") || strings.HasPrefix(c.key, "https://") {
 		p, err := accesskey.ParseHTTPConnect(c.key)
 		if err != nil {
 			return nil, err
@@ -758,7 +862,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "naive+https://") {
+	if strings.HasPrefix(c.key, "naive+https://") || strings.HasPrefix(c.key, "naive+quic://") {
 		p, err := accesskey.ParseNaive(c.key)
 		if err != nil {
 			return nil, err
@@ -807,7 +911,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, https://, masque://, vless://, vmess://, trojan://, naive+https://, naive+quic://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
@@ -826,18 +930,32 @@ func (c *File) Resolve(ctx context.Context) (accesskey.Profile, error) {
 		return accesskey.Profile{}, fmt.Errorf("IKEv2 uses a system VPN backend, not an upstream dialer")
 	}
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolver().Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolver().Resolve(ctx, c.key))
 }
 func (c *File) ResolveWithTransport(ctx context.Context, t http.RoundTripper) (accesskey.Profile, error) {
 	if c.IKEv2 != nil {
 		return accesskey.Profile{}, fmt.Errorf("IKEv2 uses a system VPN backend, not an upstream dialer")
 	}
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key))
+}
+
+func (c *File) withShadowTLS(p accesskey.Profile, err error) (accesskey.Profile, error) {
+	if err != nil {
+		return accesskey.Profile{}, err
+	}
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		p.ShadowTLS = &settings
+	}
+	if err := p.ValidateShadowTLS(); err != nil {
+		return accesskey.Profile{}, err
+	}
+	return p, nil
 }
 func (c *File) VPNPolicy() (*routing.Policy, error) {
 	return routing.Compile(c.Routing)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -85,6 +86,9 @@ func signer(path string, ctx context.Context, prompt Prompt) (ssh.Signer, error)
 }
 
 func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Prompt, defaultKeys bool) (*Client, error) {
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if p.Type != "ssh" || p.SSH.User == "" || p.TCP.Host == "" || p.TCP.Port < 1 || p.TCP.Port > 65535 {
 		return nil, fmt.Errorf("invalid SSH profile")
 	}
@@ -164,7 +168,7 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	address := net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))
 	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	conn, err := dialer.DialContext(dialCtx, "tcp", address)
+	conn, err := streamtransport.Dial(dialCtx, dialer, address, p.ShadowTLS, nil)
 	if err != nil {
 		if agentConn != nil {
 			agentConn.Close()

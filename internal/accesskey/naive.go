@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
-// Naive contains credentials for an HTTPS CONNECT proxy.
-type Naive struct{ User, Password, ServerName string }
+// Naive contains credentials and transport selection for an HTTPS CONNECT proxy.
+type Naive struct {
+	User, Password, ServerName string
+	QUIC                       bool // HTTP/3; false retains the HTTP/2 default.
+}
 
 func (n Naive) Validate(host string, port int) error {
 	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
@@ -26,7 +29,7 @@ func (n Naive) Validate(host string, port int) error {
 // ParseNaive never includes credentials or the input URI in errors.
 func ParseNaive(raw string) (Profile, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "naive+https" || u.Opaque != "" || u.Hostname() == "" || u.User == nil || u.Path != "" {
+	if err != nil || (u.Scheme != "naive+https" && u.Scheme != "naive+quic") || u.Opaque != "" || u.Hostname() == "" || u.User == nil || u.Path != "" {
 		return Profile{}, fmt.Errorf("invalid NaiveProxy URI")
 	}
 	password, ok := u.User.Password()
@@ -49,7 +52,7 @@ func ParseNaive(raw string) (Profile, error) {
 			return Profile{}, fmt.Errorf("unsupported or duplicate NaiveProxy option")
 		}
 	}
-	n := Naive{User: u.User.Username(), Password: password, ServerName: q.Get("sni")}
+	n := Naive{User: u.User.Username(), Password: password, ServerName: q.Get("sni"), QUIC: u.Scheme == "naive+quic"}
 	if !q.Has("sni") {
 		n.ServerName = u.Hostname()
 	}

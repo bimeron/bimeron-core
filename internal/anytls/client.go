@@ -73,6 +73,9 @@ var _ transport.PacketListener = (*Client)(nil)
 var _ transport.StreamConn = (*stream)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "anytls" {
 		return nil, fmt.Errorf("expected AnyTLS profile")
 	}
@@ -142,7 +145,7 @@ func (c *Client) newSession(ctx context.Context) (*session, error) {
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	endpoint := net.JoinHostPort(c.profile.TCP.Host, strconv.Itoa(c.profile.TCP.Port))
-	raw, err := c.dialer.DialContext(setup, "tcp", endpoint)
+	raw, err := streamtransport.Dial(setup, c.dialer, endpoint, c.profile.ShadowTLS, c.rootCAs)
 	if err != nil {
 		return nil, fmt.Errorf("AnyTLS connection failed: %w", err)
 	}

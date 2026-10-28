@@ -1,4 +1,4 @@
-// Package ss2022 implements the single-user client specified by SIP022.
+// Package ss2022 implements SIP022 clients with SIP023 AES identity chains.
 package ss2022
 
 import (
@@ -7,7 +7,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -24,21 +23,68 @@ import (
 const subkeyContext = "shadowsocks 2022 session subkey"
 
 type Client struct {
-	method string
-	key    []byte
-	server string
-	dialer net.Dialer
+	method     string
+	key        []byte
+	server     string
+	dialer     net.Dialer
+	identities []identity
+	endpoint   transport.StreamEndpoint
+	streamOnly bool
 }
 
 func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
+	c, err := NewWithEndpoint(e, dialer, &transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer})
+	if err == nil {
+		c.streamOnly = false
+	}
+	return c, err
+}
+
+// NewWithEndpoint uses a custom stream endpoint without enabling native UDP.
+func NewWithEndpoint(e accesskey.Endpoint, dialer net.Dialer, endpoint transport.StreamEndpoint) (*Client, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 	if !IsMethod(e.Cipher) {
 		return nil, fmt.Errorf("not a Shadowsocks 2022 method")
 	}
-	key, _ := base64.StdEncoding.Strict().DecodeString(e.Secret)
-	return &Client{e.Cipher, key, net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer}, nil
+	keys, err := accesskey.ParseSS2022Keys(e.Cipher, e.Secret)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint == nil {
+		return nil, fmt.Errorf("missing Shadowsocks stream endpoint")
+	}
+	c := &Client{method: e.Cipher, key: keys[len(keys)-1], server: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer: dialer, endpoint: endpoint, streamOnly: true}
+	for i, key := range keys[:len(keys)-1] {
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, err
+		}
+		hash := blake3.Sum256(keys[i+1])
+		id := identity{key: key, block: block}
+		copy(id.nextHash[:], hash[:16])
+		c.identities = append(c.identities, id)
+	}
+	return c, nil
+}
+
+type identity struct {
+	key      []byte
+	block    cipher.Block
+	nextHash [16]byte
+}
+
+func (c *Client) appendTCPIdentities(packet, salt []byte) []byte {
+	for _, id := range c.identities {
+		key := make([]byte, len(id.key))
+		blake3.DeriveKey(key, "shadowsocks 2022 identity subkey", append(append([]byte(nil), id.key...), salt...))
+		block, _ := aes.NewCipher(key) // Validated AES key length.
+		var header [16]byte
+		block.Encrypt(header[:], id.nextHash[:])
+		packet = append(packet, header[:]...)
+	}
+	return packet
 }
 
 func IsMethod(method string) bool {
@@ -159,7 +205,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	if err != nil {
 		return nil, err
 	}
-	conn, err := c.dialer.DialContext(ctx, "tcp", c.server)
+	conn, err := c.endpoint.ConnectStream(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +238,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	binary.BigEndian.PutUint64(fixed[1:], uint64(time.Now().Unix()))
 	binary.BigEndian.PutUint16(fixed[9:], uint16(len(header)))
 	packet := append([]byte(nil), s.requestSalt...)
+	packet = c.appendTCPIdentities(packet, s.requestSalt)
 	packet = s.seal(packet, fixed)
 	packet = s.seal(packet, header)
 	err = writeAll(conn, packet)

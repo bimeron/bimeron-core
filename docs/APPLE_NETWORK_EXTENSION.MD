@@ -59,6 +59,17 @@ sh scripts/build-apple.sh
 APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
 ```
 
+The default target is the host architecture. Set `APPLE_ARCH=arm64` or
+`APPLE_ARCH=amd64` to cross-build using the installed macOS SDK. Go, Swift,
+and the C ABI test are compiled and linked for that target. The C ABI test
+executes only when the target matches the host architecture; cross-built
+binaries still require validation on a native target machine.
+
+CI uses `macos-15-intel` because hosted ARM64 jobs were repeatedly cancelled
+before acquiring a runner. It builds both extension variants for Intel and
+ARM64, executes the C ABI test natively on Intel, and verifies ARM64 linkage.
+Native ARM64 runtime validation remains a separate requirement.
+
 The native system extension build appears in
 `dist/apple-system-extension-<arch>/BimeronCore.app`, with `LICENSE`,
 `THIRD_PARTY_NOTICES.txt`, and `UNSIGNED.txt` when it is unsigned.

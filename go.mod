@@ -6,10 +6,12 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/apernet/hysteria/core/v2 v2.13.0
 	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
+	github.com/dunglas/httpsfv v1.1.0
 	github.com/quic-go/quic-go v0.64.1
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	github.com/xjasonlyu/tun2socks/v2 v2.6.0
+	github.com/yosida95/uritemplate/v3 v3.0.2
 	golang.org/x/net v0.61.0
 	golang.org/x/term v0.47.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
@@ -58,3 +60,5 @@ tool golang.org/x/mobile/cmd/gobind
 replace github.com/apernet/quic-go => ./third_party/apernet-quic-go
 
 replace github.com/apernet/hysteria/core/v2 => ./third_party/hysteria-core
+
+replace github.com/quic-go/quic-go => ./third_party/quic-go

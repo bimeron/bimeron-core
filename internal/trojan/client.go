@@ -27,6 +27,7 @@ type Client struct {
 	password      [56]byte
 	dialer        net.Dialer
 	rootCAs       *x509.CertPool
+	shadowTLS     *accesskey.ShadowTLS
 	mu            sync.Mutex
 	closed        bool
 	connections   map[*conn]struct{}
@@ -36,13 +37,16 @@ var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "trojan" {
 		return nil, fmt.Errorf("expected Trojan profile")
 	}
 	if err := profile.Trojan.Validate(profile.TCP.Host, profile.TCP.Port); err != nil {
 		return nil, err
 	}
-	c := &Client{endpoint: profile.TCP, settings: profile.Trojan, serverName: profile.Trojan.ServerName, dialer: dialer, connections: make(map[*conn]struct{})}
+	c := &Client{endpoint: profile.TCP, settings: profile.Trojan, serverName: profile.Trojan.ServerName, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*conn]struct{})}
 	if profile.Trojan.Network == "grpc" {
 		t := profile.Trojan
 		authority := t.GRPCAuthority
@@ -188,7 +192,7 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	endpoint := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
-	raw, err := c.dialer.DialContext(setup, "tcp", endpoint)
+	raw, err := streamtransport.Dial(setup, c.dialer, endpoint, c.shadowTLS, c.rootCAs)
 	if err != nil {
 		return nil, fmt.Errorf("Trojan server unavailable")
 	}

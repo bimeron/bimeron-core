@@ -12,9 +12,11 @@ import (
 	"bimeron/internal/anytls"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/masque"
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
+	"bimeron/internal/ssplugin"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
 	"bimeron/internal/vmess"
@@ -53,12 +55,29 @@ func check(args []string) error {
 		return err
 	}
 	var tcp transport.StreamDialer
+	if err := p.ValidateShadowTLS(); err != nil {
+		return err
+	}
 	var udp transport.PacketListener
-	if p.Type == "socks5" {
+	if p.SSPlugin != nil {
+		client, err := ssplugin.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp = client
+	} else if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 		tcp, udp = s, s
+	} else if p.Type == "masque" {
+		client, err := masque.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp, udp = client, client
 	} else if p.Type == "http" {
-		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, err := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
@@ -109,13 +128,15 @@ func check(args []string) error {
 		defer client.Close()
 		tcp = client
 	} else {
-		tcp, err = proxy.Outline(p.TCP)
+		tcp, err = proxy.OutlineProfile(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
 		}
-		udp, err = proxy.OutlineUDP(p.UDP, net.Dialer{})
-		if err != nil {
-			return err
+		if !p.TCPOnly() {
+			udp, err = proxy.OutlineUDP(p.UDP, net.Dialer{})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if p.Type == "ssh" || p.Type == "naive" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
@@ -130,6 +151,10 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	if p.TCPOnly() {
+		fmt.Printf("TCP/TLS and DNS-over-TCP checks passed. Proxy IP: %s\n", address)
+	} else {
+		fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	}
 	return nil
 }

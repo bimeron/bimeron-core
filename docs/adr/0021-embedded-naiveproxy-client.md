@@ -2,6 +2,9 @@
 
 Status: accepted, October 28, 2026. Tracks issue #42.
 
+HTTP/3 support is added by [ADR 0026](0026-naiveproxy-http3.md); the original
+HTTP/2 decision and remaining limits below describe the first version.
+
 ## Context
 
 NaiveProxy carries TCP streams through authenticated HTTPS CONNECT, optionally

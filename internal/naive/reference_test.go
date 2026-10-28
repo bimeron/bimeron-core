@@ -19,11 +19,24 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
 	"bimeron/internal/telemetry"
+	"bimeron/internal/testutil"
 )
 
 // TestReferenceServer uses the independent klzgrad/forwardproxy Naive padding
 // implementation. Its executable is built separately and is not a core dependency.
 func TestReferenceServer(t *testing.T) {
+	for _, protocol := range []string{"h2", "h3"} {
+		t.Run(protocol, func(t *testing.T) {
+			if protocol == "h3" && os.Getenv("BIMERON_SHADOWTLS_BIN") != "" {
+				t.Skip("ShadowTLS wraps TCP only; H3 is tested in the unwrapped reference matrix")
+			}
+			testReferenceServer(t, protocol)
+		})
+	}
+}
+
+func testReferenceServer(t *testing.T, protocol string) {
+	t.Helper()
 	bin := os.Getenv("BIMERON_NAIVE_CADDY_BIN")
 	if bin == "" {
 		t.Skip("set BIMERON_NAIVE_CADDY_BIN to Caddy with klzgrad/forwardproxy")
@@ -43,20 +56,20 @@ func TestReferenceServer(t *testing.T) {
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	port := referencePort(t)
+	protocols := "h1 h2"
+	if protocol == "h3" {
+		protocols = "h1 h3"
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
 	config := fmt.Sprintf(`{
  admin off
  auto_https off
  order forward_proxy before file_server
  servers {
-  protocols h1 h2
+  protocols %s
  }
 }
+
 :%d {
  bind 127.0.0.1
  tls %q %q
@@ -70,7 +83,7 @@ func TestReferenceServer(t *testing.T) {
   }
  }
 }
-`, port, filepath.ToSlash(certPath), filepath.ToSlash(keyPath))
+`, protocols, port, filepath.ToSlash(certPath), filepath.ToSlash(keyPath))
 	configPath := filepath.Join(dir, "Caddyfile")
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
@@ -115,13 +128,15 @@ func TestReferenceServer(t *testing.T) {
 			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
 		}
 	}()
-	profile := accesskey.Profile{Type: "naive", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Naive: accesskey.Naive{User: "user", Password: "pass", ServerName: "example.com"}}
+	profile := accesskey.Profile{Type: "naive", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Naive: accesskey.Naive{User: "user", Password: "pass", ServerName: "example.com", QUIC: protocol == "h3"}}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	roots = testutil.MaybeShadowTLS(t, &profile, roots)
 	client, err := New(profile, net.Dialer{Timeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.rootCAs = x509.NewCertPool()
-	client.rootCAs.AddCert(cert)
+	client.rootCAs = roots
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -130,6 +145,9 @@ func TestReferenceServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	if !conn.(*stream).padded {
+		t.Fatal("reference server did not negotiate Naive padding")
+	}
 	for i := 0; i < 10; i++ {
 		payload := bytes.Repeat([]byte{byte(i)}, 131072+i)
 		if _, err := conn.Write(payload); err != nil {
@@ -175,4 +193,25 @@ func TestReferenceServer(t *testing.T) {
 			t.Fatalf("SOCKS5 HTTP response: %q, %v", body, err)
 		}
 	})
+}
+
+// Caddy uses the same port for TCP and QUIC. A free TCP port alone may be
+// occupied or excluded for UDP on Windows, so probe both protocols.
+func referencePort(t *testing.T) int {
+	t.Helper()
+	for range 10 {
+		packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := packet.LocalAddr().(*net.UDPAddr).Port
+		listener, err := net.Listen("tcp4", packet.LocalAddr().String())
+		_ = packet.Close()
+		if err == nil {
+			_ = listener.Close()
+			return port
+		}
+	}
+	t.Fatal("no port available for both TCP and UDP")
+	return 0
 }

@@ -16,14 +16,17 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 	"bimeron/internal/vless"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -75,12 +78,17 @@ func freeUDPPort(t *testing.T) int {
 	return l.LocalAddr().(*net.UDPAddr).Port
 }
 
-func TestXrayVMessAEAD(t *testing.T) { testXrayProtocol(t, "vmess") }
+func TestXrayVMessAEAD(t *testing.T) {
+	testXrayStreams(t, "vmess")
+}
 
-// Share server fixtures so both clients are checked against identical transports.
-func TestXrayVLESSGRPC(t *testing.T) { testXrayProtocol(t, "vless") }
+// VLESS and VMess share the transport fixture so that the same independent
+// server scenarios exercise their different request and packet framing.
+func TestXrayVLESS(t *testing.T) {
+	testXrayStreams(t, "vless")
+}
 
-func testXrayProtocol(t *testing.T, protocol string) {
+func testXrayStreams(t *testing.T, protocol string) {
 	bin := os.Getenv("BIMERON_XRAY_BIN")
 	if bin == "" {
 		t.Skip("set BIMERON_XRAY_BIN to run reference interoperability test")
@@ -140,26 +148,33 @@ func testXrayProtocol(t *testing.T, protocol string) {
 			_, _ = udpListener.WriteTo(b[:n], addr)
 		}
 	}()
-	for _, scenario := range []struct{ network, mode, alpn string }{{"tcp", "", ""}, {"ws", "", ""}, {"httpupgrade", "", ""}, {"grpc", "", ""}, {"grpc", "multi", ""}, {"xhttp", "packet-up", ""}, {"xhttp", "stream-up", ""}, {"xhttp", "stream-one", ""}, {"xhttp", "auto", ""}, {"xhttp", "packet-up", "h3"}, {"xhttp", "stream-up", "h3"}, {"xhttp", "stream-one", "h3"}, {"xhttp", "auto", "h3"}} {
+	for _, scenario := range []struct{ network, mode, alpn string }{{"tcp", "", ""}, {"tcp", "vision", ""}, {"ws", "", ""}, {"httpupgrade", "", ""}, {"grpc", "", ""}, {"grpc", "multi", ""}, {"xhttp", "packet-up", ""}, {"xhttp", "stream-up", ""}, {"xhttp", "stream-up", "split"}, {"xhttp", "stream-one", ""}, {"xhttp", "auto", ""}, {"xhttp", "packet-up", "h3"}, {"xhttp", "stream-up", "h3"}, {"xhttp", "stream-one", "h3"}, {"xhttp", "auto", "h3"}} {
 		network, mode := scenario.network, scenario.mode
-		if protocol == "vless" && network != "grpc" {
+		if protocol == "vmess" && mode == "vision" || protocol == "vless" && network == "httpupgrade" {
 			continue
 		}
+		if scenario.alpn == "h3" && os.Getenv("BIMERON_SHADOWTLS_BIN") != "" {
+			continue
+		} // Rejected by wrapped-profile validation.
 		fingerprints := []string{"", "chrome"}
 		if scenario.alpn == "h3" {
 			fingerprints = []string{""}
 		}
 		for _, transportSecurity := range []string{"tls", "reality"} {
+			if mode == "vision" && transportSecurity != "reality" {
+				continue
+			}
 			if transportSecurity == "reality" {
 				if network != "tcp" && network != "grpc" && network != "xhttp" || scenario.alpn == "h3" || (network == "xhttp" && mode == "packet-up") {
 					continue
 				}
 				fingerprints = []string{"chrome"}
 			}
-			for _, security := range []string{"aes-128-gcm", "chacha20-poly1305"} {
-				if protocol == "vless" && security != "aes-128-gcm" {
-					continue
-				}
+			securities := []string{"aes-128-gcm", "chacha20-poly1305"}
+			if protocol == "vless" {
+				securities = []string{"none"}
+			}
+			for _, security := range securities {
 				for _, fingerprint := range fingerprints {
 					t.Run(network+"/"+mode+"/"+scenario.alpn+"/"+transportSecurity+"/"+security+"/"+fingerprint, func(t *testing.T) {
 						port := freePort(t)
@@ -179,11 +194,11 @@ func testXrayProtocol(t *testing.T, protocol string) {
 						} else if network == "xhttp" {
 							settings = fmt.Sprintf(`{"network":"xhttp","security":"tls","xhttpSettings":{"path":"/vmess","mode":%q}}`, mode)
 						}
-						config := fmt.Sprintf(`{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":"vmess","settings":{"clients":[{"id":%q,"alterId":0}]},"streamSettings":%s}],"outbounds":[{"protocol":"freedom"}]}`, port, id, settings)
-						if protocol == "vless" {
-							config = strings.Replace(config, `"protocol":"vmess"`, `"protocol":"vless"`, 1)
-							config = strings.Replace(config, `"settings":{"clients":`, `"settings":{"decryption":"none","clients":`, 1)
+						flow := ""
+						if mode == "vision" {
+							flow = "xtls-rprx-vision"
 						}
+						config := fmt.Sprintf(`{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":%q,"settings":{"decryption":"none","clients":[{"id":%q,"alterId":0,"flow":%q}]},"streamSettings":%s}],"outbounds":[{"protocol":"freedom"}]}`, port, protocol, id, flow, settings)
 						// Add the certificate through streamSettings without relying on a system trust store.
 						tlsOptions := fmt.Sprintf(`"security":"tls","tlsSettings":{"certificates":[{"certificateFile":%q,"keyFile":%q}]}`, cert, key)
 						if scenario.alpn == "h3" {
@@ -243,25 +258,46 @@ func testXrayProtocol(t *testing.T, protocol string) {
 							}
 						}
 						p := accesskey.Profile{Type: "vmess", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, VMess: v}
+						if protocol == "vless" {
+							p.Type = "vless"
+							p.VLESS = accesskey.VLESS{ID: id, Encryption: "none", Flow: flow, Network: network, Security: transportSecurity,
+								ServerName: v.ServerName, Fingerprint: v.Fingerprint, ALPN: v.ALPN, PublicKey: v.PublicKey, ShortID: v.ShortID,
+								WSPath: v.WSPath, GRPCServiceName: v.GRPCServiceName, GRPCMultiMode: v.GRPCMultiMode,
+								XHTTPPath: v.XHTTPPath, XHTTPMode: v.XHTTPMode, XHTTPOptions: v.XHTTPOptions}
+						}
+						wrappedRoots := testutil.MaybeShadowTLS(t, &p, roots)
+						if scenario.alpn == "split" {
+							address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+							if p.ShadowTLS != nil {
+								secondary := testutil.StartShadowTLS(t, address, *p.ShadowTLS)
+								address = secondary.Address
+							}
+							host, portText, _ := net.SplitHostPort(address)
+							downloadPort, _ := strconv.Atoi(portText)
+							options := &accesskey.XHTTPOptions{Xmux: &accesskey.XHTTPXmux{HKeepAlivePeriod: 2}, DownloadSettings: &accesskey.XHTTPDownloadSettings{
+								Address: host, Port: downloadPort, Network: "xhttp", Security: transportSecurity, ServerName: v.ServerName,
+								Fingerprint: v.Fingerprint, PublicKey: v.PublicKey, ShortID: v.ShortID, ALPN: "h2", Path: v.XHTTPPath}}
+							p.VMess.XHTTPOptions, p.VLESS.XHTTPOptions = options, options
+						}
 						var client interface {
-							DialStream(context.Context, string) (transport.StreamConn, error)
-							ListenPacket(context.Context) (net.PacketConn, error)
+							transport.StreamDialer
+							transport.PacketListener
 							Close() error
 						}
 						if protocol == "vless" {
-							vc, err := vless.New(accesskey.Profile{Type: "vless", TCP: p.TCP, VLESS: accesskey.VLESS{ID: id, Encryption: "none", Network: "grpc", Security: transportSecurity, ServerName: v.ServerName, Fingerprint: v.Fingerprint, PublicKey: v.PublicKey, ShortID: v.ShortID, ALPN: v.ALPN, GRPCServiceName: v.GRPCServiceName, GRPCMultiMode: v.GRPCMultiMode}}, net.Dialer{})
+							c, err := vless.New(p, net.Dialer{})
 							if err != nil {
 								t.Fatal(err)
 							}
-							vc.SetRootCAs(roots)
-							client = vc
+							c.SetRootCAs(wrappedRoots)
+							client = c
 						} else {
-							vc, err := New(p, net.Dialer{})
+							c, err := New(p, net.Dialer{})
 							if err != nil {
 								t.Fatal(err)
 							}
-							vc.rootCAs = roots
-							client = vc
+							c.rootCAs = wrappedRoots
+							client = c
 						}
 						defer client.Close()
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -278,6 +314,32 @@ func testXrayProtocol(t *testing.T, protocol string) {
 						var echo [5]byte
 						if _, err := io.ReadFull(stream, echo[:]); err != nil || string(echo[:]) != "hello" {
 							t.Fatalf("VMess TCP echo: %q, %v; Xray: %s", echo, err, logs.String())
+						}
+						if mode == "vision" {
+							payload := bytes.Repeat([]byte("vision direct stream\n"), 12000)
+							origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(payload) }))
+							origin.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
+							origin.StartTLS()
+							defer origin.Close()
+							s, err := client.DialStream(ctx, origin.Listener.Addr().String())
+							if err != nil {
+								t.Fatal(err)
+							}
+							originRoots := x509.NewCertPool()
+							originRoots.AddCert(origin.Certificate())
+							secure := tls.Client(s, &tls.Config{ServerName: "example.com", RootCAs: originRoots, MinVersion: tls.VersionTLS13})
+							defer secure.Close()
+							_ = secure.SetDeadline(time.Now().Add(5 * time.Second))
+							if err := secure.HandshakeContext(ctx); err != nil {
+								t.Fatalf("Vision TLS 1.3 handshake: %v", err)
+							}
+							if _, err := io.WriteString(secure, "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"); err != nil {
+								t.Fatal(err)
+							}
+							response, err := io.ReadAll(secure)
+							if err != nil || !bytes.Contains(response, payload) {
+								t.Fatalf("Vision TLS 1.3 large transfer: %v", err)
+							}
 						}
 						packet, err := client.ListenPacket(ctx)
 						if err != nil {

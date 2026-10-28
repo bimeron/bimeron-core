@@ -20,6 +20,9 @@ type packetListener struct{ client *Client }
 func (c *Client) PacketListener() *packetListener { return &packetListener{c} }
 
 func (l *packetListener) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	if l.client.streamOnly {
+		return nil, fmt.Errorf("native UDP unavailable for wrapped Shadowsocks")
+	}
 	conn, err := l.client.dialer.DialContext(ctx, "udp", l.client.server)
 	if err != nil {
 		return nil, err
@@ -34,6 +37,10 @@ func (l *packetListener) ListenPacket(ctx context.Context) (net.PacketConn, erro
 		if err != nil {
 			_ = conn.Close()
 			return nil, err
+		}
+		p.sendBlock = p.block
+		if len(l.client.identities) > 0 {
+			p.sendBlock = l.client.identities[0].block
 		}
 		p.sendAEAD, err = l.client.aead(p.sessionID[:])
 		if err != nil {
@@ -78,6 +85,7 @@ type packetConn struct {
 	net.Conn
 	client          *Client
 	block           cipher.Block
+	sendBlock       cipher.Block
 	sendAEAD        cipher.AEAD
 	sessionID       [8]byte
 	packetID        uint64
@@ -107,7 +115,15 @@ func (p *packetConn) WriteTo(payload []byte, destination net.Addr) (int, error) 
 		var nonce [12]byte
 		copy(nonce[:], header[4:])
 		packet = make([]byte, 16)
-		p.block.Encrypt(packet, header)
+		p.sendBlock.Encrypt(packet, header)
+		for _, id := range p.client.identities {
+			var identityHeader [16]byte
+			for i := range identityHeader {
+				identityHeader[i] = id.nextHash[i] ^ header[i]
+			}
+			id.block.Encrypt(identityHeader[:], identityHeader[:])
+			packet = append(packet, identityHeader[:]...)
+		}
 		packet = p.sendAEAD.Seal(packet, nonce[:], body, nil)
 	} else {
 		packet = make([]byte, chacha20poly1305.NonceSizeX)

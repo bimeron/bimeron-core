@@ -8,7 +8,12 @@ export BUNDLE_ID="${BUNDLE_ID:-org.bimeron.core.dev}"
 export TEAM_ID="${TEAM_ID:-}"
 export APPLE_EXTENSION_KIND="${APPLE_EXTENSION_KIND:-system-extension}"
 case "$APPLE_EXTENSION_KIND" in app-extension|system-extension) ;; *) exit 1 ;; esac
-case "$(uname -m)" in arm64) APPLE_ARCH=arm64 ;; x86_64) APPLE_ARCH=amd64 ;; *) echo 'Unsupported Mac architecture' >&2; exit 1 ;; esac
+case "$(uname -m)" in arm64) APPLE_HOST_ARCH=arm64 ;; x86_64) APPLE_HOST_ARCH=amd64 ;; *) echo 'Unsupported Mac architecture' >&2; exit 1 ;; esac
+export APPLE_ARCH="${APPLE_ARCH:-$APPLE_HOST_ARCH}"
+case "$APPLE_ARCH" in arm64) APPLE_CLANG_ARCH=arm64 ;; amd64) APPLE_CLANG_ARCH=x86_64 ;; *) echo 'Unsupported target Mac architecture' >&2; exit 1 ;; esac
+APPLE_TARGET="$APPLE_CLANG_ARCH-apple-macosx$MACOSX_DEPLOYMENT_TARGET"
+export GOOS=darwin GOARCH="$APPLE_ARCH" CGO_ENABLED=1
+export CC="${CC:-clang} -target $APPLE_TARGET"
 export APPLE_BUILD_DIR="${APPLE_BUILD_DIR:-$PWD/dist/apple-$APPLE_EXTENSION_KIND-$APPLE_ARCH}"
 mkdir -p "$APPLE_BUILD_DIR/bridge"
 if [ -n "${BIMERON_VERSION:-}" ]; then
@@ -65,13 +70,17 @@ fi
 EXT="$EXT_BUNDLE/Contents"
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 if test "$APPLE_EXTENSION_KIND" = system-extension; then
-    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift apple/PacketTunnel/system-main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -o "$EXT/MacOS/BimeronPacketTunnel"
+    swiftc -target "$APPLE_TARGET" -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift apple/PacketTunnel/system-main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -o "$EXT/MacOS/BimeronPacketTunnel"
 else
-    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -application-extension -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -Xlinker -e -Xlinker _NSExtensionMain -o "$EXT/MacOS/BimeronPacketTunnel"
+    swiftc -target "$APPLE_TARGET" -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -application-extension -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -Xlinker -e -Xlinker _NSExtensionMain -o "$EXT/MacOS/BimeronPacketTunnel"
 fi
-swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" apple/Shared/ProfileStore.swift apple/Control/SystemActivation.swift apple/Control/main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework SystemExtensions -framework Security -framework Foundation -o "$APP/MacOS/BimeronControl"
-clang -I "$APPLE_BUILD_DIR/bridge" apple/Tests/bridge.c "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -lpthread -framework CoreFoundation -framework Security -framework Foundation -o "$APPLE_BUILD_DIR/bridge-test"
-"$APPLE_BUILD_DIR/bridge-test"
+swiftc -target "$APPLE_TARGET" -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" apple/Shared/ProfileStore.swift apple/Control/SystemActivation.swift apple/Control/main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework SystemExtensions -framework Security -framework Foundation -o "$APP/MacOS/BimeronControl"
+clang -target "$APPLE_TARGET" -isysroot "$SDK" -I "$APPLE_BUILD_DIR/bridge" apple/Tests/bridge.c "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -lpthread -framework CoreFoundation -framework Security -framework Foundation -o "$APPLE_BUILD_DIR/bridge-test"
+if test "$APPLE_ARCH" = "$APPLE_HOST_ARCH"; then
+    "$APPLE_BUILD_DIR/bridge-test"
+else
+    printf '%s\n' "C ABI test linked for $APPLE_ARCH; execution requires a native $APPLE_ARCH host."
+fi
 if test -n "${SIGN_IDENTITY:-}"; then
     test -n "$TEAM_ID"
     test -f "${HOST_PROFILE:-}" && test -f "${EXTENSION_PROFILE:-}"

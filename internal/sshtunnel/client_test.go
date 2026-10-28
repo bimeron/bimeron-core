@@ -10,10 +10,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -79,6 +81,16 @@ func TestVerifiedSSHForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.SSH.IdentityFile, p.SSH.KnownHostsFile = identity, hosts
+	hostAddress := l.Addr().String()
+	if os.Getenv("BIMERON_SHADOWTLS_BIN") != "" {
+		server := testutil.StartShadowTLS(t, hostAddress)
+		server.Wrap(&p, nil)
+		testutil.TrustShadowTLS(t, server)
+		hostAddress = net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))
+		if err := os.WriteFile(hosts, []byte(knownhosts.Line([]string{hostAddress}, hostSigner.PublicKey())+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	client, err := New(context.Background(), p, net.Dialer{}, nil, false)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +110,7 @@ func TestVerifiedSSHForwarding(t *testing.T) {
 	}
 	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
 	otherSigner, _ := ssh.NewSignerFromKey(otherKey)
-	if err := os.WriteFile(hosts, []byte(knownhosts.Line([]string{l.Addr().String()}, otherSigner.PublicKey())+"\n"), 0600); err != nil {
+	if err := os.WriteFile(hosts, []byte(knownhosts.Line([]string{hostAddress}, otherSigner.PublicKey())+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(context.Background(), p, net.Dialer{}, nil, false); err == nil || !strings.Contains(err.Error(), "host-key") {
