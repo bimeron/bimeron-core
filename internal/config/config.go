@@ -25,13 +25,14 @@ import (
 const maxSize = 64 * 1024
 
 type File struct {
-	Version int
-	Name    string
-	Access  Access
-	Tunnel  Tunnel
-	Routing routing.Config
-	key     string
-	profile *accesskey.Profile
+	Version   int
+	Name      string
+	Access    Access
+	Tunnel    Tunnel
+	Routing   routing.Config
+	key       string
+	profile   *accesskey.Profile
+	ShadowTLS *accesskey.ShadowTLS
 }
 type Access struct {
 	SS                string
@@ -116,11 +117,14 @@ func parse(b []byte) (*File, error) {
 			}
 			section = strings.TrimSpace(text[1 : len(text)-1])
 			switch section {
-			case "Profile", "AccessKey", "Interface", "Routing":
+			case "Profile", "AccessKey", "Interface", "Routing", "ShadowTLS":
 				if sections[section] {
 					return nil, fmt.Errorf("duplicate section at line %d", line)
 				}
 				sections[section] = true
+				if section == "ShadowTLS" {
+					c.ShadowTLS = &accesskey.ShadowTLS{}
+				}
 			case "Rule":
 				c.Routing.Rules = append(c.Routing.Rules, routing.Rule{})
 			default:
@@ -161,6 +165,15 @@ func parse(b []byte) (*File, error) {
 		recognized := true
 		var err error
 		switch section {
+		case "ShadowTLS":
+			switch key {
+			case "ServerName":
+				c.ShadowTLS.ServerName = value
+			case "Password":
+				c.ShadowTLS.Password = value
+			default:
+				recognized = false
+			}
 		case "Profile":
 			switch key {
 			case "Version":
@@ -376,6 +389,26 @@ func ParseData(b []byte) (*File, error) {
 	return loadBytes(b, "")
 }
 func loadBytes(b []byte, path string) (*File, error) {
+	c, err := loadBaseBytes(b, path)
+	if err != nil {
+		return nil, err
+	}
+	if c.ShadowTLS != nil {
+		if err := c.ShadowTLS.Validate(); err != nil {
+			return nil, err
+		}
+		if c.profile != nil {
+			p, err := c.withShadowTLS(*c.profile, nil)
+			if err != nil {
+				return nil, err
+			}
+			c.profile = &p
+		}
+	}
+	return c, nil
+}
+
+func loadBaseBytes(b []byte, path string) (*File, error) {
 	c, err := parse(b)
 	if err != nil {
 		return nil, err
@@ -807,15 +840,29 @@ func loadBytes(b []byte, path string) (*File, error) {
 }
 func (c *File) Resolve(ctx context.Context) (accesskey.Profile, error) {
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolver().Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolver().Resolve(ctx, c.key))
 }
 func (c *File) ResolveWithTransport(ctx context.Context, t http.RoundTripper) (accesskey.Profile, error) {
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key))
+}
+
+func (c *File) withShadowTLS(p accesskey.Profile, err error) (accesskey.Profile, error) {
+	if err != nil {
+		return accesskey.Profile{}, err
+	}
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		p.ShadowTLS = &settings
+	}
+	if err := p.ValidateShadowTLS(); err != nil {
+		return accesskey.Profile{}, err
+	}
+	return p, nil
 }
 func (c *File) VPNPolicy() (*routing.Policy, error) {
 	return routing.Compile(c.Routing)

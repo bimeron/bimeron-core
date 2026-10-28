@@ -168,16 +168,18 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else {
-		tcp, err = proxy.OutlineTCP(p.TCP, path.dialer)
+		tcp, err = proxy.OutlineProfile(p, outbound)
 		if err != nil {
 			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
 		}
-		udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
-		if err != nil {
-			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
+		if !p.TCPOnly() {
+			udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
+			if err != nil {
+				return nil, nil, nil, nil, fault("invalid_udp_transport", false)
+			}
 		}
 	}
-	if p.SSPlugin != nil || p.Type == "ssh" || p.Type == "http" || p.Type == "naive" {
+	if p.TCPOnly() {
 		report("transport_check", "Checking TCP/TLS and DNS over TCP-only upstream")
 	} else {
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
@@ -381,6 +383,9 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("access_key_resolve_failed", true)
 	}
 	var d transport.StreamDialer
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, fault("invalid_tcp_transport", false)
+	}
 	var closeTransport func() error
 	if p.SSPlugin != nil {
 		client, clientErr := ssplugin.New(p, net.Dialer{Timeout: 15 * time.Second})
@@ -441,7 +446,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		d, closeTransport = client, client.Close
 	} else {
-		d, err = proxy.Outline(p.TCP)
+		d, err = proxy.OutlineProfile(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return nil, fault("invalid_tcp_transport", false)
 		}

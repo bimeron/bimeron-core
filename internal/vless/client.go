@@ -30,6 +30,7 @@ type Client struct {
 	publicKey, shortID []byte
 	dialer             net.Dialer
 	rootCAs            *x509.CertPool
+	shadowTLS          *accesskey.ShadowTLS
 	mu                 sync.Mutex
 	closed             bool
 	connections        map[*streamConn]struct{}
@@ -47,6 +48,9 @@ var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "vless" {
 		return nil, fmt.Errorf("expected VLESS profile")
 	}
@@ -65,7 +69,7 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	}
 	key, _ := base64.RawURLEncoding.DecodeString(v.PublicKey)
 	sid, _ := hex.DecodeString(v.ShortID)
-	return &Client{endpoint: profile.TCP, settings: v, id: id, publicKey: key, shortID: sid, dialer: dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}, nil
+	return &Client{endpoint: profile.TCP, settings: v, id: id, publicKey: key, shortID: sid, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}, nil
 }
 
 func (c *Client) open(ctx context.Context, command byte, destination string) (*streamConn, error) {
@@ -108,7 +112,7 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 	}
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+	raw, err := streamtransport.Dial(setup, c.dialer, net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), c.shadowTLS, c.rootCAs)
 	if err != nil {
 		if setup.Err() != nil {
 			return nil, setup.Err()
@@ -246,7 +250,7 @@ func (c *Client) DialTransport(ctx context.Context) (net.Conn, error) {
 		}
 		setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+		raw, err := streamtransport.Dial(setup, c.dialer, net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), c.shadowTLS, c.rootCAs)
 		if err != nil {
 			return nil, err
 		}
@@ -355,7 +359,7 @@ func (c *Client) DialSecure(ctx context.Context) (net.Conn, error) {
 	}
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+	raw, err := streamtransport.Dial(setup, c.dialer, net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), c.shadowTLS, c.rootCAs)
 	if err != nil {
 		return nil, err
 	}

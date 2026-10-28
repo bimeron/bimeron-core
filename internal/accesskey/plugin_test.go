@@ -24,7 +24,7 @@ func TestSSPluginImport(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := p.SSPlugin
-		if s == nil || s.Host != tc.host || s.Path != tc.path || s.Mux != tc.mux || s.TLS != tc.tls || p.UDP.Host != "" || p.TCP.Host != "::1" || p.Name != "Example" {
+		if s == nil || s.Host != tc.host || s.Path != tc.path || s.Mux != tc.mux || s.TLS != tc.tls || p.UDP.Host != "" || p.TCP.Host != "::1" || p.Name != "Example" || !p.TCPOnly() {
 			t.Fatalf("unexpected imported settings: %+v", s)
 		}
 	}

@@ -33,6 +33,9 @@ type Client struct {
 }
 
 func New(p accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if p.Type != "" && p.Type != "ss" && p.Type != "shadowsocks" {
 		return nil, fmt.Errorf("expected Shadowsocks profile")
 	}

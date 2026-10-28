@@ -16,6 +16,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
 	"bimeron/internal/ss2022"
+	"bimeron/internal/streamtransport"
 	"bimeron/internal/telemetry"
 
 	"golang.getoutline.org/sdk/transport"
@@ -26,7 +27,22 @@ func Outline(e accesskey.Endpoint) (transport.StreamDialer, error) {
 	return OutlineTCP(e, net.Dialer{Timeout: 15 * time.Second})
 }
 func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer, error) {
-	return OutlineStream(e, &transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer})
+	return OutlineProfile(accesskey.Profile{TCP: e}, dialer)
+}
+
+// OutlineProfile preserves ShadowTLS wrapping without duplicating encryption.
+func OutlineProfile(p accesskey.Profile, dialer net.Dialer) (transport.StreamDialer, error) {
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
+	if p.SSPlugin != nil {
+		return nil, fmt.Errorf("Shadowsocks plugin requires the embedded plugin client")
+	}
+	if p.ShadowTLS == nil && ss2022.IsMethod(p.TCP.Cipher) {
+		return ss2022.New(p.TCP, dialer)
+	}
+	endpoint := streamtransport.Endpoint(net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port)), dialer, p.ShadowTLS, nil)
+	return OutlineStream(p.TCP, endpoint)
 }
 
 // OutlineStream preserves cipher and prefix behavior over a supplied transport.
@@ -35,7 +51,7 @@ func OutlineStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (tra
 		return nil, err
 	}
 	if ss2022.IsMethod(e.Cipher) {
-		return ss2022.NewStream(e, endpoint)
+		return ss2022.NewWithEndpoint(e, net.Dialer{}, endpoint)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {

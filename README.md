@@ -56,6 +56,10 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
+Optional [ShadowTLS v3](docs/SHADOWTLS.MD) wraps the encrypted TCP upstreams
+listed in its compatibility matrix. It preserves inner encryption and UDP-over-stream;
+wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
+
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),

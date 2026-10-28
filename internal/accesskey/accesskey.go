@@ -43,6 +43,7 @@ type Profile struct {
 	TUIC           TUIC
 	SSPlugin       *SSPlugin
 	HTTPServerName string // Nonempty enables verified TLS for HTTP CONNECT.
+	ShadowTLS      *ShadowTLS
 }
 
 // AnyTLS contains password authentication and verified TLS settings.

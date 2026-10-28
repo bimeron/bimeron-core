@@ -118,7 +118,9 @@ func TestCloseCancelsWebSocketSetup(t *testing.T) {
 
 func TestConstructorRejectsInvalidProfiles(t *testing.T) {
 	p := localProfile(t, "127.0.0.1:443", 1)
-	for _, mutate := range []func(*accesskey.Profile){func(p *accesskey.Profile) { p.Type = "trojan" }, func(p *accesskey.Profile) { p.SSPlugin = nil }, func(p *accesskey.Profile) { p.TCP.Cipher = "unknown" }} {
+	for _, mutate := range []func(*accesskey.Profile){func(p *accesskey.Profile) { p.Type = "trojan" }, func(p *accesskey.Profile) { p.SSPlugin = nil }, func(p *accesskey.Profile) { p.TCP.Cipher = "unknown" }, func(p *accesskey.Profile) {
+		p.ShadowTLS = &accesskey.ShadowTLS{ServerName: "handshake.example", Password: "outer-secret"}
+	}} {
 		copy := p
 		mutate(&copy)
 		if c, err := New(copy, net.Dialer{}); err == nil {

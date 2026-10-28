@@ -114,6 +114,8 @@ paths, server mode, QUIC, Hysteria2 transport, endpoint overrides, `cert`,
 `certRaw`, `key`, plugin logging, and socket-tuning options are rejected.
 There is no option to disable certificate verification. Unlike the original
 plugin's permissive parser, Bimeron rejects unsupported settings explicitly.
+Combining a Shadowsocks plugin with a `[ShadowTLS]` wrapper is unsupported and
+rejected; the core never silently omits either configured transport.
 
 ## Validate and run
 

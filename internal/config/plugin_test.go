@@ -22,6 +22,7 @@ func TestExplicitShadowsocksPlugin(t *testing.T) {
 	for _, raw := range []string{
 		base + "PluginOpts = tls\n",
 		base + "Plugin = unknown\n",
+		base + "Plugin = v2ray-plugin\n[ShadowTLS]\nServerName = handshake.example\nPassword = outer-secret\n",
 		base + "Plugin = v2ray-plugin\nPluginOpts = tls;unknown=secret\n",
 		strings.Replace(base, "Type = shadowsocks", "Type = socks5", 1) + "Plugin = v2ray-plugin\n",
 		"[Profile]\nVersion = 1\n[AccessKey]\nSS = ss://aes-256-gcm:secret@example.com:443\nPlugin = v2ray-plugin\n",
