@@ -19,6 +19,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
 	"bimeron/internal/telemetry"
+	"bimeron/internal/testutil"
 )
 
 // TestReferenceServer uses the independent klzgrad/forwardproxy Naive padding
@@ -116,12 +117,14 @@ func TestReferenceServer(t *testing.T) {
 		}
 	}()
 	profile := accesskey.Profile{Type: "naive", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Naive: accesskey.Naive{User: "user", Password: "pass", ServerName: "example.com"}}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	roots = testutil.MaybeShadowTLS(t, &profile, roots)
 	client, err := New(profile, net.Dialer{Timeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.rootCAs = x509.NewCertPool()
-	client.rootCAs.AddCert(cert)
+	client.rootCAs = roots
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()

@@ -28,9 +28,20 @@ type Client struct {
 	server     string
 	dialer     net.Dialer
 	identities []identity
+	endpoint   transport.StreamEndpoint
+	streamOnly bool
 }
 
 func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
+	c, err := NewWithEndpoint(e, dialer, &transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer})
+	if err == nil {
+		c.streamOnly = false
+	}
+	return c, err
+}
+
+// NewWithEndpoint uses a custom stream endpoint without enabling native UDP.
+func NewWithEndpoint(e accesskey.Endpoint, dialer net.Dialer, endpoint transport.StreamEndpoint) (*Client, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
@@ -41,7 +52,10 @@ func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{method: e.Cipher, key: keys[len(keys)-1], server: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer: dialer}
+	if endpoint == nil {
+		return nil, fmt.Errorf("missing Shadowsocks stream endpoint")
+	}
+	c := &Client{method: e.Cipher, key: keys[len(keys)-1], server: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer: dialer, endpoint: endpoint, streamOnly: true}
 	for i, key := range keys[:len(keys)-1] {
 		block, err := aes.NewCipher(key)
 		if err != nil {
@@ -191,7 +205,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	if err != nil {
 		return nil, err
 	}
-	conn, err := c.dialer.DialContext(ctx, "tcp", c.server)
+	conn, err := c.endpoint.ConnectStream(ctx)
 	if err != nil {
 		return nil, err
 	}

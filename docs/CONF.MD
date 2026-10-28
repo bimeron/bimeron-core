@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -132,15 +132,25 @@ as plaintext in the configuration file.
 
 ```ini
 [AccessKey]
-HTTP = http://alice:secret@proxy.example.com:8080
+HTTP = https://alice:replace-me@proxy.example.com:443
 ```
 
-Use `http://proxy.example.com:8080` without authentication. `Key` and `File`
-also accept this URI. Alternatively, use `Type = http`, `Server`, `Port`, and
-optional paired `Username` and `Password` fields. The URI requires a host and
-port and permits no path, query, or fragment. Percent-encode reserved credential
-characters. Basic credentials and traffic to the proxy are sent without TLS;
-use only a trusted network. `https://` proxy connections are not supported.
+Omit `alice:replace-me@` for an unauthenticated proxy. `HTTP`, `Key`, and `File`
+accept both `http://` and `https://` proxy URIs. Alternatively, use `Type = http`
+or `Type = https`, `Server`, `Port`, and optional paired `Username` and `Password`
+fields. The URI requires an explicit host and port and permits no path, query,
+or fragment. Percent-encode reserved credential characters.
+
+`https://` uses HTTP/1.1 CONNECT over TLS 1.2 or newer. The core verifies the
+certificate chain using system trust and checks the proxy hostname (or IP
+address) from the URI. It preserves that identity after resolving the endpoint
+to an IP. Basic credentials are sent only after TLS verification succeeds.
+Install a private CA in the operating system's trust store when needed; custom
+CA files, server-name overrides, and insecure TLS are not supported. Credentials
+remain plaintext in the configuration file. See [the HTTPS example](../examples/https-connect.conf).
+
+`http://` retains plaintext transport, including Basic credentials; use it only
+on a trusted network. There is no fallback from HTTPS to plaintext HTTP.
 
 HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
 other proxied UDP is dropped. Direct routing rules still use the physical
@@ -414,7 +424,7 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `vless://`, `vmess://`, `trojan://`,
 `naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
 combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
@@ -483,6 +493,44 @@ Shadowsocks; DNS and proxied UDP in VPN mode use `UDP ASSOCIATE`.
 the maximum prefix is 16 bytes for ChaCha20/AES-256 and 8 bytes for AES-192;
 AES-128 does not support a nonempty prefix. These limits are checked when creating
 the transport (`check`/`run`), not only when parsing `.conf`.
+
+## [ShadowTLS]
+
+This optional section wraps a supported encrypted TCP upstream in strict
+ShadowTLS v3. Keep one source in `[AccessKey]`: its TCP host and port must point
+to the public ShadowTLS listener, and its credentials describe the inner proxy.
+The server selects the inner backend; Bimeron does not send a backend endpoint.
+
+| Option | Required | Meaning |
+|---|---|---|
+| `ServerName` | Yes, when the section is present | Hostname or IP of the TLS handshake target, used for certificate verification. Separate from the inner protocol's TLS/REALITY server name. |
+| `Password` | Yes, when the section is present | ShadowTLS shared password, separate from the inner upstream credentials. |
+
+```ini
+[AccessKey]
+SS = ss://aes-256-gcm:replace-inner-password@proxy.example.com:443
+
+[ShadowTLS]
+ServerName = handshake.example.com
+Password = replace-shadowtls-password
+```
+
+Presence of the section enables the wrapper. An empty section, missing fields,
+unknown options, or an unsupported combination is an error. Only strict v3 with
+verified TLS 1.3 is supported; there are no `Version`, `Strict`, `insecure`,
+outer fingerprint or ALPN options. ShadowTLS does not encrypt application data,
+so the inner protocol's encryption and verification remain required.
+
+Shadowsocks AEAD/2022, VLESS, VMess, Trojan, AnyTLS, NaiveProxy and SSH support
+the combinations listed in [the ShadowTLS guide](SHADOWTLS.MD). Plain SOCKS5,
+HTTP CONNECT, QUIC/HTTP3 and wrapped AES-192-GCM are rejected. Native
+Shadowsocks UDP is disabled: VPN mode carries captured DNS over TCP and drops
+other proxy-routed UDP. Existing inner UDP-over-stream adapters remain enabled.
+
+The section also applies to `File`, `Key` and `SSConf` sources. Dynamic profiles
+are revalidated on every resolution. For split XHTTP, both addresses must be
+ShadowTLS listeners with the same outer settings; HTTP/3 on either leg is rejected.
+See [the guide](SHADOWTLS.MD) for examples, routing behavior and test limits.
 
 ## [Interface]
 
@@ -616,8 +664,9 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
 reads `File` when specified. Makes no network requests or Windows settings changes.
-`check`: test real TCP/TLS and UDP/DNS through the selected upstream and print the external IP;
-does not change system settings.
+`check`: test real TCP/TLS through the selected upstream and print the external IP;
+where DNS checks apply, use the profile's packet transport or DNS-over-TCP for
+a TCP-only profile. Does not change system settings.
 `run`: start the mode selected by `[Interface] Mode`. For `vpn`, use an
 administrator CMD; stop with `Ctrl+C`. `proxy` needs no administrator privileges.
 

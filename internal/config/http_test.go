@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,6 +13,9 @@ func TestHTTPConnectSources(t *testing.T) {
 	for _, source := range []string{
 		"HTTP = http://alice:secret@proxy.example.com:8080",
 		"Key = http://alice:secret@proxy.example.com:8080",
+		"HTTP = https://alice:secret@proxy.example.com:443",
+		"Key = https://alice:secret@proxy.example.com:443",
+		"Type = https\nServer = proxy.example.com\nPort = 443\nUsername = alice\nPassword = secret",
 		"Type = http\nServer = proxy.example.com\nPort = 8080\nUsername = alice\nPassword = secret",
 	} {
 		c, err := loadText(t, base+source+"\n")
@@ -21,9 +26,30 @@ func TestHTTPConnectSources(t *testing.T) {
 		if err != nil || p.Type != "http" || p.Username != "alice" || p.TCP.Secret != "secret" || p.UDP.Host != "" {
 			t.Fatalf("invalid HTTP profile: %v", err)
 		}
+		if strings.Contains(source, "https") != (p.HTTPServerName == "proxy.example.com") {
+			t.Fatal("TLS identity lost")
+		}
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "proxy.key"), []byte("https://proxy.example.com:443"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "profile.conf")
+	if err := os.WriteFile(path, []byte(base+"File = proxy.key\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Resolve(t.Context())
+	if err != nil || p.HTTPServerName != "proxy.example.com" {
+		t.Fatalf("HTTPS key file: %v", err)
 	}
 	for _, source := range []string{
-		"HTTP = https://proxy.example.com:443",
+		"HTTP = https://proxy.example.com:443/path",
+		"Type = https\nServer = proxy.example.com\nPort = 443\nUsername = alice",
+		"Type = https\nServer = proxy.example.com\nPort = 443\nServerName = other.example.com",
 		"HTTP = http://proxy.example.com:8080/path",
 		"HTTP = http://alice:secret@proxy.example.com:8080\nSOCKS5 = socks5://proxy.example.com:1080",
 		"Type = http\nServer = proxy.example.com\nPort = 8080\nUsername = alice",

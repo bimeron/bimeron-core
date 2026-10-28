@@ -111,7 +111,7 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
 	} else if p.Type == "http" {
-		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: outbound}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, outbound)
 		if clientErr != nil {
@@ -161,16 +161,18 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else {
-		tcp, err = proxy.OutlineTCP(p.TCP, path.dialer)
+		tcp, err = proxy.OutlineProfile(p, outbound)
 		if err != nil {
 			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
 		}
-		udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
-		if err != nil {
-			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
+		if !p.TCPOnly() {
+			udp, err = proxy.OutlineUDP(p.UDP, path.dialer)
+			if err != nil {
+				return nil, nil, nil, nil, fault("invalid_udp_transport", false)
+			}
 		}
 	}
-	if p.Type == "ssh" || p.Type == "http" || p.Type == "naive" {
+	if p.TCPOnly() {
 		report("transport_check", "Checking TCP/TLS and DNS over TCP-only upstream")
 	} else {
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
@@ -374,11 +376,14 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("access_key_resolve_failed", true)
 	}
 	var d transport.StreamDialer
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, fault("invalid_tcp_transport", false)
+	}
 	var closeTransport func() error
 	if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "http" {
-		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
@@ -428,7 +433,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		d, closeTransport = client, client.Close
 	} else {
-		d, err = proxy.Outline(p.TCP)
+		d, err = proxy.OutlineProfile(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return nil, fault("invalid_tcp_transport", false)
 		}

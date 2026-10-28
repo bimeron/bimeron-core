@@ -1,4 +1,4 @@
-# ADR 0023: Extend the SS2022 client with SIP023 identity chains
+# ADR 0025: Extend the SS2022 client with SIP023 identity chains
 
 Status: accepted, October 28, 2026. Supersedes ADR 0020's EIH restriction.
 Tracking issue: #55.

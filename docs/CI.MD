@@ -25,6 +25,35 @@ forwardproxy revision requires additional Caddy idle-timeout patches; this
 fixture pins the preceding revision with the same padding protocol. Focused
 NaiveProxy tests also run with the race detector.
 
+The Linux job downloads the official ShadowTLS `v0.2.25` Linux x86-64 binary
+and verifies SHA-256
+`a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532`
+before executing it. This is a content pin, not a signed upstream attestation.
+It reuses the pinned Xray, AnyTLS and Caddy binaries above to run the wrapped
+matrix with the race detector: six Shadowsocks methods, 54 VMess cases,
+26 VLESS cases, Trojan/AnyTLS UDP-over-stream, NaiveProxy, an SSH fixture,
+socket controls and Core Engine/SOCKS5 requests. These tools are external test
+processes and do not enter the distributed core's dependency graph.
+
+`BIMERON_SHADOWTLS_BIN` enables the wrapper in existing inner reference tests;
+without it those tests retain their direct mode. The standalone ShadowTLS
+reference tests skip explicitly when it is absent. For local reproduction,
+see [the recorded commands](SHADOWTLS_V3_RESEARCH.md#observed-verification).
+
+CI also runs `BenchmarkReferenceServer` for 20 iterations per case. `Handshake`
+includes TCP connection, strict-v3 authentication and close. `RoundTrip64KiB`
+reuses one authenticated connection and reports one 64-KiB payload per echo
+round trip, with allocation counts. Reproduce with:
+
+```sh
+BIMERON_SHADOWTLS_BIN=/path/to/shadow-tls \
+  go test ./internal/shadowtls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
+```
+
+These are local regression measurements, not internet throughput predictions
+or protocol rankings. The checks do not replace live privileged VPN or mobile
+device validation; [the ShadowTLS guide](SHADOWTLS.MD) lists the supported scope.
+
 The race run excludes only `TestFrameParserAllocs/STREAM`: Go's race
 instrumentation randomly discards `sync.Pool` entries, invalidating its zero
 allocation assertion. The ordinary unit run still requires this test to pass.
