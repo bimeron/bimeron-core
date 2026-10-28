@@ -12,12 +12,65 @@ implemented yet; see [ADR 0023](adr/0023-native-ikev2-system-vpn.md).
 
 ## Prepare the profile
 
+For a Bimeron-owned current-user profile, preview the public settings, then
+explicitly apply them in an elevated terminal under the Windows account that
+will run the VPN:
+
+```powershell
+bimeron.exe ikev2 profile -name 'Corporate VPN' -server vpn.example.com
+bimeron.exe ikev2 profile -name 'Corporate VPN' -server vpn.example.com -apply
+```
+
+The preview is read-only. Apply creates an IKEv2-only EAP-MSCHAPv2 profile with
+required encryption, no automatic redial, both address families and the two
+IPv6 profile routes below. It selects IKE AES256/SHA256/DH14 and ESP
+AES256/SHA256 without PFS; ask the VPN administrator to confirm server support.
+The native backend's existing profile validator verifies the result.
+
+Preparation does not connect, import a CA, configure DNS/WFP protection, or
+read/write credentials. Provision the server CA through Windows and perform
+initial authentication/save credentials in Windows before using `bimeron run`.
+Saving a password alone may not establish the saved EAP identity: the first
+successful Windows connection is also required. An `unchanged` preparation
+result verifies public settings, not certificate trust or credential readiness.
+
+Repeat apply with matching settings is a no-op. Existing unowned names, machine
+profile name collisions, active RAS connections and manually changed owned
+settings are refused. There is no adoption, forced overwrite or repair mode.
+Preparation also rejects wildcard characters in profile names.
+Do not edit/connect profiles concurrently with preparation. Other administrators
+can bypass Bimeron's lock; this command is not an OS-wide policy transaction.
+
+To remove an inactive, unchanged profile created by this command:
+
+```powershell
+bimeron.exe ikev2 profile -name 'Corporate VPN' -server vpn.example.com -remove
+```
+
+Ownership records live in `%LOCALAPPDATA%\Bimeron\ikev2-profiles`, under a
+SHA256 filename derived from the case-insensitive profile name. They contain
+the profile identity and exact public RAS/EAP-method/IPsec/route settings,
+including the native GUID, never passwords or EAP user identity blobs. Preserve
+these records; a name prefix alone is not ownership. Changing the server or
+policy requires explicit removal/recreation or administrator provisioning.
+
+Creation journals intent before mutation and rolls back only resources created
+by that invocation. Mutations wait synchronously for Windows rather than
+cancelling a child process during rollback. A crash, ambiguous failure or failed
+rollback leaves the journal and refuses subsequent management with a manual
+review diagnostic. An administrator must inspect the named profile and record,
+resolve any active/modified/foreign resources, and explicitly reconcile them;
+the command never automatically takes over an incomplete transaction. This is
+separate from `bimeron recover`, which handles runtime protection only.
+
+### Administrator-provisioned profiles
+
 Have the VPN administrator provision and verify a current-user profile under
 the account that will run Bimeron. All-user/machine profiles are unsupported.
 The profile must use:
 
 - IKEv2 only, with EAP-MSCHAPv2 (EAP type 26).
-- A DNS server address matching the expected certificate identity, with Windows
+- A server DNS name matching the expected certificate identity, with Windows
   certificate trust, name and EKU checks enabled.
 - Required encryption, IPv4 and IPv6, and default gateways for both families.
 - Saved credentials and an EAP identity usable without authentication UI.
@@ -71,9 +124,9 @@ Namespace rules do not block arbitrary DNS/DoH from applications and do not
 provide general traffic protection. See [Windows VPN name resolution](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution)
 and the [capture results](IKEV2_LIVE_VALIDATION.MD).
 
-Profile preparation will remain an explicit operation outside Start/Stop;
+Profile preparation is an explicit operation outside Start/Stop;
 [ADR 0024](adr/0024-windows-ikev2-profile-provisioning.md) records the agreed
-architecture. The preparation command is not implemented yet.
+architecture. Starting a connection never creates or repairs a profile.
 
 ## Configure and run
 
@@ -202,4 +255,50 @@ Measure at least 20 independent connection cycles: median/p95 Start-to-connected
 and Stop-to-cleanup time. Compare with the same profile through Windows. Measure
 TCP/UDP throughput against a controlled endpoint inside the VPN with identical
 path, packet sizes and duration; record CPU and network conditions. Core counters
-cannot measure this backend. No performance results are claimed before these runs.
+cannot measure this backend. Results for the current lab are recorded in the
+[live report](IKEV2_LIVE_VALIDATION.MD).
+
+### Reproducible preparation and measurement tests
+
+The preparation test creates/removes uniquely named profiles, tests ownership,
+manual modifications and partial rollback, and does not authenticate:
+
+```powershell
+$env:BIMERON_IKEV2_PROFILE_TEST_SERVER = 'vpn.example.com'
+go test ./internal/systemvpn -run '^TestWindowsIKEv2ProfilePreparation$' -count=1 -v
+Remove-Item Env:BIMERON_IKEV2_PROFILE_TEST_SERVER
+```
+
+Run the measurement test from an elevated interactive session on the isolated
+machine. It uses the same saved profile for 20 native RAS cycles (the native
+driver directly, without Engine/protection), 20 Engine
+cycles, and 20 protected Engine cycles. Each mode also runs 10-second idle and
+TCP/UDP upload/download measurements at a requested 50 Mbit/s, with 1200-byte
+UDP payloads. Supply a trusted iperf3 executable and controlled iperf3/HTTP/DNS
+servers reachable through the VPN. The HTTP probes expect port 8080 `/health`.
+
+```powershell
+$env:BIMERON_IKEV2_TEST_CONFIG = 'C:\private\ikev2-test.conf'
+$env:BIMERON_IKEV2_MEASURE_OUTPUT = 'C:\private\ikev2-measurements.json'
+$env:BIMERON_IKEV2_IPERF = 'C:\tools\iperf3.exe'
+$env:BIMERON_IKEV2_SOAK_SECONDS = '900'
+$env:BIMERON_IKEV2_PROBE_ADDRESS = '10.77.55.1'
+$env:BIMERON_IKEV2_PROBE_ADDRESS6 = 'fd42:6269:6d65::1'
+$env:BIMERON_IKEV2_PROBE_DNS = 'probe.bimeron.test'
+go test ./core -run '^TestWindowsIKEv2Measurements$' -count=1 -v -timeout 30m
+```
+
+The protected soak probes IPv4/IPv6 HTTP and Windows system DNS every ten
+seconds and records CPU/working-set/Go-heap samples. JSON contains endpoint and
+machine measurement metadata; keep raw output outside Git. Process CPU includes
+the Go test harness; Windows owns the IPsec data plane, so guest-wide and iperf
+CPU are recorded separately. Fixed-rate runs are not maximum-throughput claims.
+All modes run sequentially in one test process; memory samples include retained
+measurement data and Go runtime caches, and are not an isolated CLI memory budget.
+Data-plane readiness/retries are recorded separately from RAS connection latency;
+the test allows up to 45 seconds for IPv4/IPv6 HTTP readiness before transfers.
+Repeated system DNS lookups may use the Windows cache; they do not constitute
+uncached DNS-leak checks.
+These tests are skipped by default and must not be enabled on shared CI runners.
+Windows 11, RRAS, physical sleep and Wi-Fi/Ethernet transitions are deferred in
+[issue #66](https://github.com/bimeron/bimeron-core/issues/66).

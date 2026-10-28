@@ -1,6 +1,6 @@
 # ADR 0024: Explicit Windows IKEv2 profile preparation
 
-Status: accepted architecture; implementation is a separate milestone, October 28, 2026.
+Status: accepted; explicit preparation command implemented, October 28, 2026.
 Tracks [issue #56](https://github.com/bimeron/bimeron-core/issues/56).
 
 ## Context
@@ -79,4 +79,11 @@ active profile refusal and explicit removal on a disposable Windows account.
 Ensure preview is read-only and errors never reveal credentials. Validate the
 created profile through the existing guards and an interactive live connection,
 including IPv6 route insertion/removal across repeated connections. Keep this
-command unavailable until these checks pass; this ADR does not claim it exists.
+command unavailable until these checks pass. The implementation is
+`bimeron ikev2 profile`, with read-only preview, `-apply`, and explicit `-remove`.
+It records a pending per-user journal before creation and exact public settings
+after native validation. Interrupted/ambiguous transactions require manual
+administrator review; they are never automatically adopted. Windows credential
+and CA preparation remain separate, and fixed algorithms match the validated
+strongSwan milestone. See the [guide](../IKEV2.MD) and
+[live validation report](../IKEV2_LIVE_VALIDATION.MD) for checks and limitations.
