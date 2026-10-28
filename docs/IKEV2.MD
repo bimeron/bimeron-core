@@ -4,8 +4,9 @@ Bimeron controls a pre-provisioned current-user Windows VPN profile through
 native RAS APIs. Windows owns IPsec, credentials, certificates, routes and DNS.
 This backend bypasses Wintun and the Go packet stack. An initial
 [Windows 10/strongSwan live run](IKEV2_LIVE_VALIDATION.MD) verified IPv4 traffic,
-certificate rejection, cancellation and rekey. IPv6 required manual diagnostic
-changes; RRAS and leak protection remain unverified. Other platforms are not
+certificate rejection, cancellation and rekey. A follow-up verified internal
+IPv6 with profile-owned routes and found DNS leakage to the LAN resolver.
+RRAS remains unverified; leak prevention is not provided. Other platforms are not
 implemented yet; see [ADR 0023](adr/0023-native-ikev2-system-vpn.md).
 
 ## Prepare the profile
@@ -26,6 +27,51 @@ Bimeron rejects incompatible settings rather than changing them. Windows
 defaults may need administrator adjustment; creating a basic Settings profile
 alone does not establish compatibility. Provision certificates and credentials
 outside this repository.
+
+### IPv6 routes on Windows 10
+
+The default-gateway flag alone did not install an IPv6 default route on the
+validated Windows 10 build 19044. For an administrator-approved test profile,
+configure these two routes while disconnected, then reconnect:
+
+```powershell
+$name = 'Bimeron IKEv2 Lab' # Replace with your own approved profile name.
+Add-VpnConnectionRoute -ConnectionName $name -DestinationPrefix '::/1' -RouteMetric 1
+Add-VpnConnectionRoute -ConnectionName $name -DestinationPrefix '8000::/1' -RouteMetric 1
+```
+
+The two prefixes cover IPv6 destinations; Windows installs/removes the routes
+with the profile connection. Verify the assigned address becomes `Preferred`
+and both routes use the VPN interface. Internal IPv6 HTTP/DNS passed on repeated
+connections without disabling DAD or modifying physical interfaces. Address
+assignment can finish after RAS reports connected; RAS readiness alone does not
+prove either address-family's data plane is ready.
+
+Do not add duplicate profile routes. To undo this preparation while disconnected,
+use `Remove-VpnConnectionRoute` for each of these exact prefixes. This changes
+profile preparation, not Engine's runtime behavior. Public IPv6 egress still
+requires an IPv6-capable server and has not been validated in this lab.
+See [strongSwan's Windows IPv6 interoperability notes](https://docs.strongswan.org/docs/latest/interop/windowsClients.html#_ipv6)
+and [Microsoft's route cmdlet](https://learn.microsoft.com/en-us/powershell/module/vpnclient/add-vpnconnectionroute).
+
+### DNS and traffic exposure
+
+An active connection is not a leak-prevention boundary. A packet capture found
+a system DNS query leaving the VM toward its LAN resolver while the VPN was
+connected. Default routes do not remove more-specific local routes or prevent
+Windows resolver fallback. Ordinary IPv4/IPv6 traffic can leave outside the VPN
+before connection and after disconnection. There is no native-backend kill switch.
+
+Administrators must provide an appropriate Windows DNS policy if private names
+must not reach other resolvers. A temporary NRPT rule for the isolated lab's
+namespace was tested separately; it is not installed or managed by Bimeron.
+Namespace rules do not block arbitrary DNS/DoH from applications and do not
+provide general traffic protection. See [Windows VPN name resolution](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution)
+and the [capture results](IKEV2_LIVE_VALIDATION.MD).
+
+Profile preparation will remain an explicit operation outside Start/Stop;
+[ADR 0024](adr/0024-windows-ikev2-profile-provisioning.md) records the agreed
+architecture. The preparation command is not implemented yet.
 
 ## Configure and run
 

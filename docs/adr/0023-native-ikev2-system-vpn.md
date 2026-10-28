@@ -45,6 +45,11 @@ DNS/MTU/interface overrides, IPv6 disabling, SOCKS proxy mode, routing rules and
 kill switch requests are rejected before system changes. Windows owns actual
 route/DNS negotiation and mobility; default-route settings alone do not prove
 absence of DNS or IPv6 leaks. No leak-prevention guarantee is advertised.
+Follow-up Windows 10 validation required explicit profile-owned IPv6 routes
+and confirmed a system DNS query outside the tunnel. See the
+[live report](../IKEV2_LIVE_VALIDATION.MD); profile flags are not a runtime
+route/DNS isolation check. [ADR 0024](0024-windows-ikev2-profile-provisioning.md)
+records the accepted separate preparation-command architecture.
 
 Capabilities have a separate `ikev2` object; existing top-level flags keep
 their packet-backend meaning. `supported` means compiled support, with native
