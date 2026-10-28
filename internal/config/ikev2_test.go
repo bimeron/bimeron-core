@@ -32,6 +32,7 @@ func TestIKEv2ConfigurationAndNoPacketDefaults(t *testing.T) {
 
 func TestIKEv2RejectsUnsupportedSettingsBeforeStart(t *testing.T) {
 	for _, extra := range []string{
+		"[ShadowTLS]\nServerName = cover.example.com\nPassword = test\n",
 		"[AccessKey]\nSS = ss://aes-256-gcm:secret@example.com:8388\n",
 		"[AccessKey]\nIdentityFile = private-key\n",
 		"[Interface]\nMode = proxy\n",

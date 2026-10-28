@@ -23,6 +23,7 @@ import (
 
 type Profile = accesskey.Profile
 type Endpoint = accesskey.Endpoint
+type ShadowTLS = accesskey.ShadowTLS
 type Policy = routing.Policy
 
 // IKEv2Config selects an OS-managed tunnel using a pre-provisioned Windows
@@ -105,10 +106,14 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if copy.IKEv2 != nil {
 		ike := *copy.IKEv2
 		cfg := SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, IKEv2: &ike}
-		if copy.Access != (config.Access{}) || copy.Tunnel != (config.Tunnel{Mode: "vpn", IPv6: "system"}) || copy.Routing.Default != routing.Proxy || len(copy.Routing.Rules) != 0 {
+		if copy.ShadowTLS != nil || copy.Access != (config.Access{}) || copy.Tunnel != (config.Tunnel{Mode: "vpn", IPv6: "system"}) || copy.Routing.Default != routing.Proxy || len(copy.Routing.Rules) != 0 {
 			return SessionConfig{}, fmt.Errorf("invalid IKEv2 configuration")
 		}
 		return cfg, cfg.validate()
+	}
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		copy.ShadowTLS = &settings
 	}
 	p, err := routing.Compile(copy.Routing)
 	if err != nil {

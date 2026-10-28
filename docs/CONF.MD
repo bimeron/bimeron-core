@@ -51,7 +51,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `MASQUE`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -62,7 +62,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -80,8 +80,12 @@ SS = ss://chacha20-ietf-poly1305:replace-me@server.example.com:8388
 cipher, and password come from the key. Plain parameters, base64-encoded
 credentials, and legacy keys with the entire connection portion base64-encoded
 are supported. The `#...` fragment is retained as the key label.
-The `outline` and `prefix` options are supported; unknown options are rejected.
-Shadowsocks 2022 keys use a base64-encoded fixed-length key as the password.
+The `outline`, `prefix`, and `plugin` options are supported; unknown options are rejected.
+`plugin=v2ray-plugin` enables embedded WS/WSS with Mux; `plugin=obfs-local` enables simple-obfs HTTP or TLS-shaped obfuscation. See [Shadowsocks transports](SHADOWSOCKS_TRANSPORTS.MD) for encoded URI examples, supported options, and TCP-only VPN behavior. Simple-obfs TLS mode is not a cryptographic TLS session.
+Shadowsocks 2022 uses a base64-encoded fixed-length key as the password.
+The AES methods also accept SIP023 chains: `iPSK0:iPSK1:...:uPSK`. Each
+component is separately base64-encoded; identity keys come first and the user
+key comes last. All keys must have the length required by the selected method.
 Use base64-encoded `method:key` credentials in an `ss://` URI so characters
 such as `/` and `+` are preserved. The `prefix` option is not supported with
 2022 methods.
@@ -137,19 +141,81 @@ as plaintext in the configuration file.
 
 ```ini
 [AccessKey]
-HTTP = http://alice:secret@proxy.example.com:8080
+HTTP = https://alice:replace-me@proxy.example.com:443
 ```
 
-Use `http://proxy.example.com:8080` without authentication. `Key` and `File`
-also accept this URI. Alternatively, use `Type = http`, `Server`, `Port`, and
-optional paired `Username` and `Password` fields. The URI requires a host and
-port and permits no path, query, or fragment. Percent-encode reserved credential
-characters. Basic credentials and traffic to the proxy are sent without TLS;
-use only a trusted network. `https://` proxy connections are not supported.
+Omit `alice:replace-me@` for an unauthenticated proxy. `HTTP`, `Key`, and `File`
+accept both `http://` and `https://` proxy URIs. Alternatively, use `Type = http`
+or `Type = https`, `Server`, `Port`, and optional paired `Username` and `Password`
+fields. The URI requires an explicit host and port and permits no path, query,
+or fragment. Percent-encode reserved credential characters.
+
+`https://` uses HTTP/1.1 CONNECT over TLS 1.2 or newer. The core verifies the
+certificate chain using system trust and checks the proxy hostname (or IP
+address) from the URI. It preserves that identity after resolving the endpoint
+to an IP. Basic credentials are sent only after TLS verification succeeds.
+Install a private CA in the operating system's trust store when needed; custom
+CA files, server-name overrides, and insecure TLS are not supported. Credentials
+remain plaintext in the configuration file. See [the HTTPS example](../examples/https-connect.conf).
+
+`http://` retains plaintext transport, including Basic credentials; use it only
+on a trusted network. There is no fallback from HTTPS to plaintext HTTP.
 
 HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
 other proxied UDP is dropped. Direct routing rules still use the physical
 network. In `Mode = proxy`, the local listener remains SOCKS5.
+
+### MASQUE HTTP/3 proxy
+
+```ini
+[AccessKey]
+MASQUE = masque://alice:replace-me@proxy.example.com:443
+```
+
+`Key` and `File` also accept `masque://` URIs. Port defaults to `443`. Omit
+both username and password for an unauthenticated server. Percent-encode
+reserved characters in credentials and query values. The URI accepts an empty
+path or `/`, an optional display-name fragment, and these query options:
+
+| URI option | Meaning |
+| --- | --- |
+| `sni` | Verified TLS server name; defaults to the proxy host. HTTP authority retains the original proxy host. |
+| `udp_path` | Path template; defaults to `/.well-known/masque/udp/{target_host}/{target_port}/`. Use exactly one `{target_host}` and `{target_port}` with simple RFC 6570 expansion. |
+| `ca` | Absolute path to an additional PEM CA file. System certificate roots remain enabled. |
+
+Unknown, empty, or duplicate URI options are rejected. A plain `https://` URI
+does not enable MASQUE. The server must support both ordinary TCP CONNECT and
+RFC 9298 CONNECT-UDP over HTTP/3, with Extended CONNECT, HTTP Datagrams and
+QUIC DATAGRAM enabled. TLS verification cannot be disabled.
+
+Alternatively, configure explicit parameters:
+
+```ini
+[AccessKey]
+Type = masque
+Server = proxy.example.com
+Port = 443
+Username = alice
+Password = replace-me
+# ServerName = proxy.example.com
+# CAFile = proxy-ca.pem
+# MASQUEPath = /.well-known/masque/udp/{target_host}/{target_port}/
+```
+
+`Server` and `Port` are required for explicit parameters. `Username` and
+`Password` must both be present or both absent. `ServerName` defaults to
+`Server`. Relative `CAFile` paths are resolved against the configuration
+file's directory; in-memory configurations require absolute paths.
+`MASQUEPath` and `CAFile` fields require `Type = masque`; URI profiles carry
+these options inside their URI. The path template cannot change the proxy
+scheme or authority and cannot contain query or fragment templates.
+
+Both VPN mode and local SOCKS5 proxy mode support TCP and UDP. UDP applications
+in proxy mode must use SOCKS5 UDP ASSOCIATE. The proxy's UDP port must be
+reachable from the client. There is no HTTP/2/TCP fallback or fragmentation;
+the effective UDP payload limit depends on QUIC's current MTU and is at most
+1500 bytes. See [MASQUE setup and compatibility](MASQUE.MD) and the complete
+[example profile](../examples/masque.conf).
 
 ### Inline VLESS URI
 
@@ -312,7 +378,7 @@ blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
 not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
 is unavailable; `CloseRead` and `CloseWrite` close the stream.
 
-### NaiveProxy-compatible HTTPS CONNECT
+### NaiveProxy-compatible HTTP/2 and HTTP/3 CONNECT
 
 Use a dedicated URI as the sole `[AccessKey]` source:
 
@@ -321,20 +387,28 @@ Use a dedicated URI as the sole `[AccessKey]` source:
 Naive = naive+https://user:replace-me@server.example.com:443?sni=server.example.com
 ```
 
-`Key` and `File` also accept this URI. The port defaults to 443. Percent-encode
+Use `naive+quic://` instead of `naive+https://` to select HTTP/3 over QUIC.
+HTTP/2 remains the default for existing HTTPS keys. HTTP/3 requires UDP access
+to the proxy server; it does not automatically fall back to HTTP/2, and does
+not send 0-RTT data. See [`examples/naive-http3.conf`](../examples/naive-http3.conf).
+
+`Key` and `File` also accept both URIs. The port defaults to 443. Percent-encode
 reserved characters in the username and password. `sni` defaults to the server
-host. TLS verifies the certificate and server name, and HTTP/2 ALPN is
-required. `insecure=0` is accepted; insecure TLS and unknown options are
-rejected. The server must support HTTP/2 CONNECT and Basic proxy authentication.
+host. TLS verifies the certificate and server name, and the selected protocol
+requires `h2` or `h3` ALPN. `insecure=0` is accepted; insecure TLS and unknown
+options are rejected. The server must support CONNECT over the selected
+HTTP version and Basic proxy authentication.
 
 An explicit profile uses `Type = naive`, `Server`, `Port`, `Username`, and
-`Password`; `ServerName` is optional. See
+`Password`; `ServerName` is optional. This explicit form selects HTTP/2;
+use a `naive+quic://` URI for HTTP/3, or set `Profile.Naive.QUIC` in the Go API. See
 [`examples/naive.conf`](../examples/naive.conf).
 
 The client requests Naive padding and uses it only when the server returns a
-`padding` header. It also works with a regular HTTP/2 forward proxy. The
-embedded HTTP/2 stack is not identical to Chromium, so browser-identical
-camouflage is not claimed. HTTP/3, proxy chains, and UDP relay are unsupported.
+`padding` header. It also works with a regular HTTP/2 or HTTP/3 forward proxy.
+The embedded TLS, HTTP/2 and QUIC stacks are not identical to Chromium, so
+browser-identical camouflage is not claimed. ShadowTLS supports only the
+HTTP/2 variant. Proxy chains and UDP relay are unsupported.
 In VPN mode, captured DNS uses TCP; other proxied UDP is dropped. Explicit
 `direct` routes still use the physical network. Proxy mode exposes TCP CONNECT.
 
@@ -419,9 +493,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
-`naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `masque://`, `vless://`, `vmess://`, `trojan://`,
+`naive+https://`, `naive+quic://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `MASQUE`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
@@ -441,18 +515,26 @@ Password = replace-me
 | Option | Required | Meaning |
 |---|---|---|
 | `Type` | Required for explicit parameters | `shadowsocks` (preferred) or its `ss` alias. |
-| `Server` | Required for the explicit group | Server name or IP address. The current system VPN requires the endpoint to resolve to IPv4. |
+| `Server` | Required for the explicit group | Server name or IP address. Without a plugin, system VPN requires IPv4; the embedded plugin transport also supports IPv6. |
 | `Port` | Required for the explicit group | Server port, an integer from `1` to `65535`. |
 | `Method` | Required for the explicit group | Cipher: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`, `aes-256-gcm`, `2022-blake3-aes-128-gcm`, `2022-blake3-aes-256-gcm`, or `2022-blake3-chacha20-poly1305`. |
-| `Password` | Required for the explicit group | Nonempty server password for older methods; a standard base64-encoded 16-byte key for 2022 AES-128 or 32-byte key for 2022 AES-256/ChaCha20. |
+| `Password` | Required for the explicit group | Nonempty server password for older methods; a standard base64-encoded 16-byte key for 2022 AES-128 or 32-byte key for 2022 AES-256/ChaCha20. AES also accepts colon-separated SIP023 key chains. |
 | `Prefix` | Optional; empty string | Shadowsocks salt prefix for older methods. It is rejected for 2022 methods. |
+| `Plugin` | Optional; absent | `v2ray-plugin` enables embedded WebSocket; `obfs-local` enables embedded simple-obfs. Other plugins and executable paths are rejected. |
+| `PluginOpts` | Plugin-dependent | For `v2ray-plugin`: `mode=websocket`, `tls`, `host`, `path`, and `mux`. For `obfs-local`: required `obfs=http` or `obfs=tls`, optional `obfs-host`, and HTTP-only `obfs-uri`/`http-method`. See [transport examples and defaults](SHADOWSOCKS_TRANSPORTS.MD). |
 
-The group uses identical settings for TCP and UDP. Use a dynamic key for separate
-endpoints. This group cannot be combined with other sources.
+Without a plugin, the group uses identical settings for TCP and UDP. Use a
+dynamic key for separate endpoints. With either supported plugin, only TCP is proxied
+and captured DNS uses TCP. This group cannot be combined with other sources.
 Generate a fresh Shadowsocks 2022 key with `openssl rand -base64 16` or
 `openssl rand -base64 32`, according to the selected method. The client supports
-single-user servers without extensible identity headers (EIH). TCP works in
-local proxy and VPN modes; UDP works in VPN mode.
+single-user servers and, for AES methods, SIP023 multi-user servers and identity
+relay chains over TCP and UDP. For a chain, generate each key separately and
+join the base64 strings with `:` in relay-to-server-to-user order. For example,
+`Password = <base64-server-identity-key>:<base64-user-key>` connects directly
+to a multi-user server. These placeholders must be replaced with real keys.
+ChaCha20 accepts one key only. No new protocol type or server hosting is added.
+TCP works in local proxy and VPN modes; UDP works in VPN mode without the plugin.
 
 ### Alternative: explicit SOCKS5 parameters
 
@@ -484,13 +566,51 @@ the maximum prefix is 16 bytes for ChaCha20/AES-256 and 8 bytes for AES-192;
 AES-128 does not support a nonempty prefix. These limits are checked when creating
 the transport (`check`/`run`), not only when parsing `.conf`.
 
+## [ShadowTLS]
+
+This optional section wraps a supported encrypted TCP upstream in strict
+ShadowTLS v3. Keep one source in `[AccessKey]`: its TCP host and port must point
+to the public ShadowTLS listener, and its credentials describe the inner proxy.
+The server selects the inner backend; Bimeron does not send a backend endpoint.
+
+| Option | Required | Meaning |
+|---|---|---|
+| `ServerName` | Yes, when the section is present | Hostname or IP of the TLS handshake target, used for certificate verification. Separate from the inner protocol's TLS/REALITY server name. |
+| `Password` | Yes, when the section is present | ShadowTLS shared password, separate from the inner upstream credentials. |
+
+```ini
+[AccessKey]
+SS = ss://aes-256-gcm:replace-inner-password@proxy.example.com:443
+
+[ShadowTLS]
+ServerName = handshake.example.com
+Password = replace-shadowtls-password
+```
+
+Presence of the section enables the wrapper. An empty section, missing fields,
+unknown options, or an unsupported combination is an error. Only strict v3 with
+verified TLS 1.3 is supported; there are no `Version`, `Strict`, `insecure`,
+outer fingerprint or ALPN options. ShadowTLS does not encrypt application data,
+so the inner protocol's encryption and verification remain required.
+
+Shadowsocks AEAD/2022, VLESS, VMess, Trojan, AnyTLS, NaiveProxy and SSH support
+the combinations listed in [the ShadowTLS guide](SHADOWTLS.MD). Plain SOCKS5,
+HTTP CONNECT, QUIC/HTTP3 and wrapped AES-192-GCM are rejected. Native
+Shadowsocks UDP is disabled: VPN mode carries captured DNS over TCP and drops
+other proxy-routed UDP. Existing inner UDP-over-stream adapters remain enabled.
+
+The section also applies to `File`, `Key` and `SSConf` sources. Dynamic profiles
+are revalidated on every resolution. For split XHTTP, both addresses must be
+ShadowTLS listeners with the same outer settings; HTTP/3 on either leg is rejected.
+See [the guide](SHADOWTLS.MD) for examples, routing behavior and test limits.
+
 ## [Interface]
 
 This section is optional; missing options receive defaults.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `Mode` | `vpn` | `vpn`: system Windows Wintun or Linux TUN, or experimental macOS utun; `proxy`: local TCP SOCKS5 proxy. Determines `run` behavior. |
+| `Mode` | `vpn` | `vpn`: system Windows Wintun or Linux TUN, or experimental macOS utun; `proxy`: local SOCKS5 proxy (TCP; also UDP with MASQUE). Determines `run` behavior. |
 | `Name` | `Bimeron` | Interface name in `vpn` mode. 1–32 ASCII characters on Windows, up to 15 on Linux: letters, digits, `_`, `-`; the first character must be a letter. An occupied name is rejected. On macOS, this is a logical label; the OS assigns utunN. |
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
@@ -616,8 +736,9 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
 reads `File` when specified. Makes no network requests or Windows settings changes.
-`check`: test real TCP/TLS and UDP/DNS through the selected upstream and print the external IP;
-does not change system settings.
+`check`: test real TCP/TLS through the selected upstream and print the external IP;
+where DNS checks apply, use the profile's packet transport or DNS-over-TCP for
+a TCP-only profile. Does not change system settings.
 `run`: start the mode selected by `[Interface] Mode`. For `vpn`, use an
 administrator CMD; stop with `Ctrl+C`. `proxy` needs no administrator privileges.
 

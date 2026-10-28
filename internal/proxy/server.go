@@ -16,6 +16,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
 	"bimeron/internal/ss2022"
+	"bimeron/internal/streamtransport"
 	"bimeron/internal/telemetry"
 
 	"golang.getoutline.org/sdk/transport"
@@ -26,17 +27,37 @@ func Outline(e accesskey.Endpoint) (transport.StreamDialer, error) {
 	return OutlineTCP(e, net.Dialer{Timeout: 15 * time.Second})
 }
 func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer, error) {
+	return OutlineProfile(accesskey.Profile{TCP: e}, dialer)
+}
+
+// OutlineProfile preserves ShadowTLS wrapping without duplicating encryption.
+func OutlineProfile(p accesskey.Profile, dialer net.Dialer) (transport.StreamDialer, error) {
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
+	if p.SSPlugin != nil {
+		return nil, fmt.Errorf("Shadowsocks plugin requires the embedded plugin client")
+	}
+	if p.ShadowTLS == nil && ss2022.IsMethod(p.TCP.Cipher) {
+		return ss2022.New(p.TCP, dialer)
+	}
+	endpoint := streamtransport.Endpoint(net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port)), dialer, p.ShadowTLS, nil)
+	return OutlineStream(p.TCP, endpoint)
+}
+
+// OutlineStream preserves cipher and prefix behavior over a supplied transport.
+func OutlineStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (transport.StreamDialer, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 	if ss2022.IsMethod(e.Cipher) {
-		return ss2022.New(e, dialer)
+		return ss2022.NewWithEndpoint(e, net.Dialer{}, endpoint)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("could not create encryption key")
 	}
-	d, err := shadowsocks.NewStreamDialer(&transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer}, key)
+	d, err := shadowsocks.NewStreamDialer(endpoint, key)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +83,7 @@ func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer
 
 type Server struct {
 	Proxy  transport.StreamDialer
+	Packet transport.PacketListener
 	Policy *routing.Policy
 	Stats  *telemetry.Counters
 }
@@ -150,11 +172,11 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	if _, err := io.ReadFull(c, request[:]); err != nil || request[0] != 5 || request[2] != 0 {
 		return
 	}
-	if request[1] != 1 {
+	if request[1] != 1 && (request[1] != 3 || s.Packet == nil) {
 		_ = reply(c, 7)
 		finishReply(c)
 		return
-	} // TCP CONNECT only; no fake UDP success.
+	}
 	host := ""
 	switch request[3] {
 	case 1, 4:
@@ -186,6 +208,10 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	port := binary.BigEndian.Uint16(portBytes[:])
+	if request[1] == 3 {
+		s.serveUDP(ctx, c, host, int(port))
+		return
+	}
 	if port == 0 {
 		_ = reply(c, 1)
 		return

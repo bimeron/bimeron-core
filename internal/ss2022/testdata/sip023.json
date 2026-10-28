@@ -1,0 +1,29 @@
+{
+  "provenance": "SIP023 formulas evaluated independently with Python blake3 and cryptography AES-ECB; keys and salts are synthetic byte sequences.",
+  "vectors": [
+    {
+      "method": "2022-blake3-aes-128-gcm",
+      "keys": [
+        "000102030405060708090a0b0c0d0e0f",
+        "202122232425262728292a2b2c2d2e2f",
+        "404142434445464748494a4b4c4d4e4f"
+      ],
+      "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "header": "01020304050607081112131415161718",
+      "tcp": "81c07d418c96b68bc550b81a7bb5e9a001850cb4eb2eb83d738fcc74aa8e8b86",
+      "udp": "3160c646fcd53104dae6a21c84988ef32fe98bbb8686590c742deb9b9465ecbb6077882fbc856ab84767b90912ad06fa"
+    },
+    {
+      "method": "2022-blake3-aes-256-gcm",
+      "keys": [
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      ],
+      "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "header": "01020304050607081112131415161718",
+      "tcp": "ffef61550033b8b6d6d2fef70dd98bef26baf55af5ea89b02af2fa054d6c2cb7",
+      "udp": "a96ed5607834b23a94c1fd797ea59c674fed5445e47b62b4b1178129fac461c453e9f2b9bb4045223f0d6330f7957e25"
+    }
+  ]
+}

@@ -18,17 +18,29 @@ import (
 	"time"
 
 	"bimeron/internal/linuxnet"
+	"bimeron/internal/masque"
+	"bimeron/internal/masque/masquetest"
 	"bimeron/internal/vpn"
 	"golang.getoutline.org/sdk/transport"
 )
 
-type loopbackStream struct{ address string }
-
-func (d loopbackStream) DialStream(ctx context.Context, _ string) (transport.StreamConn, error) {
-	return (&transport.TCPDialer{}).DialStream(ctx, d.address)
+type loopbackStream struct {
+	address string
+	dialer  transport.StreamDialer
 }
 
-func TestLinuxTUNHTTP(t *testing.T) {
+func (d loopbackStream) DialStream(ctx context.Context, _ string) (transport.StreamConn, error) {
+	dialer := d.dialer
+	if dialer == nil {
+		dialer = &transport.TCPDialer{}
+	}
+	return dialer.DialStream(ctx, d.address)
+}
+
+func TestLinuxTUNHTTP(t *testing.T)   { testLinuxTUNHTTP(t, false) }
+func TestLinuxTUNMASQUE(t *testing.T) { testLinuxTUNHTTP(t, true) }
+
+func testLinuxTUNHTTP(t *testing.T, useMASQUE bool) {
 	if os.Getenv("BIMERON_NETNS_TEST") != "1" {
 		t.Skip("requires unshare -n")
 	}
@@ -54,6 +66,22 @@ func TestLinuxTUNHTTP(t *testing.T) {
 	defer server.Close()
 	h := vpn.NewHandler(ctx)
 	h.TCP = loopbackStream{address: server.Listener.Addr().String()}
+	if useMASQUE {
+		endpoints := masquetest.Start(t)
+		upstream, err := masque.New(masquetest.Profile(t, endpoints), net.Dialer{Control: linuxnet.BoundDialer("lo")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer upstream.Close()
+		// Map synthetic routed destinations to loopback-only fixture services;
+		// application packets still cross the real TUN and policy routes.
+		h.TCP = loopbackStream{address: endpoints["tcp"], dialer: upstream}
+		target, err := net.ResolveUDPAddr("udp", endpoints["udp"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.UDP = loopbackMASQUEPackets{client: upstream, target: target}
+	}
 	router := &flowRouter{}
 	router.replace(h)
 	defer router.Close()
@@ -71,6 +99,25 @@ func TestLinuxTUNHTTP(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
 	for _, url := range []string{"http://203.0.113.9/", "http://[2001:db8::9]/"} {
+		if useMASQUE {
+			address := strings.TrimSuffix(strings.TrimPrefix(url, "http://"), "/") + ":80"
+			tcp, err := net.DialTimeout("tcp", address, 3*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = tcp.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := tcp.Write([]byte("through-linux-tun")); err != nil {
+				tcp.Close()
+				t.Fatal(err)
+			}
+			b := make([]byte, len("through-linux-tun"))
+			_, err = io.ReadFull(tcp, b)
+			tcp.Close()
+			if err != nil || string(b) != "through-linux-tun" {
+				t.Fatalf("TUN TCP: %q %v", b, err)
+			}
+			continue
+		}
 		response, err := client.Get(url)
 		if err != nil {
 			t.Fatal("TUN flow failed", url, err)
@@ -81,6 +128,21 @@ func TestLinuxTUNHTTP(t *testing.T) {
 			t.Fatal("invalid TUN response", string(body), err)
 		}
 	}
+	if useMASQUE {
+		udp, err := net.DialTimeout("udp", "203.0.113.9:1234", time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer udp.Close()
+		_ = udp.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := udp.Write([]byte("through-masque-tun")); err != nil {
+			t.Fatal(err)
+		}
+		b := make([]byte, 64)
+		if n, err := udp.Read(b); err != nil || string(b[:n]) != "through-masque-tun" {
+			t.Fatalf("TUN UDP: %q %v", b[:n], err)
+		}
+	}
 	if err := link.Close(); err != nil {
 		t.Fatal("stop failed", err)
 	}
@@ -89,6 +151,33 @@ func TestLinuxTUNHTTP(t *testing.T) {
 		t.Fatal("stopped tunnel name is still in use", err)
 	}
 	probe.Close()
+}
+
+type loopbackMASQUEPackets struct {
+	client *masque.Client
+	target net.Addr
+}
+
+func (l loopbackMASQUEPackets) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	c, err := l.client.ListenPacket(ctx)
+	if err != nil {
+		return nil, err
+	}
+	original, _ := net.ResolveUDPAddr("udp", "203.0.113.9:1234")
+	return &loopbackMASQUEPacket{PacketConn: c, target: l.target, original: original}, nil
+}
+
+type loopbackMASQUEPacket struct {
+	net.PacketConn
+	target, original net.Addr
+}
+
+func (c *loopbackMASQUEPacket) WriteTo(b []byte, _ net.Addr) (int, error) {
+	return c.PacketConn.WriteTo(b, c.target)
+}
+func (c *loopbackMASQUEPacket) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, _, err := c.PacketConn.ReadFrom(b)
+	return n, c.original, err
 }
 
 func TestLinuxTUNCleanupAndImmediateReopen(t *testing.T) {
