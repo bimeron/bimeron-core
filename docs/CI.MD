@@ -117,7 +117,9 @@ or testing a real VPN deployment.
 
 ## simple-obfs reference checks
 
-The Linux test job builds two original simple-obfs server revisions:
+The Linux test job uses Ubuntu 24.04 because the original server requires
+PCRE1 (`libpcre3-dev`), which Ubuntu 26.04 removed. It builds two original
+simple-obfs server revisions:
 
 | Revision | simple-obfs commit | libcork submodule commit |
 | --- | --- | --- |
