@@ -20,7 +20,6 @@ import (
 	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/websocket"
 )
 
 // Client owns all connections opened for one upstream generation.
@@ -224,19 +223,7 @@ func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
 	if path == "" {
 		path = "/"
 	}
-	config, err := websocket.NewConfig("wss://"+host+path, "https://"+host)
-	if err != nil {
-		return nil, fmt.Errorf("invalid VLESS WebSocket settings")
-	}
-	if early != nil {
-		config.Protocol = []string{base64.RawURLEncoding.EncodeToString(early)}
-	}
-	ws, err := websocket.NewClient(config, conn)
-	if err != nil {
-		return nil, fmt.Errorf("VLESS WebSocket handshake failed")
-	}
-	ws.PayloadType = websocket.BinaryFrame
-	return ws, nil
+	return streamtransport.WebSocket(conn, "wss", host, path, early)
 }
 
 func (c *Client) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {

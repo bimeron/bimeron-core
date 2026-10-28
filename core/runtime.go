@@ -15,6 +15,7 @@ import (
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
+	"bimeron/internal/ssplugin"
 	"bimeron/internal/trojan"
 	"bimeron/internal/tuic"
 	"bimeron/internal/vless"
@@ -107,7 +108,13 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	var tcp transport.StreamDialer
 	var udp transport.PacketListener
 	var closeTransport func() error
-	if p.Type == "socks5" {
+	if p.SSPlugin != nil {
+		client, clientErr := ssplugin.New(p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		tcp, closeTransport = client, client.Close
+	} else if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
 	} else if p.Type == "http" {
@@ -380,7 +387,13 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("invalid_tcp_transport", false)
 	}
 	var closeTransport func() error
-	if p.Type == "socks5" {
+	if p.SSPlugin != nil {
+		client, clientErr := ssplugin.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_tcp_transport", false)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "http" {
 		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}

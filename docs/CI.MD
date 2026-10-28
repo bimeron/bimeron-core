@@ -72,6 +72,45 @@ the prepared archives, checksums, and signed manifest before publication and
 requires successful tag CI. Its release notes link to the README at that tag
 and describe the package scope, including the excluded Apple NetworkExtension.
 
+## Shadowsocks v2ray-plugin reference checks
+
+The Linux test job downloads the original `v2ray-plugin` v1.5.0 release and
+verifies its pinned SHA-256 before extraction. It uses Xray v1.260327.0,
+already built outside the product module graph, as the Shadowsocks server.
+No plugin executable or V2Fly/Xray runtime is added to the distributed core.
+
+The mandatory interop step sets `BIMERON_REQUIRE_SSPLUGIN_INTEROP=1`, so missing
+reference binaries fail the step instead of silently skipping tests. It runs
+the plugin and Mux packages with the race detector. The matrix covers six
+Shadowsocks AEAD/2022 methods, WS/WSS, and Mux 0/1/8: 36 combinations. Additional
+tests exercise defaults, concurrency and connection reuse, a transfer over
+2 MB, reconnects, rejected TLS certificates/names, and incorrect WebSocket
+paths. Unit tests cover malformed Mux frames, per-session deadlines,
+slow-consumer isolation, setup cancellation, and runtime cleanup.
+
+To repeat the reference checks locally, provide the two executables from the
+same pinned versions used in [the workflow](../.github/workflows/go.yml).
+For a POSIX shell:
+
+```sh
+export BIMERON_V2RAY_PLUGIN_BIN=/absolute/path/to/v2ray-plugin
+export BIMERON_XRAY_BIN=/absolute/path/to/xray
+export BIMERON_REQUIRE_SSPLUGIN_INTEROP=1
+go test -race ./internal/ssplugin ./internal/v2raymux -count=1
+go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalPlugin$' -benchtime=20x -count=1
+```
+
+In PowerShell, set each environment variable using `$env:NAME = 'C:/path/file.exe'`
+before running the same `go test` commands. Race testing needs a compatible
+C compiler. Without reference variables, ordinary local tests skip only the
+external interop cases; they still run the in-process transport and Mux tests.
+
+The benchmark measures loopback session setup/reuse and a 32 KiB echo transfer
+through WSS and Mux. It is a smoke benchmark, not a claim about Internet
+throughput. All test credentials, certificates, and endpoints are synthetic
+and local. A successful local run does not replace a successful hosted CI run
+or testing a real VPN deployment.
+
 ## Proposed test and build workflow
 
 Additional jobs could cover:

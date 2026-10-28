@@ -30,28 +30,34 @@ func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer
 	return OutlineProfile(accesskey.Profile{TCP: e}, dialer)
 }
 
-// OutlineProfile creates an encrypted stream, including the optional wrapper.
-// Wrapped profiles deliberately have no native UDP transport.
+// OutlineProfile preserves ShadowTLS wrapping without duplicating encryption.
 func OutlineProfile(p accesskey.Profile, dialer net.Dialer) (transport.StreamDialer, error) {
 	if err := p.ValidateShadowTLS(); err != nil {
 		return nil, err
 	}
-	e := p.TCP
+	if p.SSPlugin != nil {
+		return nil, fmt.Errorf("Shadowsocks plugin requires the embedded plugin client")
+	}
+	if p.ShadowTLS == nil && ss2022.IsMethod(p.TCP.Cipher) {
+		return ss2022.New(p.TCP, dialer)
+	}
+	endpoint := streamtransport.Endpoint(net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port)), dialer, p.ShadowTLS, nil)
+	return OutlineStream(p.TCP, endpoint)
+}
+
+// OutlineStream preserves cipher and prefix behavior over a supplied transport.
+func OutlineStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (transport.StreamDialer, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 	if ss2022.IsMethod(e.Cipher) {
-		if p.ShadowTLS != nil {
-			endpoint := streamtransport.Endpoint(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer, p.ShadowTLS, nil)
-			return ss2022.NewWithEndpoint(e, dialer, endpoint)
-		}
-		return ss2022.New(e, dialer)
+		return ss2022.NewWithEndpoint(e, net.Dialer{}, endpoint)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("could not create encryption key")
 	}
-	d, err := shadowsocks.NewStreamDialer(streamtransport.Endpoint(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer, p.ShadowTLS, nil), key)
+	d, err := shadowsocks.NewStreamDialer(endpoint, key)
 	if err != nil {
 		return nil, err
 	}

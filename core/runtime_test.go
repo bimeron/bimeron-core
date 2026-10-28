@@ -77,6 +77,20 @@ func TestResolveHTTPOnVPNPathHasOnlyTCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveShadowsocksPluginOnVPNPathKeepsHostAndNoUDP(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Resolve = func(context.Context) (Profile, error) {
+		return accesskey.ParseSS("ss://aes-256-gcm:secret@[::1]:443/?plugin=v2ray-plugin%3Btls%3Bhost%3Dws.example%3Bmux%3D8")
+	}
+	p, _, endpoints, err := resolveOnPath(t.Context(), cfg, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TCP.Host != "::1" || p.SSPlugin == nil || p.SSPlugin.Host != "ws.example" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" || endpoints.udpName != "" {
+		t.Fatalf("plugin transport endpoint or TLS host changed: %+v", endpoints)
+	}
+}
+
 func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
 	c := DefaultConfig()
 	c.Resolve = func(context.Context) (Profile, error) {

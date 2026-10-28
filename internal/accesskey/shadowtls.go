@@ -40,6 +40,9 @@ func (p Profile) ValidateShadowTLS() error {
 	if p.ShadowTLS == nil {
 		return nil
 	}
+	if p.SSPlugin != nil {
+		return fmt.Errorf("ShadowTLS cannot be combined with a Shadowsocks plugin")
+	}
 	if err := p.ShadowTLS.Validate(); err != nil {
 		return err
 	}
@@ -94,6 +97,6 @@ func shadowXHTTP(alpn string, options *XHTTPOptions) error {
 // TCPOnly identifies the profiles whose packet backend must use DNS-over-TCP
 // and drop other proxy-routed UDP rather than constructing a native fallback.
 func (p Profile) TCPOnly() bool {
-	return p.Type == "ssh" || p.Type == "http" || p.Type == "naive" ||
+	return p.SSPlugin != nil || p.Type == "ssh" || p.Type == "http" || p.Type == "naive" ||
 		(p.ShadowTLS != nil && (p.Type == "" || p.Type == "ss" || p.Type == "shadowsocks"))
 }

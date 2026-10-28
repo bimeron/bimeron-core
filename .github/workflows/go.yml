@@ -79,6 +79,19 @@ jobs:
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -count=1 -v
           go test ./internal/accesskey -run '^$' -fuzz '^FuzzSS2022Keys$' -fuzztime=5s
           go test ./internal/ss2022 -run '^$' -bench '^BenchmarkTCPIdentityHeaders$' -benchtime=100ms -count=1
+      - name: Install pinned original v2ray-plugin
+        run: |
+          curl --fail --location --retry 3 https://github.com/shadowsocks/v2ray-plugin/releases/download/v1.5.0/v2ray-plugin-linux-amd64-v1.5.0.tar.gz --output "$RUNNER_TEMP/v2ray-plugin.tar.gz"
+          echo "f326c48a0f91f8ab536a864c6a2dba6b587ea1df537b2c43af0bfb7922ed05c4  $RUNNER_TEMP/v2ray-plugin.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/v2ray-plugin.tar.gz" -C "$RUNNER_TEMP" v2ray-plugin_linux_amd64
+          test -x "$RUNNER_TEMP/v2ray-plugin_linux_amd64"
+          "$RUNNER_TEMP/v2ray-plugin_linux_amd64" -version
+      - name: Shadowsocks WebSocket TLS and Mux interoperability
+        env:
+          BIMERON_REQUIRE_SSPLUGIN_INTEROP: '1'
+        run: |
+          CGO_ENABLED=1 BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ssplugin ./internal/v2raymux -count=1 -v
+          BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalPlugin$' -benchtime=20x -count=1
       - name: ShadowTLS v3 interoperability with independent servers
         run: |
           curl --fail --location --silent --show-error https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl --output "$RUNNER_TEMP/shadow-tls"

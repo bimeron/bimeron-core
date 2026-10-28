@@ -83,7 +83,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 			continue
 		}
 		family := "ip4"
-		if p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
+		if p.SSPlugin != nil || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
