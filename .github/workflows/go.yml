@@ -41,6 +41,8 @@ jobs:
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
           go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXrayVMessAEAD$' -count=1 -v
+      - name: Trojan TCP and UDP interoperability with Xray
+        run: BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
       - name: Install Linux integration tools
         run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
       - name: Isolated Linux network integration
