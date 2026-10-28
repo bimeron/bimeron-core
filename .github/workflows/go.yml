@@ -99,13 +99,15 @@ jobs:
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/systemvpn
       - name: Check native IKEv2 ABI and profile guards without connecting
         run: go test ./internal/systemvpn -run 'Test(RASABI|Native|RejectUnsafeNativeProfiles)' -count=1 -v
+      - name: Check persistent Windows protection and DNS ownership
+        run: go test -race ./internal/killswitch ./internal/windowsnet
       - name: Validate IKEv2 example without network changes
         run: go run ./cmd/bimeron validate examples/ikev2-windows.conf
       - name: Check Windows 386 RAS layout
         env:
           GOARCH: '386'
           CGO_ENABLED: '0'
-        run: go test ./internal/systemvpn
+        run: go test ./internal/systemvpn ./internal/killswitch ./internal/windowsnet
 
   test-apple-unsigned:
     runs-on: macos-15

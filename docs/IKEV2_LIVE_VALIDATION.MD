@@ -149,7 +149,64 @@ and [Windows VPN routing](https://learn.microsoft.com/en-us/windows/security/ope
 
 ## Remaining checks
 
-Throughput/CPU measurements, broader leak coverage and protection design, actual laptop sleep
+Throughput/CPU measurements, broader protection/mobility coverage, actual laptop sleep
 and physical network changes, long-running mobility, RRAS and other Windows
 builds/policies remain separate validation. VM save/resume is not a substitute
 for physical power-management testing. See [the guide](IKEV2.MD) for the procedure.
+
+## Protected-mode follow-up
+
+The observations above describe unprotected configurations and motivated
+[ADR 0025](adr/0025-windows-ikev2-dns-and-traffic-protection.md). The same isolated
+Windows 10/strongSwan lab was then checked with `[IKEv2] KillSwitch = true`.
+This optional mode adds persistent WFP traffic protection and a tagged NRPT root
+policy. Older configurations without the setting retain their prior behavior.
+
+The first protected attempt exposed a missing two-byte alignment gap before
+`RASCONNSTATUS`'s tunnel endpoints. The total structure size was already correct,
+but the previously unused endpoint offsets were wrong. Offsets 564/584 are now
+checked explicitly. Another attempt showed that native RAS authorizes a System
+IP-in-IP carrier before IPsec wrapping; a peer-scoped carrier exception restored
+the data plane. No clear IP-in-IP carrier was observed at the captured boundary.
+
+The protection capture used all host components filtered by the VM MAC, with
+uncached tagged DNS, physically bound IPv4/IPv6 UDP and physical-interface TCP
+attempts to ports 53, 853 and 443. One UDP socket was opened before protection
+and reused afterward. A temporary documentation-prefix IPv6 source/default
+gateway existed only in the guest. This is an egress test, not public IPv6
+delivery. The capture held 19,773 duplicated stack observations with no reported
+lost events; it is not a count of unique wire packets.
+
+| Scenario | Verified result |
+| --- | --- |
+| Protected connected state | Internal IPv4/IPv6 HTTP and system DNS A/AAAA resolution succeeded. |
+| Physically bound new and pre-existing UDP | Tagged cleartext was visible before protection and after recovery, absent while protected. |
+| Physical TCP DNS, DoT and HTTPS | SYNs were visible in baseline/recovered stages, absent in protected stages. |
+| System DNS | Tagged queries reached the LAN resolver in baseline/recovered stages, not during connected/retained stages. |
+| Manual Windows disconnection | Engine ended with `ikev2_protection_retained_run_recover`; the owned DNS rule and persistent filtering remained. Direct IPv4/IPv6 canaries stayed absent. |
+| Restart with retained policy | Start refused with `ikev2_existing_kill_switch_requires_recovery`. |
+| Owner process termination | The native OS tunnel survived. After explicitly disconnecting it, DNS policy remained and direct canaries stayed absent until recovery. |
+| Explicit recovery | Owned NRPT/WFP policy was removed; positive direct-traffic controls appeared again. |
+| Graceful Stop | RAS disconnected, the owned DNS policy was removed and normal direct UDP returned. |
+| Modified owned DNS policy | Stop returned `ikev2_dns_cleanup_failed_run_recover`, preserved the modified rule and retained all 84 native WFP filters. Explicit recovery removed the owned policy. |
+| Foreign DNS policy | Protected startup refused before connection; the foreign rule remained unchanged. |
+| Cancellation during DNS installation | Two attempts cancelled at the DNS-protection stage, immediately and after 200 ms, both finished `disconnected` without cleanup errors. |
+| Repository opt-in lifecycle test | `TestWindowsIKEv2NativeLifecycle` passed with protected configuration in the interactive VM (1.92 s). |
+
+The cancellation checks exercised the bounded DNS mutation/rollback path rather
+than just pre-dial cancellation. Socket Send success alone was not used as proof
+of egress: transport-layer WFP drops can occur after a send is accepted. The
+conclusions rely on capture controls and persisted policy inspection.
+
+The final lab VPN is disconnected. Temporary guest routes/addresses, test DNS
+rules and scheduled tasks were removed. Route/DNS snapshots matched baseline;
+Packet Monitor was stopped and its owned filter removed. Raw evidence remains
+outside Git. No host firewall policy, network configuration, certificate store,
+server authentication material or unrelated RAS profile was changed.
+
+The protection boundary starts after native bootstrap and successful policy
+installation. DHCP/NDP, loopback and required native peer traffic are intentional
+exceptions. The checks do not establish protection during bootstrap/early boot,
+against privileged policy changes, across remote-peer changes, on other Windows
+builds or with RRAS. Public IPv6, physical mobility and long-running behavior
+still need the remaining validation matrix.

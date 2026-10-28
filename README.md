@@ -37,10 +37,11 @@ Git revision you are viewing. For a downloaded package, open its entry in
 
 An additional [experimental Windows IKEv2/IPsec backend](docs/IKEV2.MD) controls
 a pre-provisioned system profile. It requires an elevated foreground process,
-has no local SOCKS mode, and does not provide the packet backend's rules,
-kill switch or statistics. Initial [Windows 10/strongSwan checks](docs/IKEV2_LIVE_VALIDATION.MD)
+has no local SOCKS mode or packet routing rules/statistics. Optional native
+`[IKEv2] KillSwitch = true` enables persistent traffic protection and tunnel DNS.
+Initial [Windows 10/strongSwan checks](docs/IKEV2_LIVE_VALIDATION.MD)
 passed; profile-owned routes enabled internal IPv6 on Windows 10. Captures found
-DNS leakage to the LAN resolver; broader interoperability remains unverified.
+DNS leakage in unprotected mode; broader interoperability remains unverified.
 
 Support below applies to this source revision; check the tagged README for a release package.
 

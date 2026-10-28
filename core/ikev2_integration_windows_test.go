@@ -42,7 +42,7 @@ func TestWindowsIKEv2NativeLifecycle(t *testing.T) {
 	for {
 		status := e.Status()
 		if status.State == Connected {
-			if status.Session == nil || status.Session.Backend != "ikev2" || !e.Stats().Unavailable {
+			if status.Session == nil || status.Session.Backend != "ikev2" || !e.Stats().Unavailable || status.Session.KillSwitchRequested != cfg.IKEv2.KillSwitch {
 				t.Fatal("incorrect native session metadata")
 			}
 			break

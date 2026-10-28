@@ -1,6 +1,9 @@
 # ADR 0023: Native IKEv2/IPsec session backend
 
 Status: accepted for the experimental Windows milestone, October 28, 2026.
+Amended by [ADR 0025](0025-windows-ikev2-dns-and-traffic-protection.md) for explicit
+optional native DNS/WFP protection; the original unprotected lifecycle below
+remains the default when native `KillSwitch` is omitted.
 Tracks [issue #56](https://github.com/bimeron/bimeron-core/issues/56).
 
 ## Context

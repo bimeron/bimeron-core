@@ -50,7 +50,7 @@ func newSessionInfo(c SessionConfig) (*SessionInfo, error) {
 	}
 	ipv6 := "enable"
 	if c.IKEv2 != nil {
-		return &SessionInfo{ID: hex.EncodeToString(id[:]), ProfileID: profileID, ProfileName: string(name), Active: true, Mode: c.Mode, IPv6: "system", Backend: "ikev2", StatsUnavailable: true}, nil
+		return &SessionInfo{ID: hex.EncodeToString(id[:]), ProfileID: profileID, ProfileName: string(name), Active: true, Mode: c.Mode, IPv6: "system", Backend: "ikev2", StatsUnavailable: true, KillSwitchRequested: c.IKEv2.KillSwitch}, nil
 	}
 	if c.DisableIPv6 {
 		ipv6 = "disable"

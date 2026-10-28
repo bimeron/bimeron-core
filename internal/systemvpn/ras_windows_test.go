@@ -83,6 +83,9 @@ func TestRejectUnsafeNativeProfiles(t *testing.T) {
 }
 
 func TestRASABI(t *testing.T) {
+	if unsafe.Offsetof(rasStatus{}.LocalEndpoint) != 564 || unsafe.Offsetof(rasStatus{}.RemoteEndpoint) != 584 {
+		t.Fatal("incorrect tunnel endpoint alignment")
+	}
 	// Windows SDK ras.h: pack(4), Windows 10 structures, both pointer widths.
 	if unsafe.Sizeof(rasEntry{}) != 6724 || unsafe.Offsetof(rasEntry{}.VPNStrategy) != 4044 || unsafe.Offsetof(rasEntry{}.Options2) != 4048 {
 		t.Fatalf("RASENTRY layout: size=%d strategy=%d options2=%d", unsafe.Sizeof(rasEntry{}), unsafe.Offsetof(rasEntry{}.VPNStrategy), unsafe.Offsetof(rasEntry{}.Options2))

@@ -17,7 +17,7 @@ func ikev2TestConfig() SessionConfig {
 
 func TestIKEv2DoesNotInheritPacketCapabilities(t *testing.T) {
 	c := PlatformCapabilities().IKEv2
-	if c.Supported != (runtime.GOOS == "windows") || c.Proxy || c.IPSplit || c.DomainSplit || c.KillSwitch || c.Stats {
+	if c.Supported != (runtime.GOOS == "windows") || c.Proxy || c.IPSplit || c.DomainSplit || c.Stats || c.KillSwitch != c.Supported || c.DNSProtection != c.Supported {
 		t.Fatal(c)
 	}
 	if c.Supported && (!c.ForegroundOnly || !c.PreconfiguredProfile || !c.AdministratorRequired) {
@@ -26,6 +26,12 @@ func TestIKEv2DoesNotInheritPacketCapabilities(t *testing.T) {
 }
 
 func TestIKEv2SessionConfigValidation(t *testing.T) {
+	protected := ikev2TestConfig()
+	protected.IKEv2.KillSwitch = true
+	info, err := newSessionInfo(protected)
+	if err != nil || !info.KillSwitchRequested || protected.validate() != nil {
+		t.Fatal(info, err)
+	}
 	if err := ikev2TestConfig().validate(); err != nil {
 		t.Fatal(err)
 	}

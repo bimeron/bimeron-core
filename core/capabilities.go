@@ -30,6 +30,7 @@ type IKEv2Capabilities struct {
 	IPSplit               bool `json:"ip_split"`
 	DomainSplit           bool `json:"domain_split"`
 	KillSwitch            bool `json:"kill_switch"`
+	DNSProtection         bool `json:"dns_protection"`
 	Stats                 bool `json:"stats"`
 }
 
@@ -39,7 +40,7 @@ type IKEv2Capabilities struct {
 func PlatformCapabilities() Capabilities {
 	c := Capabilities{Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true}
 	if runtime.GOOS == "windows" {
-		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true}
+		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}
 	switch runtime.GOOS {
 	case "windows", "linux":

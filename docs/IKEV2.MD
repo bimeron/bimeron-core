@@ -5,8 +5,9 @@ native RAS APIs. Windows owns IPsec, credentials, certificates, routes and DNS.
 This backend bypasses Wintun and the Go packet stack. An initial
 [Windows 10/strongSwan live run](IKEV2_LIVE_VALIDATION.MD) verified IPv4 traffic,
 certificate rejection, cancellation and rekey. A follow-up verified internal
-IPv6 with profile-owned routes and found DNS leakage to the LAN resolver.
-RRAS remains unverified; leak prevention is not provided. Other platforms are not
+IPv6 with profile-owned routes and found DNS leakage in unprotected mode.
+Optional native traffic/DNS protection is described below. RRAS remains
+unverified. Other platforms are not
 implemented yet; see [ADR 0023](adr/0023-native-ikev2-system-vpn.md).
 
 ## Prepare the profile
@@ -56,15 +57,16 @@ and [Microsoft's route cmdlet](https://learn.microsoft.com/en-us/powershell/modu
 
 ### DNS and traffic exposure
 
-An active connection is not a leak-prevention boundary. A packet capture found
+Without native protection, an active connection is not a leak-prevention boundary. A packet capture found
 a system DNS query leaving the VM toward its LAN resolver while the VPN was
 connected. Default routes do not remove more-specific local routes or prevent
 Windows resolver fallback. Ordinary IPv4/IPv6 traffic can leave outside the VPN
-before connection and after disconnection. There is no native-backend kill switch.
+before connection and after disconnection. Enable the native protection setting
+below when this behavior is unacceptable.
 
-Administrators must provide an appropriate Windows DNS policy if private names
+For unprotected sessions, administrators must provide an appropriate Windows DNS policy if private names
 must not reach other resolvers. A temporary NRPT rule for the isolated lab's
-namespace was tested separately; it is not installed or managed by Bimeron.
+namespace was tested separately. Unprotected sessions do not install DNS policy.
 Namespace rules do not block arbitrary DNS/DoH from applications and do not
 provide general traffic protection. See [Windows VPN name resolution](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution)
 and the [capture results](IKEV2_LIVE_VALIDATION.MD).
@@ -85,6 +87,7 @@ Name = Corporate IKEv2
 [IKEv2]
 WindowsProfile = Corporate VPN
 ServerName = vpn.example.com
+KillSwitch = true
 
 [Interface]
 Mode = vpn
@@ -104,9 +107,51 @@ existing RAS connection. After a crash, disconnect any remaining tunnel in
 Windows before retrying. Bimeron does not adopt stale connections or delete
 profiles. Do not edit or independently connect the profile during use.
 
-`connected` means RAS readiness, not a public Internet probe. Windows owns
+`connected` means RAS readiness and, when requested, completed protection setup;
+it is not a public Internet probe. Windows owns
 mobility and rekey. Manual disconnection or loss of the native session ends
 the Bimeron session without Engine redial.
+
+## Native traffic and DNS protection
+
+Set `KillSwitch = true` in **`[IKEv2]`**, or set `IKEv2Config.KillSwitch` through
+the API. It defaults to false for existing configurations. This enables a full
+system-wide IPv4/IPv6 WFP guard and an owned NRPT root policy using the connected
+VPN's DNS servers. `[Interface] KillSwitch` remains a packet-only setting and is
+rejected for native profiles.
+
+Initial RAS bootstrap, including server-name resolution/authentication, is
+unprotected. Wait for `ikev2_protection_active` and `connected`: protected
+readiness is not reported until WFP and DNS setup succeed. Missing native
+interface/DNS/peer information or conflicting local/effective NRPT policies
+causes protected startup to fail. Existing corporate DNS policy is preserved.
+
+The guard permits the VPN interface, loopback, DHCP/NDP and native IKE/IPsec
+exchange with the observed VPN peer. It blocks ordinary LAN access and direct
+physical-interface DNS, DoT, HTTPS/DoH and other application traffic. Application
+DNS/DoH can still use destinations reachable through the VPN. There is no blanket
+Bimeron-process exception. A change to a different remote VPN peer can interrupt
+connectivity; it is not silently added to firewall permits.
+
+Ctrl+C performs ordered cleanup: disconnect RAS, remove owned DNS policy/flush
+cache, then remove WFP protection. Caller cancellation waits for bounded DNS
+mutation to finish before rollback. Unexpected disconnection, a process crash or
+failed cleanup retains persistent policy and can leave the machine offline.
+Starting another session will refuse retained protection. Restore connectivity
+explicitly from an elevated terminal after stopping the owner:
+
+```powershell
+bimeron.exe recover
+```
+
+If a native OS tunnel survived the crash, disconnect that profile explicitly in
+Windows as well. Recovery removes only owned policy; it does not adopt or
+disconnect another profile. A modified owned DNS rule causes automatic cleanup
+to refuse and keep WFP protection until explicit recovery. Protection is not
+claimed before activation, during early boot before BFE, or against a privileged
+process changing Windows network/security policy. See
+[ADR 0025](adr/0025-windows-ikev2-dns-and-traffic-protection.md) and the
+[protected live checks](IKEV2_LIVE_VALIDATION.MD).
 
 ## Configuration and capabilities
 
@@ -115,17 +160,19 @@ Only `Mode = vpn` is allowed in `[Interface]`; omit every other interface
 option, including explicit defaults. `[Routing] Default = proxy` is allowed,
 but all rules and other defaults are rejected.
 
-- No local SOCKS mode, upstream `check`, IP/domain/application rules, core kill
-  switch, DNS/MTU overrides or IPv6 disabling.
+- No local SOCKS mode, upstream `check`, IP/domain/application rules,
+  DNS/MTU overrides or IPv6 disabling.
 - No daemon `start`: it returns `ikev2_requires_foreground_user_session`.
 - External packet-engine hosts reject system profiles.
 - Session metadata reports `backend: "ikev2"`, `ipv6: "system"` and
   `stats_unavailable: true`; `Stats()` reports `unavailable: true`.
 - Read `capabilities.ikev2`; top-level flags retain their packet-backend meaning.
   `ikev2.supported` means compiled support, not runtime/profile availability.
+- `ikev2.kill_switch` and `ikev2.dns_protection` describe optional native protection;
+  `kill_switch_requested` is intent, with activation reported separately.
 
-Default-route flags do not prove absence of DNS or IPv6 leaks. No leak-prevention
-guarantee is advertised. Retained Bimeron kill-switch protection prevents startup
+Default-route flags alone do not prove absence of DNS or IPv6 leaks. Retained
+Bimeron kill-switch protection prevents startup
 until explicitly recovered using the existing recovery procedure.
 
 Common codes include `administrator_required`, `ikev2_windows_profile_not_found`,

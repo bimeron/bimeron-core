@@ -205,6 +205,11 @@ func parse(b []byte) (*File, error) {
 				c.IKEv2.WindowsProfile = value
 			case "ServerName":
 				c.IKEv2.ServerName = value
+			case "KillSwitch":
+				if value != "true" && value != "false" {
+					return nil, fmt.Errorf("IKEv2 KillSwitch must be true or false")
+				}
+				c.IKEv2.KillSwitch = value == "true"
 			default:
 				recognized = false
 			}

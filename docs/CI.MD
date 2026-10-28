@@ -48,7 +48,9 @@ and describe the package scope, including the excluded Apple NetworkExtension.
 Native IKEv2 configuration and lifecycle tests run through the normal suite.
 Linux and Windows race checks include `internal/systemvpn`. Windows also runs
 explicit RAS ABI/profile-guard/read-only API tests, validates the example without
-network changes, and tests the RAS layout under GOARCH=386. Distribution builds
+network changes, and tests RAS/WFP/DNS ownership under GOARCH=386. Dedicated
+Windows race checks cover persistent filter and native DNS-policy tests without
+installing real protection. Distribution builds
 cover the Windows ARM64 implementation.
 
 CI must leave `BIMERON_IKEV2_TEST_CONFIG` unset: the live native lifecycle test

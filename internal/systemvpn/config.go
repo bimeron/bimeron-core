@@ -15,6 +15,7 @@ import (
 type Config struct {
 	WindowsProfile string
 	ServerName     string
+	KillSwitch     bool
 }
 
 var dnsLabel = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)

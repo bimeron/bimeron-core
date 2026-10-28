@@ -62,3 +62,15 @@ func TestIKEv2RejectsUnsupportedSettingsBeforeStart(t *testing.T) {
 		}
 	}
 }
+
+func TestIKEv2NativeProtectionIsExplicit(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		c, err := ParseData([]byte(ikev2Config + "KillSwitch = " + value + "\n"))
+		if err != nil || c.IKEv2.KillSwitch != (value == "true") || c.Tunnel.KillSwitch {
+			t.Fatal(c, err)
+		}
+	}
+	if _, err := ParseData([]byte(ikev2Config + "KillSwitch = yes\n")); err == nil {
+		t.Fatal("ambiguous protection setting accepted")
+	}
+}

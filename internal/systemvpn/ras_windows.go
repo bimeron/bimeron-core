@@ -4,7 +4,9 @@ package systemvpn
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"net/netip"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,6 +56,14 @@ func (p *packedPointer) set(v uintptr) {
 	if len(words) == 2 {
 		words[1] = uint32(uint64(v) >> 32)
 	}
+}
+
+func (p packedPointer) get() uintptr {
+	v := uint64(p[0])
+	if len(p) == 2 {
+		v |= uint64(p[len(p)-1]) << 32
+	}
+	return uintptr(v)
 }
 
 type rasEntry struct {
@@ -133,6 +143,7 @@ type rasStatus struct {
 	Size, State, Error            uint32
 	DeviceType                    [17]uint16
 	DeviceName, PhoneNumber       [129]uint16
+	_                             [2]byte // RASTUNNELENDPOINT is DWORD-aligned.
 	LocalEndpoint, RemoteEndpoint [20]byte
 	Substate                      uint32
 }
@@ -162,6 +173,31 @@ func (a *rasAttempt) invalidStatus() (connectionState, error) {
 type windowsDriver struct {
 	phonebook string
 	attempt   *rasAttempt
+}
+
+// ProtectionEndpoint binds the firewall exception to this dial's current peer.
+// Alternate server endpoints/MOBIKE redirects are not implicitly permitted.
+func (s *Session) ProtectionEndpoint() (netip.Addr, error) {
+	connections := make([]rasConnection, 1)
+	connections[0].Size = uint32(unsafe.Sizeof(connections[0]))
+	size, count := uint32(unsafe.Sizeof(connections[0])), uint32(0)
+	code, _, _ := rasEnumConnections.Call(uintptr(unsafe.Pointer(&connections[0])), uintptr(unsafe.Pointer(&size)), uintptr(unsafe.Pointer(&count)))
+	if code != 0 || count != 1 || connections[0].Handle.get() != s.handle {
+		return netip.Addr{}, errors.New("ikev2_connection_ownership_changed")
+	}
+	status := rasStatus{Size: uint32(unsafe.Sizeof(rasStatus{}))}
+	code, _, _ = rasGetConnectStatus.Call(s.handle, uintptr(unsafe.Pointer(&status)))
+	if code != 0 || status.State != stateConnected || status.Error != 0 {
+		return netip.Addr{}, errors.New("ikev2_connection_not_ready")
+	}
+	switch binary.LittleEndian.Uint32(status.RemoteEndpoint[:4]) {
+	case 1:
+		return netip.AddrFrom4([4]byte(status.RemoteEndpoint[4:8])), nil
+	case 2:
+		return netip.AddrFrom16([16]byte(status.RemoteEndpoint[4:20])), nil
+	default:
+		return netip.Addr{}, errors.New("ikev2_endpoint_unavailable")
+	}
 }
 
 // Open uses only the current user's phonebook and saved EAP credentials.
