@@ -73,8 +73,12 @@ jobs:
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXray(VMessAEAD|VLESSGRPC)$' -count=1 -v
       - name: Trojan TCP, WebSocket, and gRPC interoperability with Xray
         run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
-      - name: Shadowsocks 2022 interoperability with Xray
-        run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -run '^TestXrayInterop$' -count=1 -v
+      - name: Shadowsocks 2022 SIP022 and SIP023 interoperability with Xray
+        run: |
+          test -x "$RUNNER_TEMP/xray"
+          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -count=1 -v
+          go test ./internal/accesskey -run '^$' -fuzz '^FuzzSS2022Keys$' -fuzztime=5s
+          go test ./internal/ss2022 -run '^$' -bench '^BenchmarkTCPIdentityHeaders$' -benchtime=100ms -count=1
       - name: ShadowTLS v3 interoperability with independent servers
         run: |
           curl --fail --location --silent --show-error https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl --output "$RUNNER_TEMP/shadow-tls"

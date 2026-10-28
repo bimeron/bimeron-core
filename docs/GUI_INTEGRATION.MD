@@ -513,6 +513,11 @@ alias is accepted), plus `Server`, `Port`, `Method`, and `Password`; `Prefix`
 is optional. `Type` is required for all explicit parameter groups. An SS or
 SSConf link still uses `SS`, `SSConf`, or `Key` without `Type`. Do not infer
 `shadowsocks` when `Type` is missing.
+For SS2022 AES methods, preserve `Password` as a complete SIP023 chain
+`iPSK0:iPSK1:...:uPSK`, including every colon and base64 padding character.
+The final key is the user key; preceding keys identify successive layers.
+Each key has the method-specific length. ChaCha20 accepts a single key only.
+The chain remains a secret and must not appear in logs or validation errors.
 
 Run `bimeron validate <config-file>` for syntax and field checks without
 network access or system changes. `bimeron check -config <config-file>` tests
