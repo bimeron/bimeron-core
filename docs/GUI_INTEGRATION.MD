@@ -407,6 +407,13 @@ silently dropping them. The core supports TCP and UDP through Trojan in VPN
 mode; the local SOCKS5 proxy listener remains TCP only. Never display the
 password in status or diagnostics.
 
+Offer `Network = tcp|ws|grpc` with TLS. WS uses `WSPath` and `WSHost`;
+gRPC uses required `GRPCServiceName`, optional `GRPCAuthority`, and
+`GRPCMultiMode`. `ALPN` defaults to `http/1.1` for WS and `h2` for gRPC.
+Keep SNI (`ServerName`) separate from HTTP Host/authority. Do not expose
+REALITY, early data, custom gRPC paths, or insecure TLS for Trojan. See
+[Trojan transport compatibility](TROJAN_TRANSPORTS.MD).
+
 ### Hysteria2 profile editor
 
 Write one `Hysteria2 = hysteria2://server:port?auth=replace-me&sni=name&insecure=0&alpn=h3`,
