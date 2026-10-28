@@ -50,6 +50,9 @@ func check(args []string) error {
 		return err
 	}
 	var tcp transport.StreamDialer
+	if err := p.ValidateShadowTLS(); err != nil {
+		return err
+	}
 	var udp transport.PacketListener
 	if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
@@ -106,13 +109,15 @@ func check(args []string) error {
 		defer client.Close()
 		tcp = client
 	} else {
-		tcp, err = proxy.Outline(p.TCP)
+		tcp, err = proxy.OutlineProfile(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
 		}
-		udp, err = proxy.OutlineUDP(p.UDP, net.Dialer{})
-		if err != nil {
-			return err
+		if !p.TCPOnly() {
+			udp, err = proxy.OutlineUDP(p.UDP, net.Dialer{})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if p.Type == "ssh" || p.Type == "naive" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
@@ -127,6 +132,10 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	if p.TCPOnly() {
+		fmt.Printf("TCP/TLS and DNS-over-TCP checks passed. Proxy IP: %s\n", address)
+	} else {
+		fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	}
 	return nil
 }

@@ -95,6 +95,10 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	// Capture values and the resolved key source, so subsequent caller mutations
 	// of the configuration cannot change a running session.
 	copy := *c
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		copy.ShadowTLS = &settings
+	}
 	p, err := routing.Compile(copy.Routing)
 	if err != nil {
 		return SessionConfig{}, err

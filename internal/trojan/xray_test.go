@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 )
 
 // TestXrayTrojanInterop uses an independent Trojan server. Set BIMERON_XRAY_BIN to run it.
@@ -113,7 +114,9 @@ func TestXrayTrojanInterop(t *testing.T) {
 	defer func() { cancel(); _ = cmd.Wait() }()
 	root := x509.NewCertPool()
 	root.AppendCertsFromPEM(certPEM)
-	client, err := New(accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost"}}, net.Dialer{Timeout: 2 * time.Second})
+	profile := accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost"}}
+	root = testutil.MaybeShadowTLS(t, &profile, root)
+	client, err := New(profile, net.Dialer{Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/streamtransport"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
@@ -155,7 +156,7 @@ func (c *Client) xhttpDownloadClient(d *accesskey.XHTTPDownloadSettings) (*Clien
 	}
 	key, _ := base64.RawURLEncoding.DecodeString(d.PublicKey)
 	sid, _ := hex.DecodeString(d.ShortID)
-	client := &Client{endpoint: accesskey.Endpoint{Host: address, Port: d.Port}, settings: settings, publicKey: key, shortID: sid, dialer: c.dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
+	client := &Client{endpoint: accesskey.Endpoint{Host: address, Port: d.Port}, settings: settings, publicKey: key, shortID: sid, dialer: c.dialer, shadowTLS: c.shadowTLS, rootCAs: c.rootCAs, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
 	c.xhttpDownload = client
 	return client, nil
 }
@@ -216,15 +217,15 @@ func (c *Client) xhttpClientTransport() (http.RoundTripper, error) {
 
 func (c *Client) xhttpDial(ctx context.Context) (net.Conn, error) {
 	address := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
-	raw, err := c.dialer.DialContext(ctx, "tcp", address)
+	dialer := c.dialer
+	if options := c.settings.XHTTPOptions; options != nil && options.Xmux != nil && options.Xmux.HKeepAlivePeriod > 0 {
+		period := time.Duration(options.Xmux.HKeepAlivePeriod) * time.Second
+		dialer.KeepAliveConfig.Enable = true
+		dialer.KeepAliveConfig.Idle, dialer.KeepAliveConfig.Interval = period, period
+	}
+	raw, err := streamtransport.Dial(ctx, dialer, address, c.shadowTLS, c.rootCAs)
 	if err != nil {
 		return nil, err
-	}
-	if options := c.settings.XHTTPOptions; options != nil && options.Xmux != nil && options.Xmux.HKeepAlivePeriod > 0 {
-		if tcp, ok := raw.(*net.TCPConn); ok {
-			_ = tcp.SetKeepAlive(true)
-			_ = tcp.SetKeepAlivePeriod(time.Duration(options.Xmux.HKeepAlivePeriod) * time.Second)
-		}
 	}
 	var secure net.Conn
 	if c.settings.Security == "reality" {

@@ -29,6 +29,7 @@ type Client struct {
 	id          [16]byte
 	dialer      net.Dialer
 	rootCAs     *x509.CertPool
+	shadowTLS   *accesskey.ShadowTLS
 	rootsOnce   sync.Once
 	httpStream  *vless.Client
 	mu          sync.Mutex
@@ -41,6 +42,9 @@ var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "vmess" {
 		return nil, fmt.Errorf("expected VMess profile")
 	}
@@ -52,13 +56,13 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid VMess user ID")
 	}
-	c := &Client{endpoint: profile.TCP, settings: profile.VMess, dialer: dialer, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
+	c := &Client{endpoint: profile.TCP, settings: profile.VMess, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
 	if profile.VMess.Network == "grpc" || profile.VMess.Network == "xhttp" || profile.VMess.TLS == "reality" {
 		v := accesskey.VLESS{ID: profile.VMess.ID, Network: profile.VMess.Network, Security: profile.VMess.TLS, Encryption: "none", ServerName: profile.VMess.ServerName, Fingerprint: profile.VMess.Fingerprint, ALPN: profile.VMess.ALPN,
 			PublicKey: profile.VMess.PublicKey, ShortID: profile.VMess.ShortID, SpiderX: profile.VMess.SpiderX,
 			GRPCServiceName: profile.VMess.GRPCServiceName, GRPCAuthority: profile.VMess.GRPCAuthority, GRPCMultiMode: profile.VMess.GRPCMultiMode,
 			XHTTPPath: profile.VMess.XHTTPPath, XHTTPHost: profile.VMess.XHTTPHost, XHTTPMode: profile.VMess.XHTTPMode, XHTTPOptions: profile.VMess.XHTTPOptions}
-		transportProfile := accesskey.Profile{Type: "vless", TCP: profile.TCP, VLESS: v}
+		transportProfile := accesskey.Profile{Type: "vless", TCP: profile.TCP, VLESS: v, ShadowTLS: profile.ShadowTLS}
 		c.httpStream, err = vless.New(transportProfile, dialer)
 		if err != nil {
 			return nil, fmt.Errorf("invalid VMess HTTP transport: %w", err)
@@ -136,7 +140,7 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := c.dialer.DialContext(setup, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+	raw, err := streamtransport.Dial(setup, c.dialer, net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), c.shadowTLS, c.rootCAs)
 	if err != nil {
 		return nil, fmt.Errorf("VMess server unavailable")
 	}

@@ -3,7 +3,6 @@ package trojan
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
 )
 
@@ -23,6 +23,7 @@ type Client struct {
 	password    [56]byte
 	dialer      net.Dialer
 	rootCAs     *x509.CertPool
+	shadowTLS   *accesskey.ShadowTLS
 	mu          sync.Mutex
 	closed      bool
 	connections map[*conn]struct{}
@@ -32,13 +33,16 @@ var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "trojan" {
 		return nil, fmt.Errorf("expected Trojan profile")
 	}
 	if err := profile.Trojan.Validate(profile.TCP.Host, profile.TCP.Port); err != nil {
 		return nil, err
 	}
-	c := &Client{endpoint: profile.TCP, serverName: profile.Trojan.ServerName, dialer: dialer, connections: make(map[*conn]struct{})}
+	c := &Client{endpoint: profile.TCP, serverName: profile.Trojan.ServerName, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*conn]struct{})}
 	hash := sha256.Sum224([]byte(profile.Trojan.Password))
 	hex.Encode(c.password[:], hash[:])
 	return c, nil
@@ -52,8 +56,14 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*conn, 
 	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	endpoint := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
-	tlsDialer := tls.Dialer{NetDialer: &c.dialer, Config: &tls.Config{ServerName: c.serverName, MinVersion: tls.VersionTLS12, RootCAs: c.rootCAs}}
-	raw, err := tlsDialer.DialContext(setup, "tcp", endpoint)
+	raw, err := streamtransport.Dial(setup, c.dialer, endpoint, c.shadowTLS, c.rootCAs)
+	if err == nil {
+		conn, handshakeErr := streamtransport.TLS(setup, raw, c.serverName, nil, "", c.rootCAs)
+		if handshakeErr != nil {
+			_ = raw.Close()
+		}
+		raw, err = conn, handshakeErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("Trojan TLS connection failed: %w", err)
 	}

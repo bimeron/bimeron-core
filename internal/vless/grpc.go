@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/streamtransport"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
@@ -134,7 +136,7 @@ func (c *Client) grpcClient() (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithAuthority(name),
 		grpc.WithContextDialer(func(dialCtx context.Context, _ string) (net.Conn, error) {
-			raw, err := c.dialer.DialContext(dialCtx, "tcp", address)
+			raw, err := streamtransport.Dial(dialCtx, c.dialer, address, c.shadowTLS, c.rootCAs)
 			if err != nil {
 				return nil, err
 			}

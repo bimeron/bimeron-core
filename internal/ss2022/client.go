@@ -24,13 +24,24 @@ import (
 const subkeyContext = "shadowsocks 2022 session subkey"
 
 type Client struct {
-	method string
-	key    []byte
-	server string
-	dialer net.Dialer
+	method     string
+	key        []byte
+	server     string
+	dialer     net.Dialer
+	endpoint   transport.StreamEndpoint
+	streamOnly bool
 }
 
 func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
+	c, err := NewWithEndpoint(e, dialer, &transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer})
+	if err == nil {
+		c.streamOnly = false
+	}
+	return c, err
+}
+
+// NewWithEndpoint uses a custom stream endpoint without enabling native UDP.
+func NewWithEndpoint(e accesskey.Endpoint, dialer net.Dialer, endpoint transport.StreamEndpoint) (*Client, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
@@ -38,7 +49,10 @@ func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
 		return nil, fmt.Errorf("not a Shadowsocks 2022 method")
 	}
 	key, _ := base64.StdEncoding.Strict().DecodeString(e.Secret)
-	return &Client{e.Cipher, key, net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer}, nil
+	if endpoint == nil {
+		return nil, fmt.Errorf("missing Shadowsocks stream endpoint")
+	}
+	return &Client{method: e.Cipher, key: key, server: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer: dialer, endpoint: endpoint, streamOnly: true}, nil
 }
 
 func IsMethod(method string) bool {
@@ -159,7 +173,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	if err != nil {
 		return nil, err
 	}
-	conn, err := c.dialer.DialContext(ctx, "tcp", c.server)
+	conn, err := c.endpoint.ConnectStream(ctx)
 	if err != nil {
 		return nil, err
 	}
