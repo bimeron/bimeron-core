@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, `trojan://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -73,6 +73,10 @@ cipher, and password come from the key. Plain parameters, base64-encoded
 credentials, and legacy keys with the entire connection portion base64-encoded
 are supported. The `#...` fragment is retained as the key label.
 The `outline` and `prefix` options are supported; unknown options are rejected.
+Shadowsocks 2022 keys use a base64-encoded fixed-length key as the password.
+Use base64-encoded `method:key` credentials in an `ss://` URI so characters
+such as `/` and `+` are preserved. The `prefix` option is not supported with
+2022 methods.
 
 ### Inline dynamic key
 
@@ -120,6 +124,24 @@ must either both be present or both absent. Percent-encode reserved characters
 in credentials (for example `@` as `%40`). This is Bimeron's import syntax;
 SOCKS5 does not define a universal profile-link format. Credentials are stored
 as plaintext in the configuration file.
+
+### Remote HTTP CONNECT proxy
+
+```ini
+[AccessKey]
+HTTP = http://alice:secret@proxy.example.com:8080
+```
+
+Use `http://proxy.example.com:8080` without authentication. `Key` and `File`
+also accept this URI. Alternatively, use `Type = http`, `Server`, `Port`, and
+optional paired `Username` and `Password` fields. The URI requires a host and
+port and permits no path, query, or fragment. Percent-encode reserved credential
+characters. Basic credentials and traffic to the proxy are sent without TLS;
+use only a trusted network. `https://` proxy connections are not supported.
+
+HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
+other proxied UDP is dropped. Direct routing rules still use the physical
+network. In `Mode = proxy`, the local listener remains SOCKS5.
 
 ### Inline VLESS URI
 
@@ -349,9 +371,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
 `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`,
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
@@ -373,12 +395,16 @@ Password = replace-me
 | `Type` | Required for explicit parameters | `shadowsocks` (preferred) or its `ss` alias. |
 | `Server` | Required for the explicit group | Server name or IP address. The current system VPN requires the endpoint to resolve to IPv4. |
 | `Port` | Required for the explicit group | Server port, an integer from `1` to `65535`. |
-| `Method` | Required for the explicit group | Cipher: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`, or `aes-256-gcm`. |
-| `Password` | Required for the explicit group | Nonempty server password. |
-| `Prefix` | Optional; empty string | Shadowsocks salt prefix for disguising the connection. Changes the wire protocol; use only with the appropriate server configuration. |
+| `Method` | Required for the explicit group | Cipher: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`, `aes-256-gcm`, `2022-blake3-aes-128-gcm`, `2022-blake3-aes-256-gcm`, or `2022-blake3-chacha20-poly1305`. |
+| `Password` | Required for the explicit group | Nonempty server password for older methods; a standard base64-encoded 16-byte key for 2022 AES-128 or 32-byte key for 2022 AES-256/ChaCha20. |
+| `Prefix` | Optional; empty string | Shadowsocks salt prefix for older methods. It is rejected for 2022 methods. |
 
 The group uses identical settings for TCP and UDP. Use a dynamic key for separate
 endpoints. This group cannot be combined with other sources.
+Generate a fresh Shadowsocks 2022 key with `openssl rand -base64 16` or
+`openssl rand -base64 32`, according to the selected method. The client supports
+single-user servers without extensible identity headers (EIH). TCP works in
+local proxy and VPN modes; UDP works in VPN mode.
 
 ### Alternative: explicit SOCKS5 parameters
 

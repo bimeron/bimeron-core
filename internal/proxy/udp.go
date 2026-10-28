@@ -1,11 +1,12 @@
 package proxy
 
 import (
+	"bimeron/internal/accesskey"
+	"bimeron/internal/ss2022"
 	"fmt"
 	"golang.getoutline.org/sdk/transport"
 	"golang.getoutline.org/sdk/transport/shadowsocks"
 	"net"
-	"bimeron/internal/accesskey"
 	"strconv"
 	"unicode/utf8"
 )
@@ -14,6 +15,13 @@ import (
 func OutlineUDP(e accesskey.Endpoint, dialer net.Dialer) (transport.PacketListener, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
+	}
+	if ss2022.IsMethod(e.Cipher) {
+		client, err := ss2022.New(e, dialer)
+		if err != nil {
+			return nil, err
+		}
+		return client.PacketListener(), nil
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {

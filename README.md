@@ -43,6 +43,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | Upstream | Transport | UDP in VPN mode |
 | --- | --- | --- |
 | Shadowsocks | TCP, UDP | Yes |
+| Shadowsocks 2022 | TCP, UDP | Yes |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP/TLS | Yes |
@@ -50,12 +51,14 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
 | Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
+| Remote HTTP CONNECT | TCP | No; DNS is forwarded over TCP |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
 and [SSH](docs/SSH.MD) for exact support. Connections to a remote SOCKS5 upstream are not
-encrypted by the core. Not every combination has passed live interoperability testing.
+encrypted by the core. HTTP CONNECT also uses plaintext transport and sends Basic credentials
+without encryption. Not every combination has passed live interoperability testing.
 
 ## Try a local proxy
 

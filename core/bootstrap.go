@@ -76,11 +76,11 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		download.ResolvedAddress = chosen.Unmap().String()
 	}
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
-		if p.Type == "ssh" {
+		if p.Type == "ssh" || (p.Type == "http" && ep == &p.UDP) {
 			continue
 		}
 		family := "ip4"
-		if p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "anytls" {
+		if p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "anytls" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
@@ -109,7 +109,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		tcp:     net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port)),
 		tcpName: domain(original.TCP.Host), udpName: domain(original.UDP.Host),
 	}
-	if p.Type != "ssh" {
+	if p.Type != "ssh" && p.Type != "http" {
 		endpoints.udp = net.JoinHostPort(p.UDP.Host, strconv.Itoa(p.UDP.Port))
 	}
 	return p, d, endpoints, nil
