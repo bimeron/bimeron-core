@@ -49,7 +49,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP, WebSocket, gRPC over TLS | Yes |
 | AnyTLS | TCP/TLS | UDP-over-TCP v2 |
-| NaiveProxy-compatible | HTTPS (HTTP/2 CONNECT) | No; DNS is forwarded over TCP |
+| NaiveProxy-compatible | HTTP/2 or HTTP/3 CONNECT with TLS | No; DNS is forwarded over TCP |
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
 | Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
@@ -64,7 +64,7 @@ Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
 and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
-claim Chromium-identical HTTP/2 behavior. Connections to a remote SOCKS5 upstream are not
+claim Chromium-identical TLS, HTTP/2, or QUIC behavior. Connections to a remote SOCKS5 upstream are not
 encrypted by the core. HTTP CONNECT accepts `https://` proxies with certificate and server-name
 verification. With `http://`, proxy traffic and Basic credentials use plaintext transport.
 Not every combination has passed live interoperability testing.

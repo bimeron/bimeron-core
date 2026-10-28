@@ -476,8 +476,8 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" && !strings.HasPrefix(c.Access.Trojan, "trojan://") {
 		return nil, fmt.Errorf("[AccessKey] Trojan must start with trojan://")
 	}
-	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") {
-		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https://")
+	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") && !strings.HasPrefix(c.Access.Naive, "naive+quic://") {
+		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https:// or naive+quic://")
 	}
 	if c.Access.Hysteria2 != "" && !strings.HasPrefix(c.Access.Hysteria2, "hysteria2://") && !strings.HasPrefix(c.Access.Hysteria2, "hy2://") {
 		return nil, fmt.Errorf("[AccessKey] Hysteria2 must start with hysteria2:// or hy2://")
@@ -775,7 +775,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "naive+https://") {
+	if strings.HasPrefix(c.key, "naive+https://") || strings.HasPrefix(c.key, "naive+quic://") {
 		p, err := accesskey.ParseNaive(c.key)
 		if err != nil {
 			return nil, err
@@ -824,7 +824,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, https://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, https://, vless://, vmess://, trojan://, naive+https://, naive+quic://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
