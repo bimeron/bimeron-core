@@ -144,6 +144,19 @@ func TestRejectMalformedResponses(t *testing.T) {
 	}
 }
 
+func TestTLSHandshakeEOFIsTruncation(t *testing.T) {
+	wire := serverHello([]byte("payload"))
+	// EOF at a complete record boundary is still truncation until the entire
+	// initial response (ServerHello, CCS, payload record) has been received.
+	for _, cut := range []int{0, 5, 96, 102} {
+		raw := &memoryConn{input: bytes.NewReader(wire[:cut])}
+		c := newTestConn(t, raw, "tls")
+		if _, err := io.ReadAll(c); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("EOF at handshake byte %d: %v", cut, err)
+		}
+	}
+}
+
 func TestHTTPWritesHeaderOnce(t *testing.T) {
 	for _, port := range []int{80, 8388} {
 		raw := &memoryConn{input: bytes.NewReader(nil), writeLimit: 3}
@@ -261,5 +274,29 @@ func TestCloseInterruptsBlockedReadAndWrite(t *testing.T) {
 			t.Fatal("close did not interrupt I/O")
 		}
 		peer.Close()
+	}
+}
+
+func TestReadDeadlineInterruptsIncompleteHandshake(t *testing.T) {
+	for _, mode := range []string{"http", "tls"} {
+		raw, peer := net.Pipe()
+		c := newTestConn(t, raw, mode)
+		prefix := []byte("HTTP/1.1 101 Switching Protocols\r\n")
+		if mode == "tls" {
+			prefix = serverHello(nil)[:96]
+		}
+		written := make(chan struct{})
+		go func() { _, _ = peer.Write(prefix); close(written) }()
+		if err := c.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.Read(make([]byte, 1))
+		var timeout net.Error
+		if !errors.As(err, &timeout) || !timeout.Timeout() {
+			t.Fatalf("%s handshake deadline: %v", mode, err)
+		}
+		c.Close()
+		peer.Close()
+		<-written
 	}
 }

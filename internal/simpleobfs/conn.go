@@ -71,6 +71,9 @@ func (c *Conn) Read(p []byte) (n int, err error) {
 		} else {
 			err = c.readTLSHello()
 		}
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		if err != nil {
 			return 0, err
 		}

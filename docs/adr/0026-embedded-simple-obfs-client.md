@@ -3,7 +3,7 @@
 Status: Accepted, October 28, 2026. The user authorized the embedded approach
 and staged implementation. Configuration and transport are implemented and
 verified locally. CI wiring, user documentation, and examples are present;
-hosted CI results and final review remain pending.
+final local review is complete. Hosted CI results remain pending.
 
 Tracking issue: [#61](https://github.com/bimeron/bimeron-core/issues/61).
 
@@ -65,6 +65,26 @@ The initial 10-iteration benchmark was about 0.72 MB/s for each mode through
 the original server and Xray on WSL. This measures the whole reference chain,
 including its TCP buffering and scheduling; it is not a client throughput
 ceiling or a performance guarantee.
+
+### Final local review
+
+The review found that EOF at a record boundary inside the initial TLS-shaped
+response could be reported as clean EOF. The reader now reports
+`io.ErrUnexpectedEOF` until the complete initial response is available. A
+regression test reproduces the previous failure and covers EOF before the
+first record body, after ServerHello, and after ChangeCipherSpec.
+
+Additional checks cover read deadlines during incomplete HTTP/TLS handshakes
+and the Core Engine's SOCKS5 proxy with simple-obfs HTTP, including shutdown
+of its established client connection. VPN bootstrap retains the camouflage
+host and has no proxied UDP endpoint. The shared VPN/CLI paths select the
+embedded client and DNS-over-TCP behavior; no separate UDP fallback is added.
+
+After the fix, the full test suite, vet, targeted race checks, compiled
+dependency notices, and both original-server interoperability matrices pass
+locally. No additional correctness findings remain from this review. Hosted
+CI, real packet-VPN deployments, and mobile-device validation are still
+outside the completed local checks. No branch push or pull request was made.
 
 ## Context and alternatives
 
