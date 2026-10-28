@@ -35,6 +35,18 @@ type networkPath struct {
 	refresh  func(context.Context) error
 }
 type link interface{ Close() error }
+
+func hysteria2Fault(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	var failure *hysteria2.Failure
+	if errors.As(err, &failure) {
+		return &stageError{code: failure.Code, retry: failure.Retry, stage: failure.Stage}
+	}
+	return fault("hysteria2_unknown", false)
+}
+
 type vpnBackend struct {
 	platform platform
 	metadata *vpn.DNSMetadata
@@ -117,7 +129,7 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	} else if p.Type == "hysteria2" {
 		client, clientErr := hysteria2.New(ctx, p, outbound)
 		if clientErr != nil {
-			return nil, nil, nil, nil, fault("invalid_udp_transport", true)
+			return nil, nil, nil, nil, hysteria2Fault(clientErr)
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else if p.Type == "ssh" {
@@ -370,7 +382,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	} else if p.Type == "hysteria2" {
 		client, clientErr := hysteria2.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
-			return nil, fault("invalid_udp_transport", true)
+			return nil, hysteria2Fault(clientErr)
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "ssh" {

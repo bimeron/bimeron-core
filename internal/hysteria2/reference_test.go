@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -55,6 +56,40 @@ func TestUnmodifiedReference(t *testing.T) {
 	endpoints := referenceServer(t)
 	for _, fp := range []string{"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146"} {
 		t.Run(fp, func(t *testing.T) { t.Parallel(); testUnmodifiedReference(t, endpoints, fp) })
+	}
+}
+
+func TestReferenceServerFailures(t *testing.T) {
+	endpoints := referenceServer(t)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(endpoints["certificate"])) {
+		t.Fatal("invalid fixture certificate")
+	}
+	for _, tc := range []struct {
+		name, server, password, code, stage string
+		roots                               *x509.CertPool
+	}{
+		{"tls", endpoints["server"], "fixture-pass", "hysteria2_tls_failed", "tls", x509.NewCertPool()},
+		{"authentication", endpoints["server"], "synthetic-secret", "hysteria2_auth_rejected", "authentication", roots},
+		{"udp_disabled", endpoints["udp_disabled_server"], "fixture-pass", "hysteria2_udp_disabled", "udp_capability", roots},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			uri := "hysteria2://" + tc.server + "?auth=" + tc.password + "&sni=localhost&insecure=0&alpn=h3"
+			p, err := accesskey.ParseHysteria2(uri)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = newClient(ctx, p, net.Dialer{}, tc.roots)
+			var failure *Failure
+			if !errors.As(err, &failure) || failure.Code != tc.code || failure.Stage != tc.stage || failure.Retry {
+				t.Fatalf("failure = %#v", err)
+			}
+			if strings.Contains(err.Error(), tc.password) || strings.Contains(err.Error(), uri) {
+				t.Fatal("credential or URI leaked")
+			}
+		})
 	}
 }
 func testUnmodifiedReference(t *testing.T, endpoints map[string]string, fp string) {

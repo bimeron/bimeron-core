@@ -3,9 +3,10 @@ package core
 import (
 	"context"
 	"errors"
-	"bimeron/internal/telemetry"
 	"sync"
 	"time"
+
+	"bimeron/internal/telemetry"
 )
 
 type State string
@@ -29,13 +30,15 @@ type Event struct {
 	Code, Message string
 	Attempt       int
 	LastError     string
+	ErrorStage    string `json:",omitempty"`
 }
 type Status struct {
-	Session   *SessionInfo `json:"Session,omitempty"`
-	State     State
-	Attempt   int
-	Since     time.Time
-	LastError string
+	Session    *SessionInfo `json:"Session,omitempty"`
+	State      State
+	Attempt    int
+	Since      time.Time
+	LastError  string
+	ErrorStage string `json:",omitempty"`
 }
 type Options struct{ RetryMin, RetryMax time.Duration }
 
@@ -54,10 +57,11 @@ type backend interface {
 type stageError struct {
 	code  string
 	retry bool
+	stage string
 }
 
 func (e *stageError) Error() string       { return e.code }
-func fault(code string, retry bool) error { return &stageError{code, retry} }
+func fault(code string, retry bool) error { return &stageError{code: code, retry: retry} }
 func retryable(err error) bool            { var e *stageError; return errors.As(err, &e) && e.retry }
 
 type Engine struct {
@@ -115,7 +119,7 @@ func (e *Engine) Status() Status {
 func (e *Engine) Events() <-chan Event { return e.events }
 func (e *Engine) emitLocked(code, message string) {
 	select {
-	case e.events <- Event{time.Now(), e.status.State, code, message, e.status.Attempt, e.status.LastError}:
+	case e.events <- Event{Time: time.Now(), State: e.status.State, Code: code, Message: message, Attempt: e.status.Attempt, LastError: e.status.LastError, ErrorStage: e.status.ErrorStage}:
 	default:
 	}
 }
@@ -136,8 +140,15 @@ func (e *Engine) transitionLocked(state State, err error) {
 	e.status.Since = time.Now()
 	if err != nil {
 		e.status.LastError = err.Error()
+		var staged *stageError
+		if errors.As(err, &staged) {
+			e.status.ErrorStage = staged.stage
+		} else {
+			e.status.ErrorStage = ""
+		}
 	} else if state == Connected || state == Disconnected {
 		e.status.LastError = ""
+		e.status.ErrorStage = ""
 	}
 	e.emitLocked("state", string(state))
 }

@@ -85,6 +85,9 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
 		if err != nil || len(ips) == 0 {
+			if p.Type == "hysteria2" {
+				return Profile{}, d, sessionEndpoints{}, &stageError{code: "hysteria2_network_failed", retry: true, stage: "endpoint_resolution"}
+			}
 			return Profile{}, d, sessionEndpoints{}, fault("endpoint_dns_failed", true)
 		}
 		chosen := ips[0]
