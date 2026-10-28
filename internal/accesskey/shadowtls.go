@@ -76,6 +76,9 @@ func (p Profile) ValidateShadowTLS() error {
 	case "anytls":
 		return p.AnyTLS.Validate(p.TCP.Host, p.TCP.Port)
 	case "naive":
+		if p.Naive.QUIC {
+			return fmt.Errorf("ShadowTLS does not support HTTP/3")
+		}
 		return p.Naive.Validate(p.TCP.Host, p.TCP.Port)
 	case "ssh":
 		if p.SSH.User == "" || p.TCP.Host == "" || p.TCP.Port < 1 || p.TCP.Port > 65535 {

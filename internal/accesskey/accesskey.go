@@ -776,7 +776,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "anytls://") {
 		return ParseAnyTLS(key)
 	}
-	if strings.HasPrefix(key, "naive+https://") {
+	if strings.HasPrefix(key, "naive+https://") || strings.HasPrefix(key, "naive+quic://") {
 		return ParseNaive(key)
 	}
 	if strings.HasPrefix(key, "ssh://") {

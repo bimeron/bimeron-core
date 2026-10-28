@@ -108,16 +108,20 @@ func TestResolveSimpleObfsOnVPNPathKeepsHostAndNoUDP(t *testing.T) {
 }
 
 func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
-	c := DefaultConfig()
-	c.Resolve = func(context.Context) (Profile, error) {
-		return accesskey.ParseNaive("naive+https://user:pass@[::1]:443?sni=example.com")
-	}
-	p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.TCP.Host != "::1" || p.Naive.ServerName != "example.com" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
-		t.Fatalf("NaiveProxy TLS name or TCP-only endpoint lost: %+v %+v", p, endpoints)
+	for _, scheme := range []string{"naive+https", "naive+quic"} {
+		t.Run(scheme, func(t *testing.T) {
+			c := DefaultConfig()
+			c.Resolve = func(context.Context) (Profile, error) {
+				return accesskey.ParseNaive(scheme + "://user:pass@[::1]:443?sni=example.com")
+			}
+			p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Naive.QUIC != (scheme == "naive+quic") || !p.TCPOnly() || p.TCP.Host != "::1" || p.Naive.ServerName != "example.com" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
+				t.Fatalf("NaiveProxy TLS name or TCP-only endpoint lost: %+v %+v", p, endpoints)
+			}
+		})
 	}
 }
 

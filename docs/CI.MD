@@ -17,13 +17,17 @@ requires the Go toolchain and the fixture module's pinned dependencies.
 
 The Linux job builds Caddy v2.11.7 with klzgrad/forwardproxy at
 `c096d6a00cb28e019cc1995b04bdc6a9311d8024` outside the core module. The
-NaiveProxy test verifies authenticated HTTP/2 CONNECT, padded large payloads,
+NaiveProxy test verifies authenticated HTTP/2 and HTTP/3 CONNECT, padded large payloads,
 and HTTP through Bimeron's local SOCKS5 listener against that independent
 server. It uses synthetic credentials, a temporary
 certificate, loopback listeners, and isolated Caddy storage. The newer
 forwardproxy revision requires additional Caddy idle-timeout patches; this
 fixture pins the preceding revision with the same padding protocol. Focused
-NaiveProxy tests also run with the race detector.
+NaiveProxy unit and reference tests also run with the race detector. The H3
+fixture disables H2 on the reference server; the ShadowTLS matrix exercises
+only H2 because the wrapper carries TCP. A loopback `BenchmarkConnect`
+compares sequential 32 KiB padded-tunnel echo traffic over H2 and H3 without
+enforcing a hardware-dependent throughput threshold.
 
 The Linux job downloads the official ShadowTLS `v0.2.25` Linux x86-64 binary
 and verifies SHA-256
