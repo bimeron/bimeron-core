@@ -37,8 +37,61 @@ type Profile struct {
 	Trojan    Trojan
 	VMess     VMess
 	Hysteria2 Hysteria2
+	AnyTLS    AnyTLS
 	SSH       SSH
 	TUIC      TUIC
+}
+
+// AnyTLS contains password authentication and verified TLS settings.
+type AnyTLS struct{ Password, ServerName string }
+
+func (a AnyTLS) Validate(host string, port int) error {
+	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid AnyTLS server endpoint")
+	}
+	if a.Password == "" || strings.ContainsAny(a.Password, "\r\n") {
+		return fmt.Errorf("invalid AnyTLS password")
+	}
+	if a.ServerName == "" || strings.ContainsAny(a.ServerName, " /\t\r\n") {
+		return fmt.Errorf("invalid AnyTLS server name")
+	}
+	return nil
+}
+
+// ParseAnyTLS never includes credentials or the input URI in errors.
+func ParseAnyTLS(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "anytls" || u.Opaque != "" || u.Hostname() == "" || (u.Path != "" && u.Path != "/") || u.User == nil {
+		return Profile{}, fmt.Errorf("invalid AnyTLS URI")
+	}
+	if _, ok := u.User.Password(); ok {
+		return Profile{}, fmt.Errorf("invalid AnyTLS password")
+	}
+	port := 443
+	if u.Port() != "" {
+		port, err = strconv.Atoi(u.Port())
+		if err != nil {
+			return Profile{}, fmt.Errorf("invalid AnyTLS port")
+		}
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Profile{}, fmt.Errorf("invalid AnyTLS options")
+	}
+	for key, values := range q {
+		if (key != "sni" && key != "insecure") || len(values) != 1 || (key == "insecure" && values[0] != "0") {
+			return Profile{}, fmt.Errorf("unsupported or duplicate AnyTLS option")
+		}
+	}
+	a := AnyTLS{Password: u.User.Username(), ServerName: q.Get("sni")}
+	if !q.Has("sni") {
+		a.ServerName = u.Hostname()
+	}
+	if err := a.Validate(u.Hostname(), port); err != nil {
+		return Profile{}, err
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port}
+	return Profile{Type: "anytls", Name: u.Fragment, TCP: e, UDP: e, AnyTLS: a}, nil
 }
 
 // SSH describes a TCP-only SSH upstream. Paths never contain key material.
@@ -610,6 +663,9 @@ func NewResolverWithTransport(t http.RoundTripper) *Resolver {
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "anytls://") {
+		return ParseAnyTLS(key)
+	}
 	if strings.HasPrefix(key, "ssh://") {
 		return ParseSSH(key)
 	}

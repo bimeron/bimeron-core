@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"time"
 
+	"bimeron/internal/anytls"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
 	"bimeron/internal/proxy"
@@ -61,6 +62,13 @@ func check(args []string) error {
 		tcp, udp = client, client
 	} else if p.Type == "trojan" {
 		client, err := trojan.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp, udp = client, client
+	} else if p.Type == "anytls" {
+		client, err := anytls.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
 		}
