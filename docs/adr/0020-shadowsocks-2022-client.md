@@ -1,7 +1,7 @@
 # ADR 0020: Implement the single-user Shadowsocks 2022 client
 
 Status: Accepted; the restriction on SIP023 identity headers is superseded by
-[ADR 0023](0023-shadowsocks-2022-identity-chains.md).
+[ADR 0025](0025-shadowsocks-2022-identity-chains.md).
 
 ## Context
 

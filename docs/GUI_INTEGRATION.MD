@@ -472,6 +472,20 @@ Write one `TUIC = tuic://...` source, a generic `Key = tuic://...`, or a
 relay mode is `quic`; reject native mode and unknown options. Certificate
 verification is mandatory. See [CONF.MD](CONF.MD) for the URI contract.
 
+### Remote HTTP CONNECT profile editor
+
+Write `HTTP = https://proxy.example.com:443`, or use `Type = https` with
+`Server`, `Port`, and optional paired `Username` and `Password`. `Key` and `File`
+also accept HTTPS proxy URIs. Require an explicit port and percent-encode URI
+credentials. Do not combine explicit parameters with a URI source.
+
+HTTPS uses verified HTTP/1.1 CONNECT: system CA trust and the configured proxy
+hostname or IP are checked before Basic credentials are sent. There is no
+server-name override or insecure TLS switch. Plain `http://` and `Type = http`
+remain available but do not encrypt proxy credentials. Both variants carry TCP
+only; VPN DNS uses TCP and other proxied UDP is dropped. The local listener
+remains SOCKS5. See [configuration](CONF.MD#remote-http-connect-proxy).
+
 ### Remote SOCKS5 profile editor
 
 The profile's upstream protocol is independent of `[Interface] Mode`: `vpn`
@@ -505,20 +519,44 @@ The final key is the user key; preceding keys identify successive layers.
 Each key has the method-specific length. ChaCha20 accepts a single key only.
 The chain remains a secret and must not appear in logs or validation errors.
 
+For embedded Shadowsocks WS/WSS, preserve the complete imported `ss://` URI,
+including its percent-encoded `plugin` query. Do not extract only the cipher,
+password, and endpoint: doing so would discard the required transport. For an
+explicit parameter form, write `Plugin = v2ray-plugin` and `PluginOpts` alongside
+the Shadowsocks parameters. Do not write these fields alongside a URI source.
+See [Shadowsocks transport examples](SHADOWSOCKS_TRANSPORTS.MD).
+
+Expose only the supported plugin options (`mode=websocket`, `tls`, `host`,
+`path`, `mux`), with defaults from that guide. In particular, `host` controls
+both HTTP Host and TLS SNI/certificate verification, and defaults to
+`cloudfront.com`. Omit `tls` to disable TLS; `tls=false` enables it by presence.
+Keep the imported URI and raw options out of logs and analytics.
+
+For plugin profiles, indicate TCP-only proxying and DNS over TCP; disable
+controls that imply proxied UDP support. Explicit direct routes retain their
+usual behavior. Mux concurrency is a limit per shared WebSocket connection,
+not a global connection limit. The embedded client requires no executable
+picker or plugin process installation.
+
 Run `bimeron validate <config-file>` for syntax and field checks without
 network access or system changes. `bimeron check -config <config-file>` tests
 the remote transport over the network without installing a VPN: TCP/TLS and
 UDP/DNS in VPN mode, TCP/TLS only for SOCKS5 in local `proxy` mode. In VPN mode,
+Shadowsocks plugin profiles instead test TCP/TLS and DNS over TCP. For SOCKS5,
 the remote SOCKS5 server must support both TCP `CONNECT` and UDP `ASSOCIATE`;
 failure to relay UDP/DNS prevents startup. Local `proxy` mode needs only TCP
 `CONNECT`. The current VPN implementation resolves Shadowsocks and SOCKS5
-upstream hosts to IPv4; VLESS, Trojan, and Hysteria2 may use IPv6.
+upstream hosts to IPv4 without a plugin; Shadowsocks plugin profiles, VLESS,
+Trojan, and Hysteria2 may use IPv6.
 DNS settings, MTU, split rules, and direct/block actions use the same GUI
 controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
 encrypted by SOCKS5; explain this when users choose the protocol. Keep
 credentials out of status displays, logs, analytics, and crash reports.
 `bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, `hysteria2`, or `shadowsocks`
 without reporting the username or password.
+Plugin profiles still report `type` as `shadowsocks`; `inspect` does not expose
+plugin settings, and their UDP endpoint is empty. It must not be used to
+reconstruct a complete access profile or infer the plugin configuration.
 
 ## Installation, update and diagnostics of Windows/Linux
 

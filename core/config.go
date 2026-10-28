@@ -22,6 +22,7 @@ import (
 
 type Profile = accesskey.Profile
 type Endpoint = accesskey.Endpoint
+type ShadowTLS = accesskey.ShadowTLS
 type Policy = routing.Policy
 
 // SessionConfig is copied by Start. Resolve must honor cancellation and must not
@@ -95,6 +96,10 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	// Capture values and the resolved key source, so subsequent caller mutations
 	// of the configuration cannot change a running session.
 	copy := *c
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		copy.ShadowTLS = &settings
+	}
 	p, err := routing.Compile(copy.Routing)
 	if err != nil {
 		return SessionConfig{}, err

@@ -28,20 +28,23 @@ type Endpoint struct {
 	Prefix string
 }
 type Profile struct {
-	Name      string
-	TCP       Endpoint
-	UDP       Endpoint
-	Type      string // Empty means Shadowsocks for existing API callers.
-	Username  string // SOCKS5 and HTTP CONNECT; Secret contains the password.
-	VLESS     VLESS
-	Trojan    Trojan
-	Naive     Naive
-	VMess     VMess
-	Hysteria2 Hysteria2
-	AnyTLS    AnyTLS
-	SSH       SSH
-	TUIC      TUIC
-	MASQUE    MASQUE
+	Name           string
+	TCP            Endpoint
+	UDP            Endpoint
+	Type           string // Empty means Shadowsocks for existing API callers.
+	Username       string // SOCKS5 and HTTP CONNECT; Secret contains the password.
+	VLESS          VLESS
+	Trojan         Trojan
+	Naive          Naive
+	VMess          VMess
+	Hysteria2      Hysteria2
+	AnyTLS         AnyTLS
+	SSH            SSH
+	TUIC           TUIC
+	MASQUE         MASQUE
+	SSPlugin       *SSPlugin
+	HTTPServerName string // Nonempty enables verified TLS for HTTP CONNECT.
+	ShadowTLS      *ShadowTLS
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -574,7 +577,7 @@ func ParseSS(raw string) (Profile, error) {
 		return Profile{}, fmt.Errorf("invalid options")
 	}
 	for k, v := range q {
-		if (k != "outline" && k != "prefix") || len(v) != 1 {
+		if (k != "outline" && k != "prefix" && k != "plugin") || len(v) != 1 {
 			return Profile{}, fmt.Errorf("unsupported ss option")
 		}
 	}
@@ -586,7 +589,15 @@ func ParseSS(raw string) (Profile, error) {
 	if err := e.Validate(); err != nil {
 		return Profile{}, err
 	}
-	return Profile{Name: u.Fragment, TCP: e, UDP: e}, nil
+	p := Profile{Name: u.Fragment, TCP: e, UDP: e}
+	if q.Has("plugin") {
+		p.SSPlugin, err = parseSSPluginQuery(q.Get("plugin"))
+		if err != nil {
+			return Profile{}, err
+		}
+		p.UDP = Endpoint{}
+	}
+	return p, nil
 }
 
 // ParseSOCKS5 accepts a SOCKS5 URI without leaking credentials in errors.
@@ -621,7 +632,7 @@ func ParseSOCKS5(raw string) (Profile, error) {
 // ParseHTTPConnect accepts an HTTP proxy URI without exposing credentials in errors.
 func ParseHTTPConnect(raw string) (Profile, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return Profile{}, fmt.Errorf("invalid HTTP proxy URI")
 	}
 	port, err := strconv.Atoi(u.Port())
@@ -638,7 +649,11 @@ func ParseHTTPConnect(raw string) (Profile, error) {
 		}
 	}
 	e := Endpoint{Host: u.Hostname(), Port: port, Secret: password}
-	return Profile{Type: "http", Username: username, TCP: e}, nil
+	p := Profile{Type: "http", Username: username, TCP: e}
+	if u.Scheme == "https" {
+		p.HTTPServerName = u.Hostname()
+	}
+	return p, nil
 }
 
 type wireEndpoint struct {
@@ -649,12 +664,14 @@ type wireEndpoint struct {
 	Prefix  string `yaml:"prefix"`
 }
 type wireConfig struct {
-	Server    string `yaml:"server"`
-	Port      int    `yaml:"server_port"`
-	Password  string `yaml:"password"`
-	Method    string `yaml:"method"`
-	Prefix    string `yaml:"prefix"`
-	Transport *struct {
+	Plugin     string `yaml:"plugin"`
+	PluginOpts string `yaml:"plugin_opts"`
+	Server     string `yaml:"server"`
+	Port       int    `yaml:"server_port"`
+	Password   string `yaml:"password"`
+	Method     string `yaml:"method"`
+	Prefix     string `yaml:"prefix"`
+	Transport  *struct {
 		Type string       `yaml:"$type"`
 		TCP  wireEndpoint `yaml:"tcp"`
 		UDP  wireEndpoint `yaml:"udp"`
@@ -684,9 +701,17 @@ func ParseConfig(b []byte) (Profile, error) {
 		if err := e.Validate(); err != nil {
 			return Profile{}, err
 		}
-		return Profile{TCP: e, UDP: e}, nil
+		plugin, err := ParseSSPlugin(c.Plugin, c.PluginOpts)
+		if err != nil {
+			return Profile{}, err
+		}
+		p := Profile{TCP: e, UDP: e, SSPlugin: plugin}
+		if plugin != nil {
+			p.UDP = Endpoint{}
+		}
+		return p, nil
 	}
-	if c.Server != "" || c.Port != 0 || c.Password != "" || c.Method != "" || c.Prefix != "" {
+	if c.Server != "" || c.Port != 0 || c.Password != "" || c.Method != "" || c.Prefix != "" || c.Plugin != "" || c.PluginOpts != "" {
 		return Profile{}, fmt.Errorf("mixed config formats")
 	}
 	if c.Transport.Type != "tcpudp" {
@@ -752,7 +777,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "anytls://") {
 		return ParseAnyTLS(key)
 	}
-	if strings.HasPrefix(key, "naive+https://") {
+	if strings.HasPrefix(key, "naive+https://") || strings.HasPrefix(key, "naive+quic://") {
 		return ParseNaive(key)
 	}
 	if strings.HasPrefix(key, "ssh://") {
@@ -779,7 +804,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "socks5://") {
 		return ParseSOCKS5(key)
 	}
-	if strings.HasPrefix(key, "http://") {
+	if strings.HasPrefix(key, "http://") || strings.HasPrefix(key, "https://") {
 		return ParseHTTPConnect(key)
 	}
 	if strings.HasPrefix(key, "masque://") {

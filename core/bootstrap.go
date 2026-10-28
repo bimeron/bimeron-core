@@ -55,6 +55,9 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		}
 		return Profile{}, d, sessionEndpoints{}, fault("access_key_resolve_failed", true)
 	}
+	if err := p.ValidateShadowTLS(); err != nil {
+		return Profile{}, d, sessionEndpoints{}, fault("invalid_tcp_transport", false)
+	}
 	if p.Type == "masque" && p.MASQUE.ProxyHost == "" {
 		p.MASQUE.ProxyHost = p.TCP.Host
 	}
@@ -82,11 +85,11 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		if p.Type == "masque" && ep == &p.UDP {
 			continue
 		}
-		if p.Type == "ssh" || ((p.Type == "http" || p.Type == "naive") && ep == &p.UDP) {
+		if p.Type == "ssh" || ((p.TCPOnly() || p.ShadowTLS != nil) && ep == &p.UDP) {
 			continue
 		}
 		family := "ip4"
-		if p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" || p.Type == "masque" {
+		if p.SSPlugin != nil || p.Type == "masque" || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
@@ -116,9 +119,15 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 	}
 	endpoints := sessionEndpoints{
 		tcp:     net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port)),
-		tcpName: domain(original.TCP.Host), udpName: domain(original.UDP.Host),
+		tcpName: domain(original.TCP.Host),
 	}
-	if p.Type != "ssh" && p.Type != "http" && p.Type != "naive" {
+	if !p.TCPOnly() {
+		endpoints.udpName = domain(original.UDP.Host)
+		if p.ShadowTLS != nil {
+			// These packet adapters carry UDP through the wrapped TCP stream.
+			p.UDP.Host, p.UDP.Port = p.TCP.Host, p.TCP.Port
+			endpoints.udpName = domain(original.TCP.Host)
+		}
 		endpoints.udp = net.JoinHostPort(p.UDP.Host, strconv.Itoa(p.UDP.Port))
 	}
 	return p, d, endpoints, nil

@@ -66,12 +66,17 @@ jobs:
           BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server" go test ./internal/anytls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
       - name: Check NaiveProxy transport races
         run: CGO_ENABLED=1 go test -race ./internal/naive ./internal/accesskey ./internal/config
-      - name: NaiveProxy interoperability with reference server
+      - name: NaiveProxy HTTP/2 and HTTP/3 interoperability with reference server
         run: |
           cd "$RUNNER_TEMP"
           go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.5 build v2.11.7 --output "$RUNNER_TEMP/naive-caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@c096d6a00cb28e019cc1995b04bdc6a9311d8024
           cd "$GITHUB_WORKSPACE"
-          BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
+          CGO_ENABLED=1 BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/naive -run '^TestReferenceServer$' -count=1 -v
+          go test ./internal/naive -run '^$' -bench '^BenchmarkConnect$' -benchtime=100x -count=1
+      - name: HTTPS CONNECT interoperability with independent proxy
+        run: |
+          BIMERON_HTTP_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/proxy -run '^TestReferenceHTTPSConnect$' -count=1 -v
+          go test ./internal/proxy -run '^$' -bench '^BenchmarkHTTPSConnect$' -benchtime=20x -count=1
       - name: Check core and control races
         run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
       - name: VLESS and VMess transport interoperability with Xray
@@ -87,6 +92,30 @@ jobs:
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -count=1 -v
           go test ./internal/accesskey -run '^$' -fuzz '^FuzzSS2022Keys$' -fuzztime=5s
           go test ./internal/ss2022 -run '^$' -bench '^BenchmarkTCPIdentityHeaders$' -benchtime=100ms -count=1
+      - name: Install pinned original v2ray-plugin
+        run: |
+          curl --fail --location --retry 3 https://github.com/shadowsocks/v2ray-plugin/releases/download/v1.5.0/v2ray-plugin-linux-amd64-v1.5.0.tar.gz --output "$RUNNER_TEMP/v2ray-plugin.tar.gz"
+          echo "f326c48a0f91f8ab536a864c6a2dba6b587ea1df537b2c43af0bfb7922ed05c4  $RUNNER_TEMP/v2ray-plugin.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/v2ray-plugin.tar.gz" -C "$RUNNER_TEMP" v2ray-plugin_linux_amd64
+          test -x "$RUNNER_TEMP/v2ray-plugin_linux_amd64"
+          "$RUNNER_TEMP/v2ray-plugin_linux_amd64" -version
+      - name: Shadowsocks WebSocket TLS and Mux interoperability
+        env:
+          BIMERON_REQUIRE_SSPLUGIN_INTEROP: '1'
+        run: |
+          CGO_ENABLED=1 BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ssplugin ./internal/v2raymux -count=1 -v
+          BIMERON_V2RAY_PLUGIN_BIN="$RUNNER_TEMP/v2ray-plugin_linux_amd64" BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalPlugin$' -benchtime=20x -count=1
+      - name: ShadowTLS v3 interoperability with independent servers
+        run: |
+          curl --fail --location --silent --show-error https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl --output "$RUNNER_TEMP/shadow-tls"
+          echo "a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532  $RUNNER_TEMP/shadow-tls" | sha256sum --check --strict
+          chmod +x "$RUNNER_TEMP/shadow-tls"
+          export BIMERON_SHADOWTLS_BIN="$RUNNER_TEMP/shadow-tls"
+          export BIMERON_XRAY_BIN="$RUNNER_TEMP/xray"
+          export BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server"
+          export BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy"
+          CGO_ENABLED=1 go test -race ./internal/shadowtls ./internal/streamtransport ./internal/proxy ./core ./internal/vmess ./internal/trojan ./internal/anytls ./internal/naive ./internal/sshtunnel -run '^(TestReferenceServer|TestShadowTLS.*|TestXrayVMessAEAD|TestXrayVLESS|TestXrayTrojanInterop|TestVerifiedSSHForwarding)$' -count=1 -v
+          go test ./internal/shadowtls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
       - name: Install Linux integration tools
         run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
       - name: Isolated Linux network integration
@@ -125,7 +154,9 @@ jobs:
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque
 
   test-apple-unsigned:
-    runs-on: macos-15
+    # ARM64 hosted runners currently fail before acquiring a machine.
+    # Run the ABI test natively on Intel and cross-build both ARM64 extensions.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -136,6 +167,10 @@ jobs:
         run: sh scripts/build-apple.sh
       - name: Build app extension and check C ABI
         run: APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
+      - name: Cross-build ARM64 system extension and link C ABI test
+        run: APPLE_ARCH=arm64 sh scripts/build-apple.sh
+      - name: Cross-build ARM64 app extension and link C ABI test
+        run: APPLE_ARCH=arm64 APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
 
   test-fingerprint-dependencies:
     strategy:

@@ -17,13 +17,46 @@ requires the Go toolchain and the fixture module's pinned dependencies.
 
 The Linux job builds Caddy v2.11.7 with klzgrad/forwardproxy at
 `c096d6a00cb28e019cc1995b04bdc6a9311d8024` outside the core module. The
-NaiveProxy test verifies authenticated HTTP/2 CONNECT, padded large payloads,
+NaiveProxy test verifies authenticated HTTP/2 and HTTP/3 CONNECT, padded large payloads,
 and HTTP through Bimeron's local SOCKS5 listener against that independent
 server. It uses synthetic credentials, a temporary
 certificate, loopback listeners, and isolated Caddy storage. The newer
 forwardproxy revision requires additional Caddy idle-timeout patches; this
 fixture pins the preceding revision with the same padding protocol. Focused
-NaiveProxy tests also run with the race detector.
+NaiveProxy unit and reference tests also run with the race detector. The H3
+fixture disables H2 on the reference server; the ShadowTLS matrix exercises
+only H2 because the wrapper carries TCP. A loopback `BenchmarkConnect`
+compares sequential 32 KiB padded-tunnel echo traffic over H2 and H3 without
+enforcing a hardware-dependent throughput threshold.
+
+The Linux job downloads the official ShadowTLS `v0.2.25` Linux x86-64 binary
+and verifies SHA-256
+`a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532`
+before executing it. This is a content pin, not a signed upstream attestation.
+It reuses the pinned Xray, AnyTLS and Caddy binaries above to run the wrapped
+matrix with the race detector: six Shadowsocks methods, 54 VMess cases,
+26 VLESS cases, Trojan/AnyTLS UDP-over-stream, NaiveProxy, an SSH fixture,
+socket controls and Core Engine/SOCKS5 requests. These tools are external test
+processes and do not enter the distributed core's dependency graph.
+
+`BIMERON_SHADOWTLS_BIN` enables the wrapper in existing inner reference tests;
+without it those tests retain their direct mode. The standalone ShadowTLS
+reference tests skip explicitly when it is absent. For local reproduction,
+see [the recorded commands](SHADOWTLS_V3_RESEARCH.md#observed-verification).
+
+CI also runs `BenchmarkReferenceServer` for 20 iterations per case. `Handshake`
+includes TCP connection, strict-v3 authentication and close. `RoundTrip64KiB`
+reuses one authenticated connection and reports one 64-KiB payload per echo
+round trip, with allocation counts. Reproduce with:
+
+```sh
+BIMERON_SHADOWTLS_BIN=/path/to/shadow-tls \
+  go test ./internal/shadowtls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
+```
+
+These are local regression measurements, not internet throughput predictions
+or protocol rankings. The checks do not replace live privileged VPN or mobile
+device validation; [the ShadowTLS guide](SHADOWTLS.MD) lists the supported scope.
 
 The race run excludes only `TestFrameParserAllocs/STREAM`: Go's race
 instrumentation randomly discards `sync.Pool` entries, invalidating its zero
@@ -42,6 +75,45 @@ and Android builds. CI does not publish releases. The
 the prepared archives, checksums, and signed manifest before publication and
 requires successful tag CI. Its release notes link to the README at that tag
 and describe the package scope, including the excluded Apple NetworkExtension.
+
+## Shadowsocks v2ray-plugin reference checks
+
+The Linux test job downloads the original `v2ray-plugin` v1.5.0 release and
+verifies its pinned SHA-256 before extraction. It uses Xray v1.260327.0,
+already built outside the product module graph, as the Shadowsocks server.
+No plugin executable or V2Fly/Xray runtime is added to the distributed core.
+
+The mandatory interop step sets `BIMERON_REQUIRE_SSPLUGIN_INTEROP=1`, so missing
+reference binaries fail the step instead of silently skipping tests. It runs
+the plugin and Mux packages with the race detector. The matrix covers six
+Shadowsocks AEAD/2022 methods, WS/WSS, and Mux 0/1/8: 36 combinations. Additional
+tests exercise defaults, concurrency and connection reuse, a transfer over
+2 MB, reconnects, rejected TLS certificates/names, and incorrect WebSocket
+paths. Unit tests cover malformed Mux frames, per-session deadlines,
+slow-consumer isolation, setup cancellation, and runtime cleanup.
+
+To repeat the reference checks locally, provide the two executables from the
+same pinned versions used in [the workflow](../.github/workflows/go.yml).
+For a POSIX shell:
+
+```sh
+export BIMERON_V2RAY_PLUGIN_BIN=/absolute/path/to/v2ray-plugin
+export BIMERON_XRAY_BIN=/absolute/path/to/xray
+export BIMERON_REQUIRE_SSPLUGIN_INTEROP=1
+go test -race ./internal/ssplugin ./internal/v2raymux -count=1
+go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalPlugin$' -benchtime=20x -count=1
+```
+
+In PowerShell, set each environment variable using `$env:NAME = 'C:/path/file.exe'`
+before running the same `go test` commands. Race testing needs a compatible
+C compiler. Without reference variables, ordinary local tests skip only the
+external interop cases; they still run the in-process transport and Mux tests.
+
+The benchmark measures loopback session setup/reuse and a 32 KiB echo transfer
+through WSS and Mux. It is a smoke benchmark, not a claim about Internet
+throughput. All test credentials, certificates, and endpoints are synthetic
+and local. A successful local run does not replace a successful hosted CI run
+or testing a real VPN deployment.
 
 ## Proposed test and build workflow
 

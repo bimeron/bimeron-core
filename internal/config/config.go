@@ -25,13 +25,14 @@ import (
 const maxSize = 64 * 1024
 
 type File struct {
-	Version int
-	Name    string
-	Access  Access
-	Tunnel  Tunnel
-	Routing routing.Config
-	key     string
-	profile *accesskey.Profile
+	Version   int
+	Name      string
+	Access    Access
+	Tunnel    Tunnel
+	Routing   routing.Config
+	key       string
+	profile   *accesskey.Profile
+	ShadowTLS *accesskey.ShadowTLS
 }
 type Access struct {
 	SS                string
@@ -58,6 +59,8 @@ type Access struct {
 	KnownHostsFile    string
 	VLESSParameters   *accesskey.VLESS
 	ServerName        string
+	Plugin            string
+	PluginOpts        string
 	xhttpExtraUsed    bool
 	xhttpFieldsUsed   bool
 	trojanUnsupported bool
@@ -117,11 +120,14 @@ func parse(b []byte) (*File, error) {
 			}
 			section = strings.TrimSpace(text[1 : len(text)-1])
 			switch section {
-			case "Profile", "AccessKey", "Interface", "Routing":
+			case "Profile", "AccessKey", "Interface", "Routing", "ShadowTLS":
 				if sections[section] {
 					return nil, fmt.Errorf("duplicate section at line %d", line)
 				}
 				sections[section] = true
+				if section == "ShadowTLS" {
+					c.ShadowTLS = &accesskey.ShadowTLS{}
+				}
 			case "Rule":
 				c.Routing.Rules = append(c.Routing.Rules, routing.Rule{})
 			default:
@@ -162,6 +168,15 @@ func parse(b []byte) (*File, error) {
 		recognized := true
 		var err error
 		switch section {
+		case "ShadowTLS":
+			switch key {
+			case "ServerName":
+				c.ShadowTLS.ServerName = value
+			case "Password":
+				c.ShadowTLS.Password = value
+			default:
+				recognized = false
+			}
 		case "Profile":
 			switch key {
 			case "Version":
@@ -195,6 +210,10 @@ func parse(b []byte) (*File, error) {
 			}
 		case "AccessKey":
 			switch key {
+			case "Plugin":
+				c.Access.Plugin = value
+			case "PluginOpts":
+				c.Access.PluginOpts = value
 			case "VLESS":
 				c.Access.VLESS = value
 			case "VMess":
@@ -379,6 +398,26 @@ func ParseData(b []byte) (*File, error) {
 	return loadBytes(b, "")
 }
 func loadBytes(b []byte, path string) (*File, error) {
+	c, err := loadBaseBytes(b, path)
+	if err != nil {
+		return nil, err
+	}
+	if c.ShadowTLS != nil {
+		if err := c.ShadowTLS.Validate(); err != nil {
+			return nil, err
+		}
+		if c.profile != nil {
+			p, err := c.withShadowTLS(*c.profile, nil)
+			if err != nil {
+				return nil, err
+			}
+			c.profile = &p
+		}
+	}
+	return c, nil
+}
+
+func loadBaseBytes(b []byte, path string) (*File, error) {
 	c, err := parse(b)
 	if err != nil {
 		return nil, err
@@ -434,8 +473,8 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
 		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
 	}
-	if c.Access.HTTP != "" && !strings.HasPrefix(c.Access.HTTP, "http://") {
-		return nil, fmt.Errorf("[AccessKey] HTTP must start with http://")
+	if c.Access.HTTP != "" && !(strings.HasPrefix(c.Access.HTTP, "http://") || strings.HasPrefix(c.Access.HTTP, "https://")) {
+		return nil, fmt.Errorf("[AccessKey] HTTP must start with http:// or https://")
 	}
 	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
 		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
@@ -446,8 +485,8 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" && !strings.HasPrefix(c.Access.Trojan, "trojan://") {
 		return nil, fmt.Errorf("[AccessKey] Trojan must start with trojan://")
 	}
-	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") {
-		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https://")
+	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") && !strings.HasPrefix(c.Access.Naive, "naive+quic://") {
+		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https:// or naive+quic://")
 	}
 	if c.Access.Hysteria2 != "" && !strings.HasPrefix(c.Access.Hysteria2, "hysteria2://") && !strings.HasPrefix(c.Access.Hysteria2, "hy2://") {
 		return nil, fmt.Errorf("[AccessKey] Hysteria2 must start with hysteria2:// or hy2://")
@@ -516,7 +555,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		sources++
 	}
-	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
+	if c.Access.Plugin != "" || c.Access.PluginOpts != "" {
+		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
+			return nil, fmt.Errorf("[AccessKey] plugin options require explicit Shadowsocks parameters")
+		}
+	}
+	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" || c.Access.Plugin != "" || c.Access.PluginOpts != "" {
 		if c.Access.xhttpExtraUsed && c.Access.xhttpFieldsUsed {
 			return nil, fmt.Errorf("[AccessKey] XHTTPExtra cannot be combined with separate XHTTP options")
 		}
@@ -644,11 +688,11 @@ func loadBytes(b []byte, path string) (*File, error) {
 			c.profile = &p
 			return c, nil
 		}
-		if c.Access.Type == "http" {
+		if c.Access.Type == "http" || c.Access.Type == "https" {
 			if s.Method != "" || s.Prefix != "" || (c.Access.Username == "") != (s.Password == "") || strings.ContainsAny(c.Access.Username, ":\r\n") || strings.ContainsAny(s.Password, "\r\n") {
 				return nil, fmt.Errorf("[AccessKey] invalid HTTP proxy parameters")
 			}
-			p, err := accesskey.ParseHTTPConnect("http://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
+			p, err := accesskey.ParseHTTPConnect(c.Access.Type + "://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
 			if err != nil {
 				return nil, err
 			}
@@ -660,13 +704,20 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, fmt.Errorf("[AccessKey] unsupported Type")
 		}
 		if c.Access.Username != "" {
-			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5 or http")
+			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5, http, or https")
 		}
 		e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Cipher: s.Method, Secret: s.Password, Prefix: s.Prefix}
 		if err := e.Validate(); err != nil {
 			return nil, err
 		}
 		c.profile = &accesskey.Profile{Name: c.Name, TCP: e, UDP: e}
+		c.profile.SSPlugin, err = accesskey.ParseSSPlugin(c.Access.Plugin, c.Access.PluginOpts)
+		if err != nil {
+			return nil, err
+		}
+		if c.profile.SSPlugin != nil {
+			c.profile.UDP = accesskey.Endpoint{}
+		}
 		return c, nil
 	}
 	key := c.Access.Key
@@ -745,7 +796,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "http://") {
+	if strings.HasPrefix(c.key, "http://") || strings.HasPrefix(c.key, "https://") {
 		p, err := accesskey.ParseHTTPConnect(c.key)
 		if err != nil {
 			return nil, err
@@ -777,7 +828,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
-	if strings.HasPrefix(c.key, "naive+https://") {
+	if strings.HasPrefix(c.key, "naive+https://") || strings.HasPrefix(c.key, "naive+quic://") {
 		p, err := accesskey.ParseNaive(c.key)
 		if err != nil {
 			return nil, err
@@ -826,7 +877,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, https://, masque://, vless://, vmess://, trojan://, naive+https://, naive+quic://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
@@ -842,15 +893,29 @@ func loadBytes(b []byte, path string) (*File, error) {
 }
 func (c *File) Resolve(ctx context.Context) (accesskey.Profile, error) {
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolver().Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolver().Resolve(ctx, c.key))
 }
 func (c *File) ResolveWithTransport(ctx context.Context, t http.RoundTripper) (accesskey.Profile, error) {
 	if c.profile != nil {
-		return *c.profile, nil
+		return c.withShadowTLS(*c.profile, nil)
 	}
-	return accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key)
+	return c.withShadowTLS(accesskey.NewResolverWithTransport(t).Resolve(ctx, c.key))
+}
+
+func (c *File) withShadowTLS(p accesskey.Profile, err error) (accesskey.Profile, error) {
+	if err != nil {
+		return accesskey.Profile{}, err
+	}
+	if c.ShadowTLS != nil {
+		settings := *c.ShadowTLS
+		p.ShadowTLS = &settings
+	}
+	if err := p.ValidateShadowTLS(); err != nil {
+		return accesskey.Profile{}, err
+	}
+	return p, nil
 }
 func (c *File) VPNPolicy() (*routing.Policy, error) {
 	return routing.Compile(c.Routing)

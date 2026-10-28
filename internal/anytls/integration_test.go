@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 )
 
 // BIMERON_ANYTLS_BIN points to a reference server configured with a valid
@@ -25,6 +26,7 @@ func TestReferenceServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	roots = testutil.MaybeShadowTLS(t, &p, roots)
 	c, err := New(p, net.Dialer{})
 	if err != nil {
 		t.Fatal(err)

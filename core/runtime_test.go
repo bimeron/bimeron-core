@@ -77,17 +77,54 @@ func TestResolveHTTPOnVPNPathHasOnlyTCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveShadowsocksPluginOnVPNPathKeepsHostAndNoUDP(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Resolve = func(context.Context) (Profile, error) {
+		return accesskey.ParseSS("ss://aes-256-gcm:secret@[::1]:443/?plugin=v2ray-plugin%3Btls%3Bhost%3Dws.example%3Bmux%3D8")
+	}
+	p, _, endpoints, err := resolveOnPath(t.Context(), cfg, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TCP.Host != "::1" || p.SSPlugin == nil || p.SSPlugin.Host != "ws.example" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" || endpoints.udpName != "" {
+		t.Fatalf("plugin transport endpoint or TLS host changed: %+v", endpoints)
+	}
+}
+
 func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
+	for _, scheme := range []string{"naive+https", "naive+quic"} {
+		t.Run(scheme, func(t *testing.T) {
+			c := DefaultConfig()
+			c.Resolve = func(context.Context) (Profile, error) {
+				return accesskey.ParseNaive(scheme + "://user:pass@[::1]:443?sni=example.com")
+			}
+			p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Naive.QUIC != (scheme == "naive+quic") || !p.TCPOnly() || p.TCP.Host != "::1" || p.Naive.ServerName != "example.com" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
+				t.Fatalf("NaiveProxy TLS name or TCP-only endpoint lost: %+v %+v", p, endpoints)
+			}
+		})
+	}
+}
+
+func TestResolveHTTPSOnVPNPathKeepsTLSName(t *testing.T) {
 	c := DefaultConfig()
+	c.DNS = nil
 	c.Resolve = func(context.Context) (Profile, error) {
-		return accesskey.ParseNaive("naive+https://user:pass@[::1]:443?sni=example.com")
+		p, err := accesskey.ParseHTTPConnect("https://proxy.example.com:443")
+		// Model a resolved endpoint without relying on the runner's hosts file
+		// or external DNS. Bootstrap must normalize the IP, not the TLS identity.
+		p.TCP.Host = "0:0:0:0:0:0:0:1"
+		return p, err
 	}
 	p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.TCP.Host != "::1" || p.Naive.ServerName != "example.com" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
-		t.Fatalf("NaiveProxy TLS name or TCP-only endpoint lost: %+v %+v", p, endpoints)
+	if p.HTTPServerName != "proxy.example.com" || p.TCP.Host != "::1" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
+		t.Fatal("HTTPS identity or TCP-only behavior lost")
 	}
 }
 

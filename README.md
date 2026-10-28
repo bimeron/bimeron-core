@@ -44,24 +44,31 @@ SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIAT
 | --- | --- | --- |
 | Shadowsocks | TCP, UDP | Yes |
 | Shadowsocks 2022 (including SIP023 AES identity chains) | TCP, UDP | Yes |
+| Shadowsocks / 2022 + v2ray-plugin | WebSocket, WebSocket/TLS; embedded Mux | No; DNS is forwarded over TCP |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP, WebSocket, gRPC over TLS | Yes |
 | AnyTLS | TCP/TLS | UDP-over-TCP v2 |
-| NaiveProxy-compatible | HTTPS (HTTP/2 CONNECT) | No; DNS is forwarded over TCP |
+| NaiveProxy-compatible | HTTP/2 or HTTP/3 CONNECT with TLS | No; DNS is forwarded over TCP |
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
 | Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
-| Remote HTTP CONNECT | TCP | No; DNS is forwarded over TCP |
+| Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
 | MASQUE | HTTP/3 CONNECT and CONNECT-UDP over QUIC | QUIC DATAGRAM; also available through local SOCKS5 |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
+Optional [ShadowTLS v3](docs/SHADOWTLS.MD) wraps the encrypted TCP upstreams
+listed in its compatibility matrix. It preserves inner encryption and UDP-over-stream;
+wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
+
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
+[Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
 [MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
-claim Chromium-identical HTTP/2 behavior. Connections to a remote SOCKS5 upstream are not
-encrypted by the core. HTTP CONNECT also uses plaintext transport and sends Basic credentials
-without encryption. Not every combination has passed live interoperability testing.
+claim Chromium-identical TLS, HTTP/2, or QUIC behavior. Connections to a remote SOCKS5 upstream are not
+encrypted by the core. HTTP CONNECT accepts `https://` proxies with certificate and server-name
+verification. With `http://`, proxy traffic and Basic credentials use plaintext transport.
+Not every combination has passed live interoperability testing.
 
 ## Try a local proxy
 

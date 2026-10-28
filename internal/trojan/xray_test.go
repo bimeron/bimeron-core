@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 )
 
 // TestXrayTrojanInterop uses an independent Trojan server. Set BIMERON_XRAY_BIN to run it.
@@ -132,7 +133,9 @@ func testXrayTrojan(t *testing.T, bin, network string) {
 	defer func() { cancel(); _ = cmd.Wait() }()
 	root := x509.NewCertPool()
 	root.AppendCertsFromPEM(certPEM)
-	client, err := New(accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost", Network: transportNetwork, WSPath: wsSetting(transportNetwork, "/trojan"), WSHost: wsSetting(transportNetwork, "front.example.com"), GRPCServiceName: grpcSetting(transportNetwork, "trojan"), GRPCAuthority: grpcSetting(transportNetwork, "front.example.com"), GRPCMultiMode: network == "grpc-multi"}}, net.Dialer{Timeout: 2 * time.Second})
+	profile := accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost", Network: transportNetwork, WSPath: wsSetting(transportNetwork, "/trojan"), WSHost: wsSetting(transportNetwork, "front.example.com"), GRPCServiceName: grpcSetting(transportNetwork, "trojan"), GRPCAuthority: grpcSetting(transportNetwork, "front.example.com"), GRPCMultiMode: network == "grpc-multi"}}
+	root = testutil.MaybeShadowTLS(t, &profile, root)
+	client, err := New(profile, net.Dialer{Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
