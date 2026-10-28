@@ -63,6 +63,20 @@ func TestResolveSSHOnVPNPathPreservesHostKeyName(t *testing.T) {
 	}
 }
 
+func TestResolveHTTPOnVPNPathHasOnlyTCPEndpoint(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Resolve = func(context.Context) (Profile, error) {
+		return Profile{Type: "http", TCP: Endpoint{Host: "127.0.0.1", Port: 8080}}, nil
+	}
+	profile, _, endpoints, err := resolveOnPath(testDeadline(t), cfg, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.TCP.Host != "127.0.0.1" || endpoints.tcp != "127.0.0.1:8080" || endpoints.udp != "" || endpoints.udpName != "" {
+		t.Fatalf("invalid TCP-only endpoint: %+v", endpoints)
+	}
+}
+
 func TestProxyEngineListenerLifecycle(t *testing.T) {
 	// Only loopback is used; no DNS, external network, or system VPN operations.
 	l, err := net.Listen("tcp", "127.0.0.1:0")

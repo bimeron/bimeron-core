@@ -52,6 +52,8 @@ func check(args []string) error {
 	if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 		tcp, udp = s, s
+	} else if p.Type == "http" {
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, err := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if err != nil {
@@ -97,7 +99,7 @@ func check(args []string) error {
 			return err
 		}
 	}
-	if p.Type == "ssh" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && p.Type == "socks5") {
+	if p.Type == "ssh" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
 		address, err := vpn.CheckTCP(ctx, tcp)
 		if err != nil {
 			return err

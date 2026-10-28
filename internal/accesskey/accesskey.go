@@ -32,7 +32,7 @@ type Profile struct {
 	TCP       Endpoint
 	UDP       Endpoint
 	Type      string // Empty means Shadowsocks for existing API callers.
-	Username  string // SOCKS5 only; Secret contains its password.
+	Username  string // SOCKS5 and HTTP CONNECT; Secret contains the password.
 	VLESS     VLESS
 	Trojan    Trojan
 	VMess     VMess
@@ -510,6 +510,29 @@ func ParseSOCKS5(raw string) (Profile, error) {
 	return Profile{Type: "socks5", Username: username, TCP: e, UDP: e}, nil
 }
 
+// ParseHTTPConnect accepts an HTTP proxy URI without exposing credentials in errors.
+func ParseHTTPConnect(raw string) (Profile, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return Profile{}, fmt.Errorf("invalid HTTP proxy URI")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 || strings.ContainsAny(u.Hostname(), " /\t\r\n") {
+		return Profile{}, fmt.Errorf("invalid HTTP proxy endpoint")
+	}
+	username, password := "", ""
+	if u.User != nil {
+		username = u.User.Username()
+		var ok bool
+		password, ok = u.User.Password()
+		if !ok || username == "" || password == "" || strings.ContainsAny(username, ":\r\n") || strings.ContainsAny(password, "\r\n") {
+			return Profile{}, fmt.Errorf("invalid HTTP proxy credentials")
+		}
+	}
+	e := Endpoint{Host: u.Hostname(), Port: port, Secret: password}
+	return Profile{Type: "http", Username: username, TCP: e}, nil
+}
+
 type wireEndpoint struct {
 	Type    string `yaml:"$type"`
 	Address string `yaml:"endpoint"`
@@ -641,6 +664,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	}
 	if strings.HasPrefix(key, "socks5://") {
 		return ParseSOCKS5(key)
+	}
+	if strings.HasPrefix(key, "http://") {
+		return ParseHTTPConnect(key)
 	}
 	if !strings.HasPrefix(key, "ssconf://") {
 		return Profile{}, fmt.Errorf("unsupported access key scheme")
