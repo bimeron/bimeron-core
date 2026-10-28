@@ -41,6 +41,7 @@ type Access struct {
 	VLESS           string
 	VMess           string
 	Trojan          string
+	Naive           string
 	Hysteria2       string
 	AnyTLS          string
 	SSH             string
@@ -196,6 +197,8 @@ func parse(b []byte) (*File, error) {
 				c.Access.VMess = value
 			case "Trojan":
 				c.Access.Trojan = value
+			case "Naive":
+				c.Access.Naive = value
 			case "Hysteria2":
 				c.Access.Hysteria2 = value
 			case "AnyTLS":
@@ -428,6 +431,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" && !strings.HasPrefix(c.Access.Trojan, "trojan://") {
 		return nil, fmt.Errorf("[AccessKey] Trojan must start with trojan://")
 	}
+	if c.Access.Naive != "" && !strings.HasPrefix(c.Access.Naive, "naive+https://") {
+		return nil, fmt.Errorf("[AccessKey] Naive must start with naive+https://")
+	}
 	if c.Access.Hysteria2 != "" && !strings.HasPrefix(c.Access.Hysteria2, "hysteria2://") && !strings.HasPrefix(c.Access.Hysteria2, "hy2://") {
 		return nil, fmt.Errorf("[AccessKey] Hysteria2 must start with hysteria2:// or hy2://")
 	}
@@ -462,6 +468,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" {
 		sources++
 	}
+	if c.Access.Naive != "" {
+		sources++
+	}
 	if c.Access.Hysteria2 != "" {
 		sources++
 	}
@@ -490,7 +499,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, VLESS, VMess, Trojan, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, VLESS, VMess, Trojan, Naive, Hysteria2, AnyTLS, SSH, TUIC, Key, or explicit parameters")
 	}
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
@@ -526,6 +535,21 @@ func loadBytes(b []byte, path string) (*File, error) {
 			}
 			e := accesskey.Endpoint{Host: s.Server, Port: s.Port}
 			c.profile = &accesskey.Profile{Name: c.Name, Type: "trojan", TCP: e, UDP: e, Trojan: t}
+			return c, nil
+		}
+		if c.Access.Type == "naive" {
+			if c.Access.Username == "" || s.Password == "" || s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil {
+				return nil, fmt.Errorf("[AccessKey] invalid NaiveProxy parameters")
+			}
+			name := c.Access.ServerName
+			if name == "" {
+				name = s.Server
+			}
+			n := accesskey.Naive{User: c.Access.Username, Password: s.Password, ServerName: name}
+			if err := n.Validate(s.Server, s.Port); err != nil {
+				return nil, err
+			}
+			c.profile = &accesskey.Profile{Name: c.Name, Type: "naive", TCP: accesskey.Endpoint{Host: s.Server, Port: s.Port}, Naive: n}
 			return c, nil
 		}
 		if c.Access.Type == "vless" {
@@ -612,6 +636,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.Trojan != "" {
 		key = c.Access.Trojan
 	}
+	if c.Access.Naive != "" {
+		key = c.Access.Naive
+	}
 	if c.Access.Hysteria2 != "" {
 		key = c.Access.Hysteria2
 	}
@@ -684,6 +711,14 @@ func loadBytes(b []byte, path string) (*File, error) {
 		c.profile = &p
 		return c, nil
 	}
+	if strings.HasPrefix(c.key, "naive+https://") {
+		p, err := accesskey.ParseNaive(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
 	if strings.HasPrefix(c.key, "hysteria2://") || strings.HasPrefix(c.key, "hy2://") {
 		p, err := accesskey.ParseHysteria2(c.key)
 		if err != nil {
@@ -725,7 +760,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, naive+https://, hysteria2://, hy2://, anytls://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {

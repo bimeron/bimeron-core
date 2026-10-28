@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/trojan"
@@ -147,6 +148,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("ssh_connection_failed", false)
 		}
 		tcp, closeTransport = client, client.Close
+	} else if p.Type == "naive" {
+		client, clientErr := naive.New(p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
+		}
+		tcp, closeTransport = client, client.Close
 	} else if p.Type == "tuic" {
 		client, clientErr := tuic.New(p, outbound)
 		if clientErr != nil {
@@ -163,8 +170,8 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
 		}
 	}
-	if p.Type == "ssh" || p.Type == "http" {
-		report("transport_check", "Checking TCP/TLS and DNS over TCP")
+	if p.Type == "ssh" || p.Type == "http" || p.Type == "naive" {
+		report("transport_check", "Checking TCP/TLS and DNS over TCP-only upstream")
 	} else {
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	}
@@ -406,6 +413,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		client, clientErr := sshtunnel.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, c.SSHDefaultKeys)
 		if clientErr != nil {
 			return nil, fault("ssh_connection_failed", false)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "naive" {
+		client, clientErr := naive.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_tcp_transport", false)
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "tuic" {

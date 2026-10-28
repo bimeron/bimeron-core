@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -290,6 +290,32 @@ blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
 not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
 is unavailable; `CloseRead` and `CloseWrite` close the stream.
 
+### NaiveProxy-compatible HTTPS CONNECT
+
+Use a dedicated URI as the sole `[AccessKey]` source:
+
+```ini
+[AccessKey]
+Naive = naive+https://user:replace-me@server.example.com:443?sni=server.example.com
+```
+
+`Key` and `File` also accept this URI. The port defaults to 443. Percent-encode
+reserved characters in the username and password. `sni` defaults to the server
+host. TLS verifies the certificate and server name, and HTTP/2 ALPN is
+required. `insecure=0` is accepted; insecure TLS and unknown options are
+rejected. The server must support HTTP/2 CONNECT and Basic proxy authentication.
+
+An explicit profile uses `Type = naive`, `Server`, `Port`, `Username`, and
+`Password`; `ServerName` is optional. See
+[`examples/naive.conf`](../examples/naive.conf).
+
+The client requests Naive padding and uses it only when the server returns a
+`padding` header. It also works with a regular HTTP/2 forward proxy. The
+embedded HTTP/2 stack is not identical to Chromium, so browser-identical
+camouflage is not claimed. HTTP/3, proxy chains, and UDP relay are unsupported.
+In VPN mode, captured DNS uses TCP; other proxied UDP is dropped. Explicit
+`direct` routes still use the physical network. Proxy mode exposes TCP CONNECT.
+
 ### Hysteria2 over QUIC
 
 Use a complete `hysteria2://` or `hy2://` URI as the sole access key source.
@@ -372,8 +398,8 @@ Key = ssconf://server.example.com/config
 ```
 
 It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
-`hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `AnyTLS`,
+`naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 

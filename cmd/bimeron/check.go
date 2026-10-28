@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/anytls"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/trojan"
@@ -97,6 +98,13 @@ func check(args []string) error {
 		}
 		defer client.Close()
 		tcp = client
+	} else if p.Type == "naive" {
+		client, err := naive.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp = client
 	} else {
 		tcp, err = proxy.Outline(p.TCP)
 		if err != nil {
@@ -107,7 +115,7 @@ func check(args []string) error {
 			return err
 		}
 	}
-	if p.Type == "ssh" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
+	if p.Type == "ssh" || p.Type == "naive" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
 		address, err := vpn.CheckTCP(ctx, tcp)
 		if err != nil {
 			return err

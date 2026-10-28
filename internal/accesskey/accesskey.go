@@ -35,6 +35,7 @@ type Profile struct {
 	Username  string // SOCKS5 and HTTP CONNECT; Secret contains the password.
 	VLESS     VLESS
 	Trojan    Trojan
+	Naive     Naive
 	VMess     VMess
 	Hysteria2 Hysteria2
 	AnyTLS    AnyTLS
@@ -696,6 +697,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
 	if strings.HasPrefix(key, "anytls://") {
 		return ParseAnyTLS(key)
+	}
+	if strings.HasPrefix(key, "naive+https://") {
+		return ParseNaive(key)
 	}
 	if strings.HasPrefix(key, "ssh://") {
 		return ParseSSH(key)
