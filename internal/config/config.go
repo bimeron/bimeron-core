@@ -55,6 +55,8 @@ type Access struct {
 	KnownHostsFile    string
 	VLESSParameters   *accesskey.VLESS
 	ServerName        string
+	Plugin            string
+	PluginOpts        string
 	xhttpExtraUsed    bool
 	xhttpFieldsUsed   bool
 	trojanUnsupported bool
@@ -192,6 +194,10 @@ func parse(b []byte) (*File, error) {
 			}
 		case "AccessKey":
 			switch key {
+			case "Plugin":
+				c.Access.Plugin = value
+			case "PluginOpts":
+				c.Access.PluginOpts = value
 			case "VLESS":
 				c.Access.VLESS = value
 			case "VMess":
@@ -498,7 +504,12 @@ func loadBytes(b []byte, path string) (*File, error) {
 		}
 		sources++
 	}
-	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
+	if c.Access.Plugin != "" || c.Access.PluginOpts != "" {
+		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
+			return nil, fmt.Errorf("[AccessKey] plugin options require explicit Shadowsocks parameters")
+		}
+	}
+	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" || c.Access.Plugin != "" || c.Access.PluginOpts != "" {
 		if c.Access.xhttpExtraUsed && c.Access.xhttpFieldsUsed {
 			return nil, fmt.Errorf("[AccessKey] XHTTPExtra cannot be combined with separate XHTTP options")
 		}
@@ -625,6 +636,13 @@ func loadBytes(b []byte, path string) (*File, error) {
 			return nil, err
 		}
 		c.profile = &accesskey.Profile{Name: c.Name, TCP: e, UDP: e}
+		c.profile.SSPlugin, err = accesskey.ParseSSPlugin(c.Access.Plugin, c.Access.PluginOpts)
+		if err != nil {
+			return nil, err
+		}
+		if c.profile.SSPlugin != nil {
+			c.profile.UDP = accesskey.Endpoint{}
+		}
 		return c, nil
 	}
 	key := c.Access.Key

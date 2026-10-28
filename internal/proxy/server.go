@@ -26,17 +26,22 @@ func Outline(e accesskey.Endpoint) (transport.StreamDialer, error) {
 	return OutlineTCP(e, net.Dialer{Timeout: 15 * time.Second})
 }
 func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer, error) {
+	return OutlineStream(e, &transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer})
+}
+
+// OutlineStream preserves cipher and prefix behavior over a supplied transport.
+func OutlineStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (transport.StreamDialer, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 	if ss2022.IsMethod(e.Cipher) {
-		return ss2022.New(e, dialer)
+		return ss2022.NewStream(e, endpoint)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("could not create encryption key")
 	}
-	d, err := shadowsocks.NewStreamDialer(&transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer}, key)
+	d, err := shadowsocks.NewStreamDialer(endpoint, key)
 	if err != nil {
 		return nil, err
 	}

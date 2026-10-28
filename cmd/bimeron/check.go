@@ -15,6 +15,7 @@ import (
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
+	"bimeron/internal/ssplugin"
 	"bimeron/internal/trojan"
 	"bimeron/internal/vless"
 	"bimeron/internal/vmess"
@@ -51,7 +52,14 @@ func check(args []string) error {
 	}
 	var tcp transport.StreamDialer
 	var udp transport.PacketListener
-	if p.Type == "socks5" {
+	if p.SSPlugin != nil {
+		client, err := ssplugin.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tcp = client
+	} else if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 		tcp, udp = s, s
 	} else if p.Type == "http" {
@@ -127,6 +135,10 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	if p.SSPlugin != nil {
+		fmt.Printf("TCP/TLS and DNS over TCP checks passed. Proxy IP: %s\n", address)
+	} else {
+		fmt.Printf("TCP/TLS and UDP/DNS checks passed. Proxy IP: %s\n", address)
+	}
 	return nil
 }

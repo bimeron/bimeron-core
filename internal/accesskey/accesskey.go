@@ -41,6 +41,7 @@ type Profile struct {
 	AnyTLS    AnyTLS
 	SSH       SSH
 	TUIC      TUIC
+	SSPlugin  *SSPlugin
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -569,7 +570,7 @@ func ParseSS(raw string) (Profile, error) {
 		return Profile{}, fmt.Errorf("invalid options")
 	}
 	for k, v := range q {
-		if (k != "outline" && k != "prefix") || len(v) != 1 {
+		if (k != "outline" && k != "prefix" && k != "plugin") || len(v) != 1 {
 			return Profile{}, fmt.Errorf("unsupported ss option")
 		}
 	}
@@ -581,7 +582,15 @@ func ParseSS(raw string) (Profile, error) {
 	if err := e.Validate(); err != nil {
 		return Profile{}, err
 	}
-	return Profile{Name: u.Fragment, TCP: e, UDP: e}, nil
+	p := Profile{Name: u.Fragment, TCP: e, UDP: e}
+	if q.Has("plugin") {
+		p.SSPlugin, err = parseSSPluginQuery(q.Get("plugin"))
+		if err != nil {
+			return Profile{}, err
+		}
+		p.UDP = Endpoint{}
+	}
+	return p, nil
 }
 
 // ParseSOCKS5 accepts a SOCKS5 URI without leaking credentials in errors.
@@ -644,12 +653,14 @@ type wireEndpoint struct {
 	Prefix  string `yaml:"prefix"`
 }
 type wireConfig struct {
-	Server    string `yaml:"server"`
-	Port      int    `yaml:"server_port"`
-	Password  string `yaml:"password"`
-	Method    string `yaml:"method"`
-	Prefix    string `yaml:"prefix"`
-	Transport *struct {
+	Plugin     string `yaml:"plugin"`
+	PluginOpts string `yaml:"plugin_opts"`
+	Server     string `yaml:"server"`
+	Port       int    `yaml:"server_port"`
+	Password   string `yaml:"password"`
+	Method     string `yaml:"method"`
+	Prefix     string `yaml:"prefix"`
+	Transport  *struct {
 		Type string       `yaml:"$type"`
 		TCP  wireEndpoint `yaml:"tcp"`
 		UDP  wireEndpoint `yaml:"udp"`
@@ -679,9 +690,17 @@ func ParseConfig(b []byte) (Profile, error) {
 		if err := e.Validate(); err != nil {
 			return Profile{}, err
 		}
-		return Profile{TCP: e, UDP: e}, nil
+		plugin, err := ParseSSPlugin(c.Plugin, c.PluginOpts)
+		if err != nil {
+			return Profile{}, err
+		}
+		p := Profile{TCP: e, UDP: e, SSPlugin: plugin}
+		if plugin != nil {
+			p.UDP = Endpoint{}
+		}
+		return p, nil
 	}
-	if c.Server != "" || c.Port != 0 || c.Password != "" || c.Method != "" || c.Prefix != "" {
+	if c.Server != "" || c.Port != 0 || c.Password != "" || c.Method != "" || c.Prefix != "" || c.Plugin != "" || c.PluginOpts != "" {
 		return Profile{}, fmt.Errorf("mixed config formats")
 	}
 	if c.Transport.Type != "tcpudp" {

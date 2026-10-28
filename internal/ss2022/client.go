@@ -24,10 +24,11 @@ import (
 const subkeyContext = "shadowsocks 2022 session subkey"
 
 type Client struct {
-	method string
-	key    []byte
-	server string
-	dialer net.Dialer
+	method   string
+	key      []byte
+	server   string
+	dialer   net.Dialer
+	endpoint transport.StreamEndpoint
 }
 
 func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
@@ -38,7 +39,20 @@ func New(e accesskey.Endpoint, dialer net.Dialer) (*Client, error) {
 		return nil, fmt.Errorf("not a Shadowsocks 2022 method")
 	}
 	key, _ := base64.StdEncoding.Strict().DecodeString(e.Secret)
-	return &Client{e.Cipher, key, net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer}, nil
+	return &Client{method: e.Cipher, key: key, server: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer: dialer}, nil
+}
+
+// NewStream connects the existing encryption layer to a supplied TCP transport.
+func NewStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (*Client, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("missing Shadowsocks 2022 stream endpoint")
+	}
+	c, err := New(e, net.Dialer{})
+	if err != nil {
+		return nil, err
+	}
+	c.endpoint = endpoint
+	return c, nil
 }
 
 func IsMethod(method string) bool {
@@ -159,7 +173,12 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	if err != nil {
 		return nil, err
 	}
-	conn, err := c.dialer.DialContext(ctx, "tcp", c.server)
+	var conn net.Conn
+	if c.endpoint != nil {
+		conn, err = c.endpoint.ConnectStream(ctx)
+	} else {
+		conn, err = c.dialer.DialContext(ctx, "tcp", c.server)
+	}
 	if err != nil {
 		return nil, err
 	}
