@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -132,15 +132,25 @@ as plaintext in the configuration file.
 
 ```ini
 [AccessKey]
-HTTP = http://alice:secret@proxy.example.com:8080
+HTTP = https://alice:replace-me@proxy.example.com:443
 ```
 
-Use `http://proxy.example.com:8080` without authentication. `Key` and `File`
-also accept this URI. Alternatively, use `Type = http`, `Server`, `Port`, and
-optional paired `Username` and `Password` fields. The URI requires a host and
-port and permits no path, query, or fragment. Percent-encode reserved credential
-characters. Basic credentials and traffic to the proxy are sent without TLS;
-use only a trusted network. `https://` proxy connections are not supported.
+Omit `alice:replace-me@` for an unauthenticated proxy. `HTTP`, `Key`, and `File`
+accept both `http://` and `https://` proxy URIs. Alternatively, use `Type = http`
+or `Type = https`, `Server`, `Port`, and optional paired `Username` and `Password`
+fields. The URI requires an explicit host and port and permits no path, query,
+or fragment. Percent-encode reserved credential characters.
+
+`https://` uses HTTP/1.1 CONNECT over TLS 1.2 or newer. The core verifies the
+certificate chain using system trust and checks the proxy hostname (or IP
+address) from the URI. It preserves that identity after resolving the endpoint
+to an IP. Basic credentials are sent only after TLS verification succeeds.
+Install a private CA in the operating system's trust store when needed; custom
+CA files, server-name overrides, and insecure TLS are not supported. Credentials
+remain plaintext in the configuration file. See [the HTTPS example](../examples/https-connect.conf).
+
+`http://` retains plaintext transport, including Basic credentials; use it only
+on a trusted network. There is no fallback from HTTPS to plaintext HTTP.
 
 HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
 other proxied UDP is dropped. Direct routing rules still use the physical
@@ -414,7 +424,7 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `vless://`, `vmess://`, `trojan://`,
 `naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
 combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.

@@ -53,7 +53,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
 | Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
-| Remote HTTP CONNECT | TCP | No; DNS is forwarded over TCP |
+| Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
@@ -61,8 +61,9 @@ Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
 and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
 claim Chromium-identical HTTP/2 behavior. Connections to a remote SOCKS5 upstream are not
-encrypted by the core. HTTP CONNECT also uses plaintext transport and sends Basic credentials
-without encryption. Not every combination has passed live interoperability testing.
+encrypted by the core. HTTP CONNECT accepts `https://` proxies with certificate and server-name
+verification. With `http://`, proxy traffic and Basic credentials use plaintext transport.
+Not every combination has passed live interoperability testing.
 
 ## Try a local proxy
 

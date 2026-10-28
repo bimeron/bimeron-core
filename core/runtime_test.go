@@ -105,6 +105,25 @@ func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
 	}
 }
 
+func TestResolveHTTPSOnVPNPathKeepsTLSName(t *testing.T) {
+	c := DefaultConfig()
+	c.DNS = nil
+	c.Resolve = func(context.Context) (Profile, error) {
+		p, err := accesskey.ParseHTTPConnect("https://proxy.example.com:443")
+		// Model a resolved endpoint without relying on the runner's hosts file
+		// or external DNS. Bootstrap must normalize the IP, not the TLS identity.
+		p.TCP.Host = "0:0:0:0:0:0:0:1"
+		return p, err
+	}
+	p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HTTPServerName != "proxy.example.com" || p.TCP.Host != "::1" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
+		t.Fatal("HTTPS identity or TCP-only behavior lost")
+	}
+}
+
 func TestProxyEngineListenerLifecycle(t *testing.T) {
 	// Only loopback is used; no DNS, external network, or system VPN operations.
 	l, err := net.Listen("tcp", "127.0.0.1:0")

@@ -118,7 +118,7 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
 	} else if p.Type == "http" {
-		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: outbound}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, outbound)
 		if clientErr != nil {
@@ -391,7 +391,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	} else if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "http" {
-		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
