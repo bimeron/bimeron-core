@@ -245,3 +245,9 @@ shutdown correctly refused to overwrite external DNS and left the kill switch
 active. Explicit `recover --keep-current-dns` accepted current DNS and cleared
 the journal, routes, and nftables. This confirms the documented safe DNS-conflict
 behavior. Sleep/wake testing on a Linux computer supporting suspend remains deferred.
+
+## IKEv2/IPsec availability
+
+The experimental [native IKEv2 backend](IKEV2.MD) currently targets Windows only.
+This platform's packet VPN support does not imply native IKEv2 support. Native
+system profiles are rejected on this platform; no embedded IPsec fallback is provided.

@@ -17,6 +17,7 @@ import (
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/routing"
 	"bimeron/internal/sshtunnel"
+	"bimeron/internal/systemvpn"
 	"bimeron/internal/telemetry"
 )
 
@@ -25,9 +26,15 @@ type Endpoint = accesskey.Endpoint
 type ShadowTLS = accesskey.ShadowTLS
 type Policy = routing.Policy
 
+// IKEv2Config selects an OS-managed tunnel using a pre-provisioned Windows
+// profile. Start from SessionConfig{Mode: "vpn", IKEv2: ...}; DefaultConfig
+// contains packet-backend options that are deliberately rejected here.
+type IKEv2Config = systemvpn.Config
+
 // SessionConfig is copied by Start. Resolve must honor cancellation and must not
 // modify shared state. It is called again after every reconnect (refreshing ssconf).
 type SessionConfig struct {
+	IKEv2                  *IKEv2Config
 	ProfileID, ProfileName string
 	Mode, Name, Listen     string
 	MTU                    int
@@ -96,6 +103,14 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	// Capture values and the resolved key source, so subsequent caller mutations
 	// of the configuration cannot change a running session.
 	copy := *c
+	if copy.IKEv2 != nil {
+		ike := *copy.IKEv2
+		cfg := SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, IKEv2: &ike}
+		if copy.ShadowTLS != nil || copy.Access != (config.Access{}) || copy.Tunnel != (config.Tunnel{Mode: "vpn", IPv6: "system"}) || copy.Routing.Default != routing.Proxy || len(copy.Routing.Rules) != 0 {
+			return SessionConfig{}, fmt.Errorf("invalid IKEv2 configuration")
+		}
+		return cfg, cfg.validate()
+	}
 	if c.ShadowTLS != nil {
 		settings := *c.ShadowTLS
 		copy.ShadowTLS = &settings
@@ -139,6 +154,16 @@ func KeyFile(path string) SessionConfig {
 }
 
 func (c SessionConfig) validate() error {
+	if c.IKEv2 != nil {
+		if err := c.IKEv2.Validate(); err != nil {
+			return err
+		}
+		policy := c.Policy.Config()
+		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
+			return fmt.Errorf("ikev2_unsupported_session_options")
+		}
+		return nil
+	}
 	if c.Resolve == nil {
 		return fmt.Errorf("missing access key resolver")
 	}

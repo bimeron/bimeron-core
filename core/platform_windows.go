@@ -42,6 +42,10 @@ func (p windowsPlatform) Acquire(ctx context.Context) (func(), error) {
 		return nil, fault("session_lock_failed", false)
 	}
 	// Never implicitly remove protection retained after a crashed session.
+	if pending, inspectErr := killswitch.NativePending(); inspectErr != nil || pending {
+		release()
+		return nil, fault("ikev2_protection_pending_run_recover", false)
+	}
 	if !p.killSwitch {
 		pending, err := killswitch.Pending()
 		if err != nil {

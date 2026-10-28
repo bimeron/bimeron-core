@@ -20,19 +20,22 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/routing"
+	"bimeron/internal/systemvpn"
 )
 
 const maxSize = 64 * 1024
 
 type File struct {
-	Version   int
-	Name      string
-	Access    Access
-	Tunnel    Tunnel
-	Routing   routing.Config
-	key       string
-	profile   *accesskey.Profile
-	ShadowTLS *accesskey.ShadowTLS
+	Version          int
+	Name             string
+	Access           Access
+	Tunnel           Tunnel
+	Routing          routing.Config
+	IKEv2            *systemvpn.Config
+	interfaceOptions bool
+	key              string
+	profile          *accesskey.Profile
+	ShadowTLS        *accesskey.ShadowTLS
 }
 type Access struct {
 	SS                string
@@ -120,11 +123,14 @@ func parse(b []byte) (*File, error) {
 			}
 			section = strings.TrimSpace(text[1 : len(text)-1])
 			switch section {
-			case "Profile", "AccessKey", "Interface", "Routing", "ShadowTLS":
+			case "Profile", "AccessKey", "Interface", "Routing", "IKEv2", "ShadowTLS":
 				if sections[section] {
 					return nil, fmt.Errorf("duplicate section at line %d", line)
 				}
 				sections[section] = true
+				if section == "IKEv2" {
+					c.IKEv2 = &systemvpn.Config{}
+				}
 				if section == "ShadowTLS" {
 					c.ShadowTLS = &accesskey.ShadowTLS{}
 				}
@@ -187,6 +193,9 @@ func parse(b []byte) (*File, error) {
 				recognized = false
 			}
 		case "Interface":
+			if key != "Mode" {
+				c.interfaceOptions = true
+			}
 			switch key {
 			case "KillSwitch":
 				if value != "true" && value != "false" {
@@ -205,6 +214,20 @@ func parse(b []byte) (*File, error) {
 				c.Tunnel.DNS = value
 			case "Listen":
 				c.Tunnel.Listen = value
+			default:
+				recognized = false
+			}
+		case "IKEv2":
+			switch key {
+			case "WindowsProfile":
+				c.IKEv2.WindowsProfile = value
+			case "ServerName":
+				c.IKEv2.ServerName = value
+			case "KillSwitch":
+				if value != "true" && value != "false" {
+					return nil, fmt.Errorf("IKEv2 KillSwitch must be true or false")
+				}
+				c.IKEv2.KillSwitch = value == "true"
 			default:
 				recognized = false
 			}
@@ -424,6 +447,17 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 	}
 	if c.Version != 1 {
 		return nil, fmt.Errorf("[Profile] Version must be 1")
+	}
+	if c.IKEv2 != nil {
+		if err := c.IKEv2.Validate(); err != nil {
+			return nil, err
+		}
+		if c.ShadowTLS != nil || c.Access != (Access{}) || c.Tunnel.Mode != "vpn" || c.interfaceOptions || c.Routing.Default != routing.Proxy || len(c.Routing.Rules) != 0 {
+			return nil, fmt.Errorf("IKEv2 requires VPN mode without AccessKey, interface overrides or routing rules")
+		}
+		// Do not inherit packet-backend defaults into an OS-managed tunnel.
+		c.Tunnel = Tunnel{Mode: "vpn", IPv6: "system"}
+		return c, nil
 	}
 	resolveSSHPath := func(value string) string {
 		if value != "" && path != "" && !filepath.IsAbs(value) && value != "~" && !strings.HasPrefix(value, "~/") && !strings.HasPrefix(value, `~\`) {
@@ -892,12 +926,18 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 	return c, nil
 }
 func (c *File) Resolve(ctx context.Context) (accesskey.Profile, error) {
+	if c.IKEv2 != nil {
+		return accesskey.Profile{}, fmt.Errorf("IKEv2 uses a system VPN backend, not an upstream dialer")
+	}
 	if c.profile != nil {
 		return c.withShadowTLS(*c.profile, nil)
 	}
 	return c.withShadowTLS(accesskey.NewResolver().Resolve(ctx, c.key))
 }
 func (c *File) ResolveWithTransport(ctx context.Context, t http.RoundTripper) (accesskey.Profile, error) {
+	if c.IKEv2 != nil {
+		return accesskey.Profile{}, fmt.Errorf("IKEv2 uses a system VPN backend, not an upstream dialer")
+	}
 	if c.profile != nil {
 		return c.withShadowTLS(*c.profile, nil)
 	}

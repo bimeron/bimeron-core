@@ -79,11 +79,14 @@ type Engine struct {
 
 // Stats returns counters for the most recent Start. Counters reset on every
 // Start and remain readable after the session ends. Snapshots never contain
-// addresses, credentials or destinations.
+// addresses, credentials or destinations. Unavailable is set for native IKEv2
+// sessions whose traffic does not pass through the core's packet counters.
 func (e *Engine) Stats() telemetry.Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.stats.Snapshot()
+	snapshot := e.stats.Snapshot()
+	snapshot.Unavailable = e.status.Session != nil && e.status.Session.StatsUnavailable
+	return snapshot
 }
 
 type runResult struct {
@@ -167,6 +170,10 @@ func (e *Engine) report(code, message string) {
 func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
+	}
+	if cfg.IKEv2 != nil {
+		ike := *cfg.IKEv2
+		cfg.IKEv2 = &ike
 	}
 	if err := ctx.Err(); err != nil {
 		return err

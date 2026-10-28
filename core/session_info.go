@@ -11,6 +11,8 @@ import (
 // SessionInfo describes the most recently accepted Start, never credentials.
 // KillSwitchRequested is configuration intent, not evidence of installed filters.
 type SessionInfo struct {
+	Backend             string `json:"backend,omitempty"`
+	StatsUnavailable    bool   `json:"stats_unavailable,omitempty"`
 	ID                  string `json:"id"`
 	ProfileID           string `json:"profile_id,omitempty"`
 	ProfileName         string `json:"profile_name,omitempty"`
@@ -47,6 +49,9 @@ func newSessionInfo(c SessionConfig) (*SessionInfo, error) {
 		name = name[:128]
 	}
 	ipv6 := "enable"
+	if c.IKEv2 != nil {
+		return &SessionInfo{ID: hex.EncodeToString(id[:]), ProfileID: profileID, ProfileName: string(name), Active: true, Mode: c.Mode, IPv6: "system", Backend: "ikev2", StatsUnavailable: true, KillSwitchRequested: c.IKEv2.KillSwitch}, nil
+	}
 	if c.DisableIPv6 {
 		ipv6 = "disable"
 	}

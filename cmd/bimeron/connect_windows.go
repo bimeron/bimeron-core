@@ -3,10 +3,10 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"bimeron/internal/killswitch"
 	"bimeron/internal/windowsnet"
+	"context"
+	"fmt"
 	"time"
 )
 
@@ -26,6 +26,9 @@ func recoverVPN(args []string) error {
 	defer cancel()
 	if err := windowsnet.Recover(ctx); err != nil {
 		return err
+	}
+	if err := windowsnet.RecoverIKEv2DNS(ctx); err != nil {
+		return fmt.Errorf("could not restore native VPN DNS; protection retained")
 	}
 	if err := killswitch.Recover(); err != nil {
 		return fmt.Errorf("could not remove owned kill switch protection")

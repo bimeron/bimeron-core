@@ -28,6 +28,7 @@ type Counters struct {
 // Snapshot is a detached point-in-time copy safe for JSON transport. Byte and
 // flow counts never contain addresses, credentials or destinations.
 type Snapshot struct {
+	Unavailable  bool  `json:"unavailable,omitempty"`
 	TCPTotal     int64 `json:"tcp_total"`
 	TCPActive    int64 `json:"tcp_active"`
 	TCPFailed    int64 `json:"tcp_failed"`

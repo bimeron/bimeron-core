@@ -124,6 +124,9 @@ type packetPlatform struct {
 }
 
 func (p *packetPlatform) Acquire(ctx context.Context) (func(), error) {
+	if p.config.IKEv2 != nil {
+		return nil, fault("ikev2_requires_native_host_backend", false)
+	}
 	if p.config.Mode != "vpn" || p.config.MTU != p.options.MTU {
 		return nil, fault("invalid_packet_backend_config", false)
 	}
