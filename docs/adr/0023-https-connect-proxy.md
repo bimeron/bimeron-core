@@ -1,4 +1,4 @@
-# ADR 0022: Verified TLS for HTTP CONNECT proxies
+# ADR 0023: Verified TLS for HTTP CONNECT proxies
 
 Status: accepted, October 28, 2026. Tracks issue #49.
 
