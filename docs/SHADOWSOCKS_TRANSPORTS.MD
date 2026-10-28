@@ -192,7 +192,7 @@ and shutdown. Custom Host/method/URI cases use final upstream. AES-192-GCM has
 a synthetic HTTP peer test rather than an independent Xray case. These checks
 do not claim mobile-device or packet-VPN data-plane interoperability.
 See [reference checks](CI.MD#simple-obfs-reference-checks) and
-[ADR 0026](adr/0026-embedded-simple-obfs-client.md).
+[ADR 0027](adr/0027-embedded-simple-obfs-client.md).
 
 ## Validate and run
 

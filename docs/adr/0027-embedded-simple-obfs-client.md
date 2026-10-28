@@ -1,4 +1,4 @@
-# ADR 0026: Embed a focused simple-obfs client
+# ADR 0027: Embed a focused simple-obfs client
 
 Status: Accepted, October 28, 2026. The user authorized the embedded approach
 and staged implementation. Configuration and transport are implemented and
