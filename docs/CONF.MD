@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `vless://...`, `vmess://...`, `trojan://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`,
 `hysteria2://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -120,6 +120,24 @@ must either both be present or both absent. Percent-encode reserved characters
 in credentials (for example `@` as `%40`). This is Bimeron's import syntax;
 SOCKS5 does not define a universal profile-link format. Credentials are stored
 as plaintext in the configuration file.
+
+### Remote HTTP CONNECT proxy
+
+```ini
+[AccessKey]
+HTTP = http://alice:secret@proxy.example.com:8080
+```
+
+Use `http://proxy.example.com:8080` without authentication. `Key` and `File`
+also accept this URI. Alternatively, use `Type = http`, `Server`, `Port`, and
+optional paired `Username` and `Password` fields. The URI requires a host and
+port and permits no path, query, or fragment. Percent-encode reserved credential
+characters. Basic credentials and traffic to the proxy are sent without TLS;
+use only a trusted network. `https://` proxy connections are not supported.
+
+HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
+other proxied UDP is dropped. Direct routing rules still use the physical
+network. In `Mode = proxy`, the local listener remains SOCKS5.
 
 ### Inline VLESS URI
 
@@ -326,9 +344,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `vmess://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
 `hysteria2://`, `hy2://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`,
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Hysteria2`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 

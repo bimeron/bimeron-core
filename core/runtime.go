@@ -108,6 +108,8 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
+	} else if p.Type == "http" {
+		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, outbound)
 		if clientErr != nil {
@@ -154,8 +156,8 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("invalid_udp_transport", false)
 		}
 	}
-	if p.Type == "ssh" {
-		report("transport_check", "Checking TCP/TLS and DNS over SSH")
+	if p.Type == "ssh" || p.Type == "http" {
+		report("transport_check", "Checking TCP/TLS and DNS over TCP")
 	} else {
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	}
@@ -361,6 +363,8 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	var closeTransport func() error
 	if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+	} else if p.Type == "http" {
+		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
 		client, clientErr := vless.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {

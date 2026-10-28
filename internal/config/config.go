@@ -37,6 +37,7 @@ type Access struct {
 	SS              string
 	SSConf          string
 	SOCKS5          string
+	HTTP            string
 	VLESS           string
 	VMess           string
 	Trojan          string
@@ -206,6 +207,8 @@ func parse(b []byte) (*File, error) {
 				c.Access.SSConf = value
 			case "SOCKS5":
 				c.Access.SOCKS5 = value
+			case "HTTP":
+				c.Access.HTTP = value
 			case "Type":
 				c.Access.Type = value
 			case "Username":
@@ -410,6 +413,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	if c.Access.SOCKS5 != "" && !strings.HasPrefix(c.Access.SOCKS5, "socks5://") {
 		return nil, fmt.Errorf("[AccessKey] SOCKS5 must start with socks5://")
 	}
+	if c.Access.HTTP != "" && !strings.HasPrefix(c.Access.HTTP, "http://") {
+		return nil, fmt.Errorf("[AccessKey] HTTP must start with http://")
+	}
 	if c.Access.VLESS != "" && !strings.HasPrefix(c.Access.VLESS, "vless://") {
 		return nil, fmt.Errorf("[AccessKey] VLESS must start with vless://")
 	}
@@ -436,6 +442,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if c.Access.SOCKS5 != "" {
+		sources++
+	}
+	if c.Access.HTTP != "" {
 		sources++
 	}
 	if c.Access.VLESS != "" {
@@ -472,7 +481,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		sources++
 	}
 	if sources != 1 {
-		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, VLESS, VMess, Trojan, Hysteria2, SSH, TUIC, Key, or explicit parameters")
+		return nil, fmt.Errorf("[AccessKey] must specify exactly one source: File, SS, SSConf, SOCKS5, HTTP, VLESS, VMess, Trojan, Hysteria2, SSH, TUIC, Key, or explicit parameters")
 	}
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
@@ -547,11 +556,23 @@ func loadBytes(b []byte, path string) (*File, error) {
 			c.profile = &p
 			return c, nil
 		}
+		if c.Access.Type == "http" {
+			if s.Method != "" || s.Prefix != "" || (c.Access.Username == "") != (s.Password == "") || strings.ContainsAny(c.Access.Username, ":\r\n") || strings.ContainsAny(s.Password, "\r\n") {
+				return nil, fmt.Errorf("[AccessKey] invalid HTTP proxy parameters")
+			}
+			p, err := accesskey.ParseHTTPConnect("http://" + net.JoinHostPort(s.Server, strconv.Itoa(s.Port)))
+			if err != nil {
+				return nil, err
+			}
+			p.Username, p.TCP.Secret = c.Access.Username, s.Password
+			c.profile = &p
+			return c, nil
+		}
 		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
 			return nil, fmt.Errorf("[AccessKey] unsupported Type")
 		}
 		if c.Access.Username != "" {
-			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5")
+			return nil, fmt.Errorf("[AccessKey] Username is only valid for socks5 or http")
 		}
 		e := accesskey.Endpoint{Host: s.Server, Port: s.Port, Cipher: s.Method, Secret: s.Password, Prefix: s.Prefix}
 		if err := e.Validate(); err != nil {
@@ -569,6 +590,9 @@ func loadBytes(b []byte, path string) (*File, error) {
 	}
 	if c.Access.SOCKS5 != "" {
 		key = c.Access.SOCKS5
+	}
+	if c.Access.HTTP != "" {
+		key = c.Access.HTTP
 	}
 	if c.Access.VLESS != "" {
 		key = c.Access.VLESS
@@ -610,6 +634,14 @@ func loadBytes(b []byte, path string) (*File, error) {
 	}
 	if strings.HasPrefix(c.key, "socks5://") {
 		p, err := accesskey.ParseSOCKS5(c.key)
+		if err != nil {
+			return nil, err
+		}
+		c.profile = &p
+		return c, nil
+	}
+	if strings.HasPrefix(c.key, "http://") {
+		p, err := accesskey.ParseHTTPConnect(c.key)
 		if err != nil {
 			return nil, err
 		}
@@ -673,7 +705,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 		return c, nil
 	}
 	if !strings.HasPrefix(c.key, "ssconf://") {
-		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, vless://, vmess://, trojan://, hysteria2://, hy2://, ssh://, or tuic://")
+		return nil, fmt.Errorf("access key must start with ss://, ssconf://, socks5://, http://, vless://, vmess://, trojan://, hysteria2://, hy2://, ssh://, or tuic://")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(c.key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
