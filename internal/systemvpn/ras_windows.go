@@ -237,16 +237,20 @@ func (d *windowsDriver) entry(cfg Config) (rasEntry, error) {
 	return *e, nil
 }
 
+const (
+	rasRequireEAP         = 0x00020000
+	rasOtherAuth          = 0x00040000 | 0x00080000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000
+	rasUnsafeOptions2     = 0x10 | 0x100 | 0x40000 | 0x400000 | 0x800000 | 0x1000000 | 0x4000000 | 0x8000000 | 0x10000000 | 0x20000000
+	rasUnsupportedOptions = 0x40 | 0x80 | 0x100000 | 0x80000000 | 0x4000
+)
+
 func validateEntry(e rasEntry, cfg Config) error {
-	const requireEAP = 0x00020000
-	const otherAuth = 0x00040000 | 0x00080000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000
-	const unsafeOptions2 = 0x10 | 0x100 | 0x40000 | 0x400000 | 0x800000 | 0x1000000 | 0x4000000 | 0x8000000 | 0x10000000 | 0x20000000
-	if e.Type != 2 || e.VPNStrategy != 7 || e.CustomAuthKey != 26 || e.Options&requireEAP == 0 || e.Options&otherAuth != 0 {
+	if e.Type != 2 || e.VPNStrategy != 7 || e.CustomAuthKey != 26 || e.Options&rasRequireEAP == 0 || e.Options&rasOtherAuth != 0 {
 		return errors.New("ikev2_profile_requires_ikev2_eap_mschapv2")
 	}
 	// Keep Windows IKE certificate name/EKU checks enabled. Reject PSK, machine
 	// auth, third-party/OTP/always-on profiles and independent redial owners.
-	if e.Options2&unsafeOptions2 != 0 || e.RedialCount != 0 || e.Options3 != 0 {
+	if e.Options2&rasUnsafeOptions2 != 0 || e.RedialCount != 0 || e.Options3 != 0 {
 		return errors.New("ikev2_unsafe_or_unsupported_windows_profile")
 	}
 	if !strings.EqualFold(windows.UTF16ToString(e.PhoneNumber[:]), cfg.ServerName) || windows.UTF16ToString(e.IDr[:]) != "" || windows.UTF16ToString(e.IDi[:]) != "" {
@@ -255,7 +259,7 @@ func validateEntry(e rasEntry, cfg Config) error {
 	if e.Options&0x10 == 0 || e.Options2&0x2000 == 0 || e.NetProtocols != 0xc || (e.EncryptionType != 1 && e.EncryptionType != 2) {
 		return errors.New("ikev2_profile_requires_encrypted_dual_stack_default_routes")
 	}
-	if e.AlternateOffset != 0 || e.SubEntries > 1 || e.IsIMSConfig != 0 || e.Options&(0x40|0x80|0x100000|0x80000000|0x4000) != 0 || e.Script[0] != 0 || e.AutodialDLL[0] != 0 || e.AutodialFunc[0] != 0 || e.CustomDialDLL[0] != 0 || e.PrerequisiteEntry[0] != 0 || e.PrerequisitePBK[0] != 0 {
+	if e.AlternateOffset != 0 || e.SubEntries > 1 || e.IsIMSConfig != 0 || e.Options&rasUnsupportedOptions != 0 || e.Script[0] != 0 || e.AutodialDLL[0] != 0 || e.AutodialFunc[0] != 0 || e.CustomDialDLL[0] != 0 || e.PrerequisiteEntry[0] != 0 || e.PrerequisitePBK[0] != 0 {
 		return errors.New("ikev2_profile_contains_unsupported_dial_hooks")
 	}
 	return nil
@@ -269,6 +273,10 @@ func (d *windowsDriver) inspect(cfg Config) error {
 	if err := validateEntry(e, cfg); err != nil {
 		return err
 	}
+	return noRASConnections()
+}
+
+func noRASConnections() error {
 	// Do not reference, adopt or disconnect an existing RAS session. This also
 	// leaves stale sessions after a process crash for explicit OS-level recovery.
 	connections := make([]rasConnection, 1)

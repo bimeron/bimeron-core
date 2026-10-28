@@ -149,10 +149,11 @@ and [Windows VPN routing](https://learn.microsoft.com/en-us/windows/security/ope
 
 ## Remaining checks
 
-Throughput/CPU measurements, broader protection/mobility coverage, actual laptop sleep
-and physical network changes, long-running mobility, RRAS and other Windows
-builds/policies remain separate validation. VM save/resume is not a substitute
-for physical power-management testing. See [the guide](IKEV2.MD) for the procedure.
+The later sections record protection and measurement follow-ups. Actual laptop
+sleep, physical network changes, Windows 11 and RRAS are deferred in
+[issue #66](https://github.com/bimeron/bimeron-core/issues/66). VM save/resume is
+not a substitute for physical power-management testing. Public IPv6 still
+requires a server uplink. See [the guide](IKEV2.MD) for reproducible procedures.
 
 ## Protected-mode follow-up
 
@@ -210,3 +211,95 @@ exceptions. The checks do not establish protection during bootstrap/early boot,
 against privileged policy changes, across remote-peer changes, on other Windows
 builds or with RRAS. Public IPv6, physical mobility and long-running behavior
 still need the remaining validation matrix.
+
+## Explicit profile preparation and comparative measurements
+
+The Windows 10 build 19044 VM was used again with a separate current-user
+profile created by `bimeron ikev2 profile`. The original administrator-owned
+lab profile was not adopted or changed. Preparation selects the previously
+validated IKE AES256/SHA256/DH14 and ESP AES256/SHA256 without PFS, plus both
+IPv6 profile routes. CA trust and initial authentication remained outside the
+preparation command, using Windows facilities and the existing test CA.
+
+Read-only preview, creation, repeated no-op preparation, unowned-name refusal,
+native-setting modification refusal, partial-creation rollback and explicit
+removal passed in the disposable account. A direct Windows connection confirmed
+that active-profile removal was refused with `ikev2_existing_ras_connection`.
+After initial Windows authentication, the created profile connected through
+protected Engine and served internal IPv4 and IPv6 HTTP successfully. Saving
+credentials alone initially produced `ikev2_saved_eap_identity_required`, as
+expected before initial Windows authentication; preparation does not seed EAP
+user data or obtain credentials.
+
+The comparison ran sequentially in one interactive elevated Go test process on
+a VM with 10 virtual processors and about 2.3 GiB assigned memory. It used the
+same prepared profile/server/path for native RAS directly through the existing
+driver, Engine without protection, and protected Engine. Each row has 20
+independent connections and stops. p95 is the nearest-rank 95th percentile.
+
+| Mode | Connect median / p95 (ms) | Stop median / p95 (ms) |
+| --- | ---: | ---: |
+| Native RAS driver | 3117.09 / 3217.10 | 24.75 / 39.31 |
+| Engine, unprotected | 3061.85 / 3166.32 | 26.06 / 46.14 |
+| Engine, protected | 2751.70 / 2789.97 | 431.35 / 462.49 |
+
+Connection timing ends at RAS readiness or, in protected mode, policy readiness;
+it does not include subsequent HTTP readiness. Sequential timing differences
+do not establish a protection-related speedup. Protected Stop includes DNS and
+WFP cleanup. An initial measurement attempt failed its IPv6 probe after a fixed
+five-second pause; it is excluded from these completed comparison rows. The
+revised harness explicitly waited for IPv4/IPv6 HTTP, recording one initial
+failed probe and about 6.1 seconds to data readiness in each mode. No production
+address/route workaround or DAD change was added.
+
+Each transfer below requested 50 Mbit/s for ten seconds against the controlled
+in-tunnel iperf3 server; UDP payloads were 1200 bytes. Values are receiver-side
+rates from one sample per direction/mode, not maximum-throughput benchmarks.
+The Windows lab used iperf3 3.22 from
+[ar51an/iperf3-win-builds](https://github.com/ar51an/iperf3-win-builds/releases/tag/3.22),
+archive SHA256 `c9feabb3d721039508ccb81f74c2ada3ae11b9e75d33d24510573c2aa21da420`.
+The binary and DLL are lab tools outside the repository/distribution.
+
+| Mode | TCP up / down (Mbit/s) | UDP up / down (Mbit/s) | UDP receiver loss up / down (%) |
+| --- | ---: | ---: | ---: |
+| Native RAS driver | 26.60 / 50.15 | 49.05 / 49.99 | 0 / 0.576 |
+| Engine, unprotected | 17.72 / 50.11 | 48.12 / 49.81 | 0 / 0.877 |
+| Engine, protected | 23.55 / 50.12 | 48.44 / 50.04 | 0 / 0.524 |
+
+Upload variation and UDP loss occurred across modes; this single sequential
+sample does not isolate network, host or protection overhead. During the
+ten-second idle windows, measured test-process CPU was 0 / 0.125 / 0 seconds
+respectively. During individual transfers it ranged from 0 to 0.15625 CPU
+seconds, while guest-wide busy CPU ranged from about 0.20% to 2.62% across all
+ten virtual processors. Working-set samples after idle were approximately
+33.95 / 32.86 / 27.92 MiB. These include the test harness and retained reports
+in one process; they are not isolated CLI memory budgets or IPsec-process CPU.
+
+The subsequent protected hold completed its configured 900 seconds with 90
+successful IPv4/IPv6 HTTP probe pairs, sampled about every ten seconds. Every
+system DNS lookup returned both address families; cached lookups are possible.
+Server-initiated CHILD rekey and IKE rekey both completed successfully during
+the hold, with subsequent probes continuing to pass. HTTP median/p95 was
+36.29/48.25 ms for IPv4 and 35.08/45.61 ms for IPv6. Sampled test-process working
+set ranged from 22.55 to 28.61 MiB and Go heap from 1.10 to 3.47 MiB; test-process
+CPU increased by 18.359375 seconds between the first and last samples. This is
+a bounded periodic-probe soak, not an overnight endurance or mobility claim.
+
+The final expanded preparation test passed in 10.44 seconds. It additionally
+verified refusal after manual profile-route changes, preservation of a foreign
+profile appearing during a failed create, retention/refusal of an incomplete
+journal, and replacement/persistence of the pending ownership record. The latest
+protected `TestWindowsIKEv2NativeLifecycle` passed using the created profile
+in 1.79 seconds. Repeated preparation after all connection cycles still returned
+`unchanged`; explicit removal then removed only the temporary owned profile.
+
+Final inspection found zero route or DNS differences against the disconnected
+baseline, zero NRPT rules, zero native WFP filters, zero owned profile records,
+and zero temporary test tasks. Only the original administrator-owned lab
+profile remained, disconnected. The server stayed running; authentication
+material, certificate trust and unrelated VPN/service configuration were not
+changed. Raw JSON, logs, executable hashes and rekey evidence remain outside Git.
+Windows 11, RRAS, physical sleep and physical Wi-Fi/Ethernet changes remain
+deferred in [#66](https://github.com/bimeron/bimeron-core/issues/66); public IPv6
+still needs a server uplink. Bootstrap/remote-peer protection limits remain
+unchanged from ADR 0025.
