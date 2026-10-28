@@ -76,7 +76,7 @@ func (p *HTTPConnect) DialStream(ctx context.Context, target string) (transport.
 	if err != nil {
 		return nil, fmt.Errorf("invalid HTTP CONNECT response")
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("HTTP CONNECT rejected (status %d)", response.StatusCode)
 	}
 	_ = c.SetDeadline(time.Time{})
@@ -93,3 +93,6 @@ type bufferedConn struct {
 }
 
 func (c *bufferedConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
+
+// WriteTo must drain buffered tunnel bytes before TCP's optimized copy path.
+func (c *bufferedConn) WriteTo(w io.Writer) (int64, error) { return c.reader.WriteTo(w) }

@@ -48,9 +48,9 @@ func TestHTTPConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	b := make([]byte, 5)
-	if _, err := io.ReadFull(c, b); err != nil || string(b) != "hello" {
-		t.Fatalf("tunnel bytes: %q, %v", b, err)
+	var payload strings.Builder
+	if _, err := io.Copy(&payload, c); err != nil || payload.String() != "hello" {
+		t.Fatalf("tunnel bytes: %q, %v", payload.String(), err)
 	}
 	request := <-requests
 	auth := base64.StdEncoding.EncodeToString([]byte("alice:secret"))
@@ -84,5 +84,73 @@ func TestHTTPConnectRejectsResponse(t *testing.T) {
 	p := HTTPConnect{}
 	if _, err := p.DialStream(context.Background(), fmt.Sprintf("evil\r\nheader: x:%d", 443)); err == nil {
 		t.Fatal("invalid target accepted")
+	}
+}
+
+func TestBufferedConnectCopyDrainsReader(t *testing.T) {
+	c := &bufferedConn{reader: bufio.NewReader(strings.NewReader("buffered tunnel bytes"))}
+	var out strings.Builder
+	if _, err := io.Copy(&out, c); err != nil || out.String() != "buffered tunnel bytes" {
+		t.Fatalf("buffered copy: %q, %v", out.String(), err)
+	}
+}
+
+func TestHTTPConnectThroughLocalSOCKS(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	serverError := make(chan error, 1)
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			serverError <- err
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		r := bufio.NewReader(c)
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				serverError <- err
+				return
+			}
+			if line == "\r\n" {
+				break
+			}
+		}
+		_, err = io.WriteString(c, "HTTP/1.1 200 OK\r\n\r\nhello")
+		if err != nil {
+			serverError <- err
+			return
+		}
+		var ping [4]byte
+		_, err = io.ReadFull(r, ping[:])
+		if err == nil && string(ping[:]) != "ping" {
+			err = fmt.Errorf("unexpected tunnel payload")
+		}
+		if err == nil {
+			_, err = io.WriteString(c, "pong")
+		}
+		serverError <- err
+	}()
+	p := &HTTPConnect{Endpoint: accesskey.Endpoint{Host: "127.0.0.1", Port: l.Addr().(*net.TCPAddr).Port}}
+	address, _, _ := start(t, &Server{Proxy: p})
+	c := handshake(t, address, 1)
+	var reply [10]byte
+	if _, err := io.ReadFull(c, reply[:]); err != nil || reply[1] != 0 {
+		t.Fatalf("SOCKS reply: %v, %v", reply, err)
+	}
+	if _, err := io.WriteString(c, "ping"); err != nil {
+		t.Fatal(err)
+	}
+	var payload [9]byte
+	if _, err := io.ReadFull(c, payload[:]); err != nil || string(payload[:]) != "hellopong" {
+		t.Fatalf("relay: %q, %v", payload, err)
+	}
+	if err := <-serverError; err != nil {
+		t.Fatal(err)
 	}
 }
