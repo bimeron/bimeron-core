@@ -28,6 +28,28 @@ func localProfile(t *testing.T, address string, mux uint32) accesskey.Profile {
 	return accesskey.Profile{TCP: accesskey.Endpoint{Host: host, Port: port, Cipher: "aes-192-gcm", Secret: "test-only"}, SSPlugin: &accesskey.SSPlugin{Host: "ws.example", Path: "/custom", Mux: mux}}
 }
 
+func TestSimpleObfsClientConstruction(t *testing.T) {
+	for _, mode := range []string{"http", "tls"} {
+		settings, err := accesskey.ParseSSPlugin("obfs-local", "obfs="+mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := accesskey.Profile{TCP: accesskey.Endpoint{Host: "server.example", Port: 8388, Cipher: "aes-256-gcm", Secret: "test-only"}, SSPlugin: settings}
+		client, err := New(p, net.Dialer{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if client.pool != nil {
+			t.Fatal("simple-obfs created a Mux pool")
+		}
+		client.Close()
+		if conn, err := client.DialStream(t.Context(), "echo.example:80"); err == nil {
+			conn.Close()
+			t.Fatal("closed client accepted a connection")
+		}
+	}
+}
+
 func TestWebSocketHostPathAndAES192(t *testing.T) {
 	key, err := shadowsocks.NewEncryptionKey("aes-192-gcm", "test-only")
 	if err != nil {
