@@ -1,4 +1,4 @@
-# ADR 0027: MASQUE CONNECT-UDP over HTTP/3
+# ADR 0028: MASQUE CONNECT-UDP over HTTP/3
 
 Status: accepted, October 28, 2026. Tracks issue #60.
 

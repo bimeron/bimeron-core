@@ -45,6 +45,7 @@ SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIAT
 | Shadowsocks | TCP, UDP | Yes |
 | Shadowsocks 2022 (including SIP023 AES identity chains) | TCP, UDP | Yes |
 | Shadowsocks / 2022 + v2ray-plugin | WebSocket, WebSocket/TLS; embedded Mux | No; DNS is forwarded over TCP |
+| Shadowsocks / 2022 + simple-obfs | Embedded HTTP or TLS-shaped obfuscation (`obfs-local`) | No; DNS is forwarded over TCP |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP, WebSocket, gRPC over TLS | Yes |

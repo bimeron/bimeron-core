@@ -1,5 +1,5 @@
 // Package ssplugin composes Shadowsocks encryption with the embedded
-// v2ray-plugin WebSocket transport. It never executes profile-supplied code.
+// v2ray-plugin and simple-obfs transports. It never executes profile-supplied code.
 package ssplugin
 
 import (
@@ -13,6 +13,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
+	"bimeron/internal/simpleobfs"
 	"bimeron/internal/streamtransport"
 	"bimeron/internal/v2raymux"
 	"golang.getoutline.org/sdk/transport"
@@ -71,12 +72,86 @@ func New(p accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	return c, nil
 }
 
-// SetRootCAs configures trust before the first connection, primarily for hosts
+// SetRootCAs configures v2ray-plugin trust before the first connection, for hosts
 // with a private trust store. Certificate and hostname verification stay enabled.
 func (c *Client) SetRootCAs(roots *x509.CertPool) { c.mu.Lock(); c.rootCAs = roots; c.mu.Unlock() }
 
 func (c *Client) DialStream(ctx context.Context, target string) (transport.StreamConn, error) {
+	if c.settings.Name == "obfs-local" {
+		return c.dialObfs(ctx, target)
+	}
 	return c.stream.DialStream(ctx, target)
+}
+
+func (c *Client) dialObfs(ctx context.Context, target string) (transport.StreamConn, error) {
+	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	stopLifetime := context.AfterFunc(c.ctx, cancel)
+	defer stopLifetime()
+	var owned *wsStream
+	var stop func() bool
+	endpoint := transport.FuncStreamEndpoint(func(ctx context.Context) (transport.StreamConn, error) {
+		c.mu.Lock()
+		closed := c.closed
+		c.mu.Unlock()
+		if closed {
+			return nil, net.ErrClosed
+		}
+		raw, err := c.dialer.DialContext(ctx, "tcp", net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)))
+		if err != nil {
+			return nil, err
+		}
+		stop = context.AfterFunc(ctx, func() { _ = raw.Close() })
+		deadline, _ := ctx.Deadline()
+		if err := raw.SetDeadline(deadline); err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+		owned = &wsStream{Conn: raw, raw: raw, owner: c}
+		wrapped, err := simpleobfs.New(owned, c.settings, c.endpoint.Port)
+		if err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.closed {
+			_ = raw.Close()
+			return nil, net.ErrClosed
+		}
+		c.connections[owned] = struct{}{}
+		return wrapped, nil
+	})
+	defer func() {
+		if stop != nil {
+			stop()
+		}
+	}()
+	// A per-dial endpoint keeps cancellation attached through SS2022's eager
+	// request write without canceling unrelated established connections.
+	stream, err := proxy.OutlineStream(c.endpoint, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := stream.DialStream(setup, target)
+	if err != nil {
+		if owned != nil {
+			_ = owned.Close()
+		}
+		return nil, err
+	}
+	if !stop() || setup.Err() != nil {
+		_ = conn.Close()
+		if err := setup.Err(); err != nil {
+			return nil, err
+		}
+		return nil, context.Canceled
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (c *Client) connect(ctx context.Context) (transport.StreamConn, error) {

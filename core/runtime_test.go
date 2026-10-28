@@ -91,6 +91,22 @@ func TestResolveShadowsocksPluginOnVPNPathKeepsHostAndNoUDP(t *testing.T) {
 	}
 }
 
+func TestResolveSimpleObfsOnVPNPathKeepsHostAndNoUDP(t *testing.T) {
+	for _, mode := range []string{"http", "tls"} {
+		cfg := DefaultConfig()
+		cfg.Resolve = func(context.Context) (Profile, error) {
+			return accesskey.ParseSS("ss://aes-256-gcm:secret@[::1]:443/?plugin=obfs-local%3Bobfs%3D" + mode + "%3Bobfs-host%3Dcover.example")
+		}
+		p, _, endpoints, err := resolveOnPath(t.Context(), cfg, networkPath{dialer: net.Dialer{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.TCP.Host != "::1" || p.SSPlugin == nil || p.SSPlugin.Host != "cover.example" || p.SSPlugin.Mode != mode || endpoints.tcp != "[::1]:443" || endpoints.udp != "" || endpoints.udpName != "" || !p.TCPOnly() {
+			t.Fatalf("simple-obfs endpoint or camouflage host changed: %+v", endpoints)
+		}
+	}
+}
+
 func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
 	for _, scheme := range []string{"naive+https", "naive+quic"} {
 		t.Run(scheme, func(t *testing.T) {
