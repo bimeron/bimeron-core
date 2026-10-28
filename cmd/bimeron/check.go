@@ -34,6 +34,9 @@ func check(args []string) error {
 		return err
 	}
 	if cfg != nil {
+		if cfg.IKEv2 != nil {
+			return fmt.Errorf("check requires an upstream dialer; use run for a system IKEv2 profile")
+		}
 		*dns = cfg.Tunnel.DNS
 	}
 	if cfg == nil && flags.NArg() != 1 {
