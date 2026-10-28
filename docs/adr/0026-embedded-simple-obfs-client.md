@@ -1,7 +1,8 @@
 # ADR 0026: Embed a focused simple-obfs client
 
-Status: Proposed, October 28, 2026. Configuration parsing is implemented;
-the transport is not implemented or verified yet.
+Status: Accepted, October 28, 2026. The user authorized the embedded approach
+and staged implementation. Configuration and transport are implemented and
+verified locally; CI wiring and user documentation remain pending.
 
 Tracking issue: [#61](https://github.com/bimeron/bimeron-core/issues/61).
 
@@ -9,10 +10,60 @@ Tracking issue: [#61](https://github.com/bimeron/bimeron-core/issues/61).
 
 The Low configuration stage adds `SSPlugin.Name`, `Mode`, and `Method`, reuses
 Host and Path, and preserves the empty Name as v2ray-plugin. HTTP URIs are
-limited to 4,096 ASCII bytes and must escape whitespace and non-ASCII content.
+limited to 4,096 ASCII bytes and must escape whitespace and non-ASCII content;
+HTTP method tokens are limited to 64 bytes to bound the complete request header.
 URI, JSON, YAML, and explicit INI imports share the existing parser and retain
-the TCP-only plugin policy. Until the Medium transport stage is complete,
-`ssplugin.New` rejects obfs-local explicitly instead of using WebSocket.
+the TCP-only plugin policy. The Medium stage adds `internal/simpleobfs` and
+dispatches obfs-local separately from WebSocket in `ssplugin.New`/`DialStream`.
+Setup cancellation covers SS2022's eager request write; established streams
+outlive their dial context. Framing errors and client shutdown close the owned
+socket and remove it from the client's active-connection set. Closing either
+direction closes that stream, matching the original server's EOF behavior.
+
+### Locally verified scope
+
+On Windows, `go test ./...`, `go vet ./...`, and targeted race tests cover the
+wrapper, plugin, configuration, and core runtime resolution. Original
+v2ray-plugin concurrency and large-transfer/reconnect regression tests pass.
+The simple-obfs reference matrix runs in Linux/amd64 under WSL, with the
+original servers and an independent Xray 26.3.27 backend in separate processes.
+
+Both pinned original revisions pass HTTP/TLS tests with `aes-128-gcm`,
+`aes-256-gcm`, `chacha20-ietf-poly1305`, and all three existing SS2022 methods.
+Both AES SS2022 methods pass multi-user identity and concurrent-stream tests.
+Final upstream additionally passes custom Host, HTTP method, and URI tests.
+Both revisions pass 1.4 MB wrapper-only echo transfers and independent-stream
+shutdown checks. AES-192-GCM is covered by a synthetic Outline peer rather
+than Xray, which does not provide that method. No packet-VPN data-plane or
+mobile-device interoperability run is claimed by these local checks.
+
+Reference libcork commits are `f02984545061c924808e4b9ea7cc6749a41f1979`
+for final upstream and `29d7cbafc4b983192baeb0c962ab1ff591418f56` for v0.0.5.
+Build both sources with their pinned submodules, `./autogen.sh`,
+`./configure --disable-documentation`, and `make`. On Ubuntu GCC 13.3.0, the
+v0.0.5 build needs `CFLAGS="-O2 -fcommon -Wno-error=stringop-overread"` to
+build unchanged upstream source with its historical warnings. Do not apply
+that compiler-warning relaxation to Bimeron's build.
+
+The next Low stage should wire these exact test controls into Linux CI:
+
+```sh
+export BIMERON_OBFS_SERVER_BIN=/absolute/path/to/pinned/obfs-server
+export BIMERON_XRAY_BIN=/absolute/path/to/pinned/xray
+export BIMERON_REQUIRE_SIMPLEOBFS_INTEROP=1
+go test -race ./internal/simpleobfs ./internal/ssplugin -run 'TestOriginalSimpleObfs|TestRead|TestReject|TestWrite|TestPartial|TestTLS|TestHTTP|TestClose|TestEmpty|TestSimpleObfs' -count=1 -v
+go test ./internal/ssplugin -run '^$' -bench '^BenchmarkOriginalSimpleObfs$' -benchtime=10x -count=1
+```
+
+Repeat reference tests with `BIMERON_SIMPLEOBFS_RELEASE=1` and the v0.0.5
+binary to omit custom options absent from that release. The local Linux
+reference executables were cross-compiled with CGO disabled; race tests ran
+natively on Windows. Linux reference race runs remain for CI.
+
+The initial 10-iteration benchmark was about 0.72 MB/s for each mode through
+the original server and Xray on WSL. This measures the whole reference chain,
+including its TCP buffering and scheduling; it is not a client throughput
+ceiling or a performance guarantee.
 
 ## Context and alternatives
 
@@ -24,8 +75,8 @@ An external `obfs-local` process would reuse upstream behavior but require
 platform-specific binaries, trusted executable selection, subprocess lifecycle
 management, and a different mobile integration strategy. An embedded Go client
 fits the existing transport interfaces and requires no runtime executable.
-The embedded approach is recommended; this proposal records its concrete scope
-for review before implementation.
+The embedded approach was selected; this record defines its implementation
+scope and verification requirements.
 
 The original project is deprecated and licensed under GPL-3.0-or-later. ADR 0004
 requires distributed Bimeron binaries to remain free of GPL/LGPL dependencies.
@@ -100,7 +151,7 @@ record headers, first-response payload, and several records in one read.
 Bound lengths before allocating or consuming a body. Reject malformed or
 truncated framing; do not replay bytes through a plain TCP connection.
 
-## Proposed integration
+## Integration
 
 ### Configuration handoff (Low)
 
@@ -212,9 +263,8 @@ existing test, vet, and compiled-dependency-notice checks.
 Update `docs/SHADOWSOCKS_TRANSPORTS.MD`, `docs/CONF.MD`, CI documentation, and
 examples. Explain the canonical plugin name, defaults, port behavior,
 HTTP-only options, fake TLS, TCP-only VPN behavior, and verified cipher scope.
-Do not mark this ADR accepted or the feature supported before the architecture
-is agreed and implementation is verified. Discuss results before opening a PR;
-push only when requested.
+Claim only the cipher and platform combinations verified by the reference
+checks. Discuss results before opening a PR; push only when requested.
 
 ## Sources
 

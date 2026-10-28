@@ -40,6 +40,7 @@ func TestSimpleObfsRejectsInvalidOptions(t *testing.T) {
 		"obfs=http;obfs-uri=/a%ZZ", "obfs=http;obfs-uri=/" + strings.Repeat("a", 4096),
 		"obfs=http;http-method", "obfs=http;http-method=", "obfs=http;http-method=GET secret",
 		"obfs=http;http-method=GET\r\nsecret", "obfs=tls;obfs-uri=/", "obfs=tls;http-method=GET",
+		"obfs=http;http-method=" + strings.Repeat("A", 65),
 		"obfs=http;tls", "obfs=http;mode=websocket", "obfs=http;mux=0", "obfs=http;path=/",
 		"obfs=http;host=cover.example", "obfs=http;fast-open", "obfs=http;unknown=secret",
 		"obfs=http;;obfs-host=cover.example", "obfs=http;obfs-uri=/x\\",

@@ -148,7 +148,7 @@ func (p SSPlugin) Validate() error {
 		if p.Mode == "tls" && (p.Path != "" || p.Method != "") {
 			return fmt.Errorf("HTTP options require simple-obfs HTTP mode")
 		}
-		if p.Mode == "http" && (p.Method == "" || !httpguts.ValidHeaderFieldName(p.Method)) {
+		if p.Mode == "http" && (p.Method == "" || len(p.Method) > 64 || !httpguts.ValidHeaderFieldName(p.Method)) {
 			return fmt.Errorf("invalid simple-obfs HTTP method")
 		}
 	} else if p.Mode != "" || p.Method != "" {
