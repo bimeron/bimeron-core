@@ -465,6 +465,20 @@ Write one `TUIC = tuic://...` source, a generic `Key = tuic://...`, or a
 relay mode is `quic`; reject native mode and unknown options. Certificate
 verification is mandatory. See [CONF.MD](CONF.MD) for the URI contract.
 
+### Remote HTTP CONNECT profile editor
+
+Write `HTTP = https://proxy.example.com:443`, or use `Type = https` with
+`Server`, `Port`, and optional paired `Username` and `Password`. `Key` and `File`
+also accept HTTPS proxy URIs. Require an explicit port and percent-encode URI
+credentials. Do not combine explicit parameters with a URI source.
+
+HTTPS uses verified HTTP/1.1 CONNECT: system CA trust and the configured proxy
+hostname or IP are checked before Basic credentials are sent. There is no
+server-name override or insecure TLS switch. Plain `http://` and `Type = http`
+remain available but do not encrypt proxy credentials. Both variants carry TCP
+only; VPN DNS uses TCP and other proxied UDP is dropped. The local listener
+remains SOCKS5. See [configuration](CONF.MD#remote-http-connect-proxy).
+
 ### Remote SOCKS5 profile editor
 
 The profile's upstream protocol is independent of `[Interface] Mode`: `vpn`
