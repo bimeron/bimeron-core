@@ -34,6 +34,24 @@ jobs:
       - run: go vet ./...
       - name: Check VLESS and VMess transport races
         run: CGO_ENABLED=1 go test -race ./internal/vless ./internal/vmess
+      - name: Check AnyTLS transport races
+        run: CGO_ENABLED=1 go test -race ./internal/anytls ./internal/accesskey ./internal/config
+      - name: AnyTLS interoperability with reference server
+        run: |
+          git clone https://github.com/anytls/anytls-go.git "$RUNNER_TEMP/anytls-go"
+          git -C "$RUNNER_TEMP/anytls-go" checkout fd6167acd6d73b9fa3e607659951847fbc9e6c50
+          python3 - "$RUNNER_TEMP/anytls-go/cmd/server/main.go" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          old = 'GenerateKeyPair(time.Now, "")'
+          assert old in source
+          path.write_text(source.replace(old, 'GenerateKeyPair(time.Now, "localhost")'))
+          PY
+          go -C "$RUNNER_TEMP/anytls-go" build -o "$RUNNER_TEMP/anytls-server" ./cmd/server
+          CGO_ENABLED=1 BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server" go test -race ./internal/anytls -run '^TestReferenceServer$' -count=1 -v
+          BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server" go test ./internal/anytls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
       - name: Check NaiveProxy transport races
         run: CGO_ENABLED=1 go test -race ./internal/naive ./internal/accesskey ./internal/config
       - name: NaiveProxy interoperability with reference server

@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -55,7 +55,7 @@ File = test.key
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
 `ssconf://...`, `socks5://...`, `http://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
-`hysteria2://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
+`hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -267,6 +267,29 @@ VPN mode; UDP datagrams travel over a TLS connection. The local SOCKS5
 listener in `proxy` mode accepts TCP CONNECT only. WebSocket, gRPC, REALITY,
 TLS fingerprints, custom ALPN, and insecure TLS are unsupported.
 
+### AnyTLS over TCP/TLS
+
+Use a complete `anytls://` URI as the sole access key source:
+
+```ini
+[AccessKey]
+AnyTLS = anytls://replace-me@server.example.com:443?sni=server.example.com&insecure=0
+```
+
+`Key` and `File` also accept this URI. The password is URI userinfo; percent-
+encode reserved characters. The port defaults to 443. `sni` defaults to the
+server address, and the optional fragment is the profile label. TLS verifies
+the certificate and server name. `insecure=1`, unknown options, duplicate
+options, and an explicit empty SNI are rejected.
+
+The client supports TCP streams and UDP-over-TCP version 2 in VPN mode. Proxy
+mode exposes TCP CONNECT through the local SOCKS5 listener. TLS sessions are
+reused after streams finish, and the server may update the padding scheme for
+new sessions. UDP uses TCP congestion control and can suffer head-of-line
+blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
+not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
+is unavailable; `CloseRead` and `CloseWrite` close the stream.
+
 ### NaiveProxy-compatible HTTPS CONNECT
 
 Use a dedicated URI as the sole `[AccessKey]` source:
@@ -375,8 +398,8 @@ Key = ssconf://server.example.com/config
 ```
 
 It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `vless://`, `vmess://`, `trojan://`,
-`naive+https://`, `hysteria2://`, `hy2://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`,
+`naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 

@@ -47,6 +47,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP/TLS | Yes |
+| AnyTLS | TCP/TLS | UDP-over-TCP v2 |
 | NaiveProxy-compatible | HTTPS (HTTP/2 CONNECT) | No; DNS is forwarded over TCP |
 | Hysteria2 | QUIC | If the server allows UDP relay |
 | TUIC v5 | QUIC | Stream-mode relay |
