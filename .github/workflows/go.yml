@@ -103,8 +103,9 @@ jobs:
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
 
   test-apple-unsigned:
-    # Keep ARM64 coverage while avoiding the unavailable macOS 15 image pool.
-    runs-on: macos-26
+    # ARM64 hosted runners currently fail before acquiring a machine.
+    # Run the ABI test natively on Intel and cross-build both ARM64 extensions.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -115,6 +116,10 @@ jobs:
         run: sh scripts/build-apple.sh
       - name: Build app extension and check C ABI
         run: APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
+      - name: Cross-build ARM64 system extension and link C ABI test
+        run: APPLE_ARCH=arm64 sh scripts/build-apple.sh
+      - name: Cross-build ARM64 app extension and link C ABI test
+        run: APPLE_ARCH=arm64 APPLE_EXTENSION_KIND=app-extension sh scripts/build-apple.sh
 
   test-fingerprint-dependencies:
     strategy:
