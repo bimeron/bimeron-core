@@ -19,6 +19,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/streamtransport"
+	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/http2"
@@ -29,7 +30,9 @@ const firstPaddings = 8
 type Client struct {
 	profile     accesskey.Profile
 	rootCAs     *x509.CertPool
-	transport   *http2.Transport
+	transport   http.RoundTripper
+	h3          *http3.Transport
+	sockets     map[net.PacketConn]struct{}
 	mu          sync.Mutex
 	streams     map[*stream]struct{}
 	connections map[*trackedConn]struct{}
@@ -53,6 +56,12 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	}
 	c := &Client{profile: profile, streams: make(map[*stream]struct{}), connections: make(map[*trackedConn]struct{})}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
+	if profile.Naive.QUIC {
+		c.sockets = make(map[net.PacketConn]struct{})
+		c.h3 = &http3.Transport{Dial: c.quicDialer(dialer), DisableCompression: true}
+		c.transport = c.h3
+		return c, nil
+	}
 	c.transport = &http2.Transport{IdleConnTimeout: 60 * time.Second, DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -107,7 +116,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	stop := context.AfterFunc(ctx, cancel)
 	setupTimer := time.AfterFunc(15*time.Second, cancel)
 	reader, writer := io.Pipe()
-	// Pool HTTP/2 connections by proxy, while CONNECT's authority is the target.
+	// Pool connections by proxy, while CONNECT's authority is the target.
 	endpoint := net.JoinHostPort(c.profile.TCP.Host, strconv.Itoa(c.profile.TCP.Port))
 	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Scheme: "https", Host: endpoint}, Host: target, Header: make(http.Header), Body: reader, ContentLength: -1}
 	req = req.WithContext(requestCtx)
@@ -160,15 +169,26 @@ func (c *Client) Close() error {
 	for conn := range c.connections {
 		connections = append(connections, conn)
 	}
+	sockets := make([]net.PacketConn, 0, len(c.sockets))
+	for socket := range c.sockets {
+		sockets = append(sockets, socket)
+	}
 	c.mu.Unlock()
 	c.cancel()
+	for _, socket := range sockets {
+		_ = socket.Close()
+	}
 	for _, conn := range connections {
 		_ = conn.Close()
 	}
 	for _, s := range streams {
 		_ = s.Close()
 	}
-	c.transport.CloseIdleConnections()
+	if c.h3 != nil {
+		_ = c.h3.Close()
+	} else {
+		c.transport.(*http2.Transport).CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -295,7 +315,9 @@ func (s *stream) SetDeadline(t time.Time) error {
 		s.deadline = nil
 	}
 	if !t.IsZero() {
-		s.deadline = time.AfterFunc(max(0, time.Until(t)), s.cancel)
+		// Canceling the request context alone can leave HTTP/2 blocked reading
+		// the request pipe after RoundTrip returns. Close both halves as well.
+		s.deadline = time.AfterFunc(max(0, time.Until(t)), func() { _ = s.Close() })
 	}
 	return nil
 }

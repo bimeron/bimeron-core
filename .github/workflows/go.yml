@@ -54,12 +54,13 @@ jobs:
           BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server" go test ./internal/anytls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
       - name: Check NaiveProxy transport races
         run: CGO_ENABLED=1 go test -race ./internal/naive ./internal/accesskey ./internal/config
-      - name: NaiveProxy interoperability with reference server
+      - name: NaiveProxy HTTP/2 and HTTP/3 interoperability with reference server
         run: |
           cd "$RUNNER_TEMP"
           go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.5 build v2.11.7 --output "$RUNNER_TEMP/naive-caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@c096d6a00cb28e019cc1995b04bdc6a9311d8024
           cd "$GITHUB_WORKSPACE"
-          BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
+          CGO_ENABLED=1 BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/naive -run '^TestReferenceServer$' -count=1 -v
+          go test ./internal/naive -run '^$' -bench '^BenchmarkConnect$' -benchtime=100x -count=1
       - name: HTTPS CONNECT interoperability with independent proxy
         run: |
           BIMERON_HTTP_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/proxy -run '^TestReferenceHTTPSConnect$' -count=1 -v

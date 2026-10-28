@@ -54,7 +54,7 @@ File = test.key
 ```
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
-`ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`,
+`ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
 `hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
@@ -318,7 +318,7 @@ blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
 not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
 is unavailable; `CloseRead` and `CloseWrite` close the stream.
 
-### NaiveProxy-compatible HTTPS CONNECT
+### NaiveProxy-compatible HTTP/2 and HTTP/3 CONNECT
 
 Use a dedicated URI as the sole `[AccessKey]` source:
 
@@ -327,20 +327,28 @@ Use a dedicated URI as the sole `[AccessKey]` source:
 Naive = naive+https://user:replace-me@server.example.com:443?sni=server.example.com
 ```
 
-`Key` and `File` also accept this URI. The port defaults to 443. Percent-encode
+Use `naive+quic://` instead of `naive+https://` to select HTTP/3 over QUIC.
+HTTP/2 remains the default for existing HTTPS keys. HTTP/3 requires UDP access
+to the proxy server; it does not automatically fall back to HTTP/2, and does
+not send 0-RTT data. See [`examples/naive-http3.conf`](../examples/naive-http3.conf).
+
+`Key` and `File` also accept both URIs. The port defaults to 443. Percent-encode
 reserved characters in the username and password. `sni` defaults to the server
-host. TLS verifies the certificate and server name, and HTTP/2 ALPN is
-required. `insecure=0` is accepted; insecure TLS and unknown options are
-rejected. The server must support HTTP/2 CONNECT and Basic proxy authentication.
+host. TLS verifies the certificate and server name, and the selected protocol
+requires `h2` or `h3` ALPN. `insecure=0` is accepted; insecure TLS and unknown
+options are rejected. The server must support CONNECT over the selected
+HTTP version and Basic proxy authentication.
 
 An explicit profile uses `Type = naive`, `Server`, `Port`, `Username`, and
-`Password`; `ServerName` is optional. See
+`Password`; `ServerName` is optional. This explicit form selects HTTP/2;
+use a `naive+quic://` URI for HTTP/3, or set `Profile.Naive.QUIC` in the Go API. See
 [`examples/naive.conf`](../examples/naive.conf).
 
 The client requests Naive padding and uses it only when the server returns a
-`padding` header. It also works with a regular HTTP/2 forward proxy. The
-embedded HTTP/2 stack is not identical to Chromium, so browser-identical
-camouflage is not claimed. HTTP/3, proxy chains, and UDP relay are unsupported.
+`padding` header. It also works with a regular HTTP/2 or HTTP/3 forward proxy.
+The embedded TLS, HTTP/2 and QUIC stacks are not identical to Chromium, so
+browser-identical camouflage is not claimed. ShadowTLS supports only the
+HTTP/2 variant. Proxy chains and UDP relay are unsupported.
 In VPN mode, captured DNS uses TCP; other proxied UDP is dropped. Explicit
 `direct` routes still use the physical network. Proxy mode exposes TCP CONNECT.
 
@@ -426,7 +434,7 @@ Key = ssconf://server.example.com/config
 ```
 
 It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `vless://`, `vmess://`, `trojan://`,
-`naive+https://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
+`naive+https://`, `naive+quic://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
 combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
