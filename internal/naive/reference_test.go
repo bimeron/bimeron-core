@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/proxy"
+	"bimeron/internal/telemetry"
 )
 
 // TestReferenceServer uses the independent klzgrad/forwardproxy Naive padding
@@ -140,4 +143,36 @@ func TestReferenceServer(t *testing.T) {
 			t.Fatal("reference server payload mismatch")
 		}
 	}
+	t.Run("LocalSOCKS5", func(t *testing.T) {
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "through SOCKS5 and NaiveProxy")
+		}))
+		defer origin.Close()
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		serveCtx, stop := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- (&proxy.Server{Proxy: client, Stats: &telemetry.Counters{}}).Serve(serveCtx, listener) }()
+		defer func() {
+			stop()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}()
+		socks := &proxy.SOCKS5{Endpoint: accesskey.Endpoint{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port}, Dialer: net.Dialer{Timeout: time.Second}}
+		httpTransport := &http.Transport{DialContext: func(ctx context.Context, _, target string) (net.Conn, error) { return socks.DialStream(ctx, target) }}
+		defer httpTransport.CloseIdleConnections()
+		httpClient := &http.Client{Transport: httpTransport, Timeout: 3 * time.Second}
+		resp, err := httpClient.Get(origin.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || string(body) != "through SOCKS5 and NaiveProxy" {
+			t.Fatalf("SOCKS5 HTTP response: %q, %v", body, err)
+		}
+	})
 }

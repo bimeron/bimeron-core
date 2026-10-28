@@ -98,8 +98,10 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		return nil, net.ErrClosed
 	}
 	c.mu.Unlock()
-	requestCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(c.ctx, cancel)
+	// DialStream's context governs setup only. Callers cancel it immediately
+	// after connecting; the established stream belongs to the client lifetime.
+	requestCtx, cancel := context.WithCancel(c.ctx)
+	stop := context.AfterFunc(ctx, cancel)
 	setupTimer := time.AfterFunc(15*time.Second, cancel)
 	reader, writer := io.Pipe()
 	// Pool HTTP/2 connections by proxy, while CONNECT's authority is the target.
@@ -112,8 +114,8 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	req.Header.Set("Padding", headerPadding())
 	resp, err := c.transport.RoundTrip(req)
 	setupTimer.Stop()
+	stop()
 	if err != nil {
-		stop()
 		cancel()
 		_ = writer.Close()
 		if ctx.Err() != nil {
@@ -123,13 +125,12 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		stop()
 		cancel()
 		_ = writer.Close()
 		return nil, fmt.Errorf("NaiveProxy CONNECT rejected with HTTP %d", resp.StatusCode)
 	}
 	_, padded := resp.Header["Padding"]
-	s := &stream{client: c, target: target, reader: resp.Body, writer: writer, cancel: cancel, stop: stop, padded: padded}
+	s := &stream{client: c, target: target, reader: resp.Body, writer: writer, cancel: cancel, padded: padded}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -186,7 +187,6 @@ type stream struct {
 	reader     io.ReadCloser
 	writer     *io.PipeWriter
 	cancel     context.CancelFunc
-	stop       func() bool
 	padded     bool
 	readMu     sync.Mutex
 	writeMu    sync.Mutex
@@ -272,7 +272,6 @@ func (s *stream) Close() error {
 		}
 		s.deadlineMu.Unlock()
 		s.cancel()
-		s.stop()
 		_ = s.writer.Close()
 		_ = s.reader.Close()
 		s.client.mu.Lock()

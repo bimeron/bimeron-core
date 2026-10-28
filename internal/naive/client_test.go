@@ -61,7 +61,9 @@ func TestConnect(t *testing.T) {
 			defer client.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			conn, err := client.DialStream(ctx, "example.org:443")
+			dialCtx, finishDial := context.WithCancel(ctx)
+			conn, err := client.DialStream(dialCtx, "example.org:443")
+			finishDial()
 			if err != nil {
 				t.Fatal(err)
 			}

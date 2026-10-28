@@ -17,8 +17,9 @@ requires the Go toolchain and the fixture module's pinned dependencies.
 
 The Linux job builds Caddy v2.11.7 with klzgrad/forwardproxy at
 `c096d6a00cb28e019cc1995b04bdc6a9311d8024` outside the core module. The
-NaiveProxy test verifies authenticated HTTP/2 CONNECT and padded large payloads
-against that independent server. It uses synthetic credentials, a temporary
+NaiveProxy test verifies authenticated HTTP/2 CONNECT, padded large payloads,
+and HTTP through Bimeron's local SOCKS5 listener against that independent
+server. It uses synthetic credentials, a temporary
 certificate, loopback listeners, and isolated Caddy storage. The newer
 forwardproxy revision requires additional Caddy idle-timeout patches; this
 fixture pins the preceding revision with the same padding protocol. Focused
