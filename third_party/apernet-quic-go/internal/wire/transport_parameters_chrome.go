@@ -13,9 +13,6 @@ import (
 const (
 	// versionInformationParameterID is RFC 9368 (QUIC Version Negotiation).
 	versionInformationParameterID transportParameterID = 0x11
-	// googleInitialRTTParameterID carries a cached RTT for a known server. Only
-	// sent when such a value exists, so we never send it.
-	googleInitialRTTParameterID transportParameterID = 0x3127
 	// googleConnectionOptionsParameterID carries four-character option tags.
 	googleConnectionOptionsParameterID transportParameterID = 0x3128
 )
@@ -79,9 +76,6 @@ func (p *TransportParameters) marshalChrome() []byte {
 	} else {
 		add(marshalChromeVersionInformation())
 	}
-	if p.ChromeVersion == 146 {
-		add(p.marshalVarintParam(nil, googleInitialRTTParameterID, 1000+randUint64n(19001)))
-	}
 
 	if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
 		add(p.marshalVarintParam(nil, maxDatagramFrameSizeParameterID, uint64(p.MaxDatagramFrameSize)))
@@ -90,9 +84,6 @@ func (p *TransportParameters) marshalChrome() []byte {
 	options := chromeConnectionOptions
 	if p.ChromeVersion == 115 {
 		options = []byte("RVCM")
-	}
-	if p.ChromeVersion == 146 {
-		options = []byte("10AF")
 	}
 	b = quicvarint.Append(nil, uint64(googleConnectionOptionsParameterID))
 	b = quicvarint.Append(b, uint64(len(options)))

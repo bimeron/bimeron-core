@@ -11,6 +11,7 @@ import (
 // parameter shape while carrying quic-go's own numbers would defeat the point.
 const (
 	chromeMaxIdleTimeout        = 30 * time.Second
+	chrome146MaxIdleTimeout     = 5 * time.Minute
 	chromeInitialMaxStreamData  = 6291456
 	chromeInitialMaxData        = 15728640
 	chromeMaxIncomingStreams    = 100

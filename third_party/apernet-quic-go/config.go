@@ -125,6 +125,9 @@ func populateConfig(config *Config) *Config {
 		omitMaxDatagramFrameSize = false
 		// Chrome pins these, so anything the caller asked for is overridden.
 		idleTimeout = chromeMaxIdleTimeout
+		if config.Fingerprint == QUICChrome146 {
+			idleTimeout = chrome146MaxIdleTimeout
+		}
 		initialStreamReceiveWindow = chromeInitialMaxStreamData
 		initialConnectionReceiveWindow = chromeInitialMaxData
 		maxIncomingStreams = chromeMaxIncomingStreams

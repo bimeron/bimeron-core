@@ -240,6 +240,11 @@ func TestConfigChromeParrotOverrides(t *testing.T) {
 	require.GreaterOrEqual(t, c.MaxConnectionReceiveWindow, c.InitialConnectionReceiveWindow)
 }
 
+func TestConfigChrome146IdleTimeout(t *testing.T) {
+	c := populateConfig(&Config{Fingerprint: QUICChrome146, MaxIdleTimeout: time.Second})
+	require.Equal(t, chrome146MaxIdleTimeout, c.MaxIdleTimeout)
+}
+
 func TestConfigChromeParrotForcesDatagrams(t *testing.T) {
 	// Chrome always advertises max_datagram_frame_size, so ChromeParrot must turn
 	// datagrams on and clear Hysteria's OmitMaxDatagramFrameSize quirk; otherwise

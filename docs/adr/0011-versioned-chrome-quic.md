@@ -1,6 +1,7 @@
 # ADR 0011: Versioned Chrome QUIC presets
 
-Status: accepted implementation approach, October 27, 2026; local protocol tests passed; browser-capture fidelity remains unverified.
+Status: accepted implementation approach, October 27, 2026; updated against
+official Chrome for Testing captures on October 28, 2026.
 
 ## Decision
 
@@ -27,9 +28,14 @@ capture in the pinned repository tree. Its comments identify RFC parameter
 0x11 while its `LegacyID: true` emits 0xff73db. This implementation uses 0x11
 for 146 and retains 0xff73db for 115. This is a documented interpretation of
 the reference, not independent verification against the original capture.
-The existing apernet preset's trust-anchor extension and ORIG option are not
-carried into either named preset. 115 uses RVCM and google_quic_version;
-146 uses 10AF and the reference's randomized 1000–20000 microsecond RTT hint.
+Independent Initial captures from official Chrome for Testing 115.0.5790.170
+and 146.0.7680.165 are retained under
+`third_party/apernet-quic-go/testdata/chrome-browser-initial/`. Both versions
+send ECH GREASE. Chrome 146 sends an empty trust-anchor extension, the `ORIG`
+connection option, no cached RTT hint, and a 300-second idle timeout. These
+observations supersede the pinned uquic reference's omission of 115 ECH, 146
+`10AF` option, randomized RTT hint, and 30-second idle timeout. Chrome 115
+retains `RVCM`, `google_quic_version`, and a 30-second idle timeout.
 
 uquic also leaves complete cross-packet CRYPTO scatter as future work. Retain
 apernet's head/tail scatter and absolute offsets rather than copying that
@@ -49,9 +55,10 @@ initialize the existing large receive pool before starting their read loop.
 
 Wire tests decrypt actual Initial packets and reassemble all CRYPTO bytes,
 checking version-specific TLS fields, QUIC parameters, IDs, packet numbers,
-frame counts and datagram sizes on IPv4 and IPv6. They are reference-derived
-conformance checks, not independent browser captures. Their success must not
-be described as proof of complete Chrome indistinguishability. Randomized
+frame counts and datagram sizes on IPv4 and IPv6. Separate tests decrypt and
+reassemble independent browser captures for both address families. These
+checks establish the recorded fields for the exact browser builds and launch
+conditions, not complete Chrome indistinguishability. Randomized
 layout distributions and subsequent apernet/Hysteria traffic are additional
 limits. Resumption and 0-RTT remain disabled; RSA/ECDSA certificates are needed.
 

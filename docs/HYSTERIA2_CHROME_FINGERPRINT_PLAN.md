@@ -1,7 +1,7 @@
 # Versioned Chrome QUIC fingerprints (#23)
 
-Status: implemented locally. Both new URI values are supported; see ADR 0011
-for the reference-fidelity limitation. GitHub CI has not run on this branch.
+Status: implemented. PR #24 CI passed. Independent Chrome for Testing Initial
+captures were added on October 28, 2026; see ADR 0011 for scope and limits.
 
 ## Contract and implementation order
 
@@ -48,6 +48,14 @@ NDK 27.1.12297006 (CI pins 27.2). Verified ABI entries and license copies.
 A five-iteration Windows first-Initial benchmark smoke run passed for all
 families; it is not a statistically meaningful speed comparison.
 
-No real VPN, physical-interface routing, or original Chrome pcap validation
-was performed. CI already selects the added ChromeParrot integration tests;
-remote CI remains pending publication of this branch.
+On October 28, 2026, official Chrome for Testing 115.0.5790.170 and
+146.0.7680.165 supplied independent IPv4/IPv6 Initial captures. Their
+decrypted fields corrected the versioned presets as recorded in ADR 0011.
+The captured packets and SHA-256 provenance are kept in the nested QUIC module's
+`testdata/chrome-browser-initial/` directory. This verifies the recorded
+Initial fields for those browser builds and launch conditions; it does not
+establish a distributional match or subsequent browser transport behavior.
+
+No real VPN or physical-interface routing was performed. CI already selects
+the ChromeParrot integration tests. PR #24 CI passed; CI for this later capture
+correction branch remains pending publication.

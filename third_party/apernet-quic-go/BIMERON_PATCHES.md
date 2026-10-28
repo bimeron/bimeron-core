@@ -37,3 +37,6 @@ now preserves the next TLS message's offset (HRR regression). Zero-ID transports
 use large receive buffers to honor Chrome's advertised 1472-byte UDP capacity.
 Chrome DATAGRAM validation follows the advertised limit. Wire tests reassemble
 multiple Initials; integration tests cover both new versions and legacy presets.
+Official Chrome for Testing 115/146 Initial captures for IPv4 and IPv6 are kept
+in `testdata/chrome-browser-initial/`. They correct 115 ECH and 146 trust
+anchors, connection options, RTT hint, and idle timeout relative to uquic.

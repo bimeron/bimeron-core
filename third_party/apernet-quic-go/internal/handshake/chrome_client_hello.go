@@ -152,11 +152,13 @@ func versionedChromeQUICClientHelloSpec(alpn []string, version uint16) *utls.Cli
 				e.KeyShares = []utls.KeyShare{{Group: utls.X25519}}
 			case *utls.ApplicationSettingsExtensionNew:
 				ext = &utls.ApplicationSettingsExtension{SupportedProtocols: e.SupportedProtocols}
-			case *utls.GREASEEncryptedClientHelloExtension:
-				continue
 			}
 		}
 		extensions = append(extensions, ext)
+	}
+	if version == 146 {
+		extensions = append(extensions, &utls.GenericExtension{Id: extensionTrustAnchors, Data: []byte{0, 0}})
+		extensions = utls.ShuffleChromeTLSExtensions(extensions)
 	}
 	spec.Extensions = extensions
 	return spec
