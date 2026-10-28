@@ -18,12 +18,13 @@ import (
 	"bimeron/internal/testutil"
 )
 
-func TestReferenceServer(t *testing.T) {
+func referenceEcho(t testing.TB) (*testutil.ShadowServer, *x509.CertPool) {
+	t.Helper()
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer echo.Close()
+	t.Cleanup(func() { _ = echo.Close() })
 	go func() {
 		for {
 			conn, err := echo.Accept()
@@ -36,6 +37,11 @@ func TestReferenceServer(t *testing.T) {
 	server := testutil.StartShadowTLS(t, echo.Addr().String())
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate)
+	return server, roots
+}
+
+func TestReferenceServer(t *testing.T) {
+	server, roots := referenceEcho(t)
 	t.Run("LargeReconnectAndSetupCancellation", func(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			raw, err := net.Dial("tcp", server.Address)
@@ -87,6 +93,50 @@ func TestReferenceServer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// BenchmarkReferenceServer measures local wrapper overhead against the official
+// server. Handshake includes TCP connect/authentication/close; the echo case
+// reuses one connection and reports one payload's bytes per round trip.
+func BenchmarkReferenceServer(b *testing.B) {
+	server, roots := referenceEcho(b)
+	connect := func(b *testing.B) *Conn {
+		b.Helper()
+		raw, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(b.Context(), "tcp", server.Address)
+		if err != nil {
+			b.Fatal(err)
+		}
+		conn, err := Client(b.Context(), raw, server.Settings.ServerName, server.Settings.Password, roots)
+		if err != nil {
+			b.Fatal(err)
+		}
+		return conn
+	}
+	b.Run("Handshake", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = connect(b).Close()
+		}
+	})
+	b.Run("RoundTrip64KiB", func(b *testing.B) {
+		conn := connect(b)
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+		payload, reply := make([]byte, 64*1024), make([]byte, 64*1024)
+		b.SetBytes(int64(len(payload)))
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := conn.Write(payload); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := io.ReadFull(conn, reply); err != nil {
+				b.Fatal(err)
+			}
+			if !bytes.Equal(reply, payload) {
+				b.Fatal("benchmark echo mismatch")
+			}
+		}
+	})
 }
 
 func TestCancellation(t *testing.T) {

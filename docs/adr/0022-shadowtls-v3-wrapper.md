@@ -65,4 +65,7 @@ See [the research and compatibility proposal](../SHADOWTLS_V3_RESEARCH.md).
 The implementation passed the recorded official-server matrix, including
 54 VMess and 26 VLESS cases, all six selected Shadowsocks methods, Trojan,
 AnyTLS, NaiveProxy and SSH fixtures, plus negative record/authentication tests.
-Independent-server CI wiring and final user guides are scheduled separately.
+CI now runs the pinned official-server matrix with the race detector and
+handshake/round-trip benchmarks. The public configuration guide and examples
+are in [ShadowTLS v3](../SHADOWTLS.MD). The CI selection was validated locally
+under Linux/WSL; a hosted Actions run requires a later push.

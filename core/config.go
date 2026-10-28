@@ -22,6 +22,7 @@ import (
 
 type Profile = accesskey.Profile
 type Endpoint = accesskey.Endpoint
+type ShadowTLS = accesskey.ShadowTLS
 type Policy = routing.Policy
 
 // SessionConfig is copied by Start. Resolve must honor cancellation and must not

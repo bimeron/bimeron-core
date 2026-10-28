@@ -462,6 +462,44 @@ the maximum prefix is 16 bytes for ChaCha20/AES-256 and 8 bytes for AES-192;
 AES-128 does not support a nonempty prefix. These limits are checked when creating
 the transport (`check`/`run`), not only when parsing `.conf`.
 
+## [ShadowTLS]
+
+This optional section wraps a supported encrypted TCP upstream in strict
+ShadowTLS v3. Keep one source in `[AccessKey]`: its TCP host and port must point
+to the public ShadowTLS listener, and its credentials describe the inner proxy.
+The server selects the inner backend; Bimeron does not send a backend endpoint.
+
+| Option | Required | Meaning |
+|---|---|---|
+| `ServerName` | Yes, when the section is present | Hostname or IP of the TLS handshake target, used for certificate verification. Separate from the inner protocol's TLS/REALITY server name. |
+| `Password` | Yes, when the section is present | ShadowTLS shared password, separate from the inner upstream credentials. |
+
+```ini
+[AccessKey]
+SS = ss://aes-256-gcm:replace-inner-password@proxy.example.com:443
+
+[ShadowTLS]
+ServerName = handshake.example.com
+Password = replace-shadowtls-password
+```
+
+Presence of the section enables the wrapper. An empty section, missing fields,
+unknown options, or an unsupported combination is an error. Only strict v3 with
+verified TLS 1.3 is supported; there are no `Version`, `Strict`, `insecure`,
+outer fingerprint or ALPN options. ShadowTLS does not encrypt application data,
+so the inner protocol's encryption and verification remain required.
+
+Shadowsocks AEAD/2022, VLESS, VMess, Trojan, AnyTLS, NaiveProxy and SSH support
+the combinations listed in [the ShadowTLS guide](SHADOWTLS.MD). Plain SOCKS5,
+HTTP CONNECT, QUIC/HTTP3 and wrapped AES-192-GCM are rejected. Native
+Shadowsocks UDP is disabled: VPN mode carries captured DNS over TCP and drops
+other proxy-routed UDP. Existing inner UDP-over-stream adapters remain enabled.
+
+The section also applies to `File`, `Key` and `SSConf` sources. Dynamic profiles
+are revalidated on every resolution. For split XHTTP, both addresses must be
+ShadowTLS listeners with the same outer settings; HTTP/3 on either leg is rejected.
+See [the guide](SHADOWTLS.MD) for examples, routing behavior and test limits.
+
 ## [Interface]
 
 This section is optional; missing options receive defaults.
@@ -594,8 +632,9 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
 reads `File` when specified. Makes no network requests or Windows settings changes.
-`check`: test real TCP/TLS and UDP/DNS through the selected upstream and print the external IP;
-does not change system settings.
+`check`: test real TCP/TLS through the selected upstream and print the external IP;
+where DNS checks apply, use the profile's packet transport or DNS-over-TCP for
+a TCP-only profile. Does not change system settings.
 `run`: start the mode selected by `[Interface] Mode`. For `vpn`, use an
 administrator CMD; stop with `Ctrl+C`. `proxy` needs no administrator privileges.
 

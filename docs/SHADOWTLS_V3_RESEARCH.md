@@ -1,8 +1,9 @@
 # ShadowTLS v3 compatibility and implementation proposal
 
-Status: Expanded HIGH-phase implementation and independent interoperability
-checks completed. CI wiring, benchmarks and final public guides remain for the
-separate LOW phase. This document records source-level support and test evidence.
+Status: Implementation, independent interoperability, CI wiring, benchmarks and
+public documentation completed. The CI selection was verified locally; a hosted
+GitHub Actions run requires a later push. This document records source-level
+support and test evidence. See [the public guide](SHADOWTLS.MD) for usage.
 
 Tracking: [issue #51](https://github.com/bimeron/bimeron-core/issues/51), branch
 `feat/shadowtls-v3`.
@@ -245,6 +246,12 @@ not shipped or added to the runtime dependency graph.
 - `go test ./...`, `go vet ./...` and targeted Windows `go test -race` checks
   pass. The compiled dependency notice check passes; `go.mod` and `go.sum` are
   unchanged and no GPL/LGPL module was added.
+- The exact wrapped CI package/test selection also passes with `-race` under
+  Linux/WSL and Go 1.26.9. The workflow verifies the pinned official binary's
+  SHA-256 before running that matrix and the reference-server benchmarks.
+- All six Windows/Linux/macOS CLI distributions build successfully, and
+  `scripts/check-dist.go` verifies their binary architectures, contents, notices
+  and Windows Wintun/license hashes. Both new example profiles pass `validate`.
 
 These checks do not cover every inner fingerprint or XHTTP extra-option
 cross-product, mobile devices, a live privileged system VPN, or resistance to
@@ -265,10 +272,20 @@ The other existing fixture variables are `BIMERON_ANYTLS_BIN` and
 reference tests retain their direct connection mode. Without reference binaries,
 ordinary unit tests run and independent tests skip with an explicit reason.
 
-The HIGH phase includes implementation, meaningful unit/integration tests,
-independent interoperability results, and protocol/security review. The later
-LOW phase adds routine CI wiring, final public guides/examples, benchmarks,
-and broad release checks. Do not describe pending work as complete.
+## Benchmark smoke measurement
+
+`BenchmarkReferenceServer` separates TCP/authenticated handshake/close from a
+64-KiB echo round trip on an existing connection. A single local Linux/WSL run
+on an Intel Core i7-12700K, Go 1.26.9, with `-benchtime=20x -count=1` measured:
+
+- Handshake: 1,523,050 ns/op, 171,269 B/op, 1,275 allocs/op.
+- RoundTrip64KiB: 231,953 ns/op, 282.54 MB/s, 206,479 B/op, 63 allocs/op.
+
+The throughput counts one payload's bytes per round trip. These short loopback
+measurements are a reproducibility smoke check, not an internet throughput
+prediction or a comparison with other protocols. Use repeated measurements on
+the same machine for performance decisions. Commands and CI behavior are in
+[CI checks](CI.MD).
 
 ## Selected scope
 

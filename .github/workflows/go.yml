@@ -71,6 +71,17 @@ jobs:
         run: BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
       - name: Shadowsocks 2022 interoperability with Xray
         run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -run '^TestXrayInterop$' -count=1 -v
+      - name: ShadowTLS v3 interoperability with independent servers
+        run: |
+          curl --fail --location --silent --show-error https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl --output "$RUNNER_TEMP/shadow-tls"
+          echo "a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532  $RUNNER_TEMP/shadow-tls" | sha256sum --check --strict
+          chmod +x "$RUNNER_TEMP/shadow-tls"
+          export BIMERON_SHADOWTLS_BIN="$RUNNER_TEMP/shadow-tls"
+          export BIMERON_XRAY_BIN="$RUNNER_TEMP/xray"
+          export BIMERON_ANYTLS_BIN="$RUNNER_TEMP/anytls-server"
+          export BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy"
+          CGO_ENABLED=1 go test -race ./internal/shadowtls ./internal/streamtransport ./internal/proxy ./core ./internal/vmess ./internal/trojan ./internal/anytls ./internal/naive ./internal/sshtunnel -run '^(TestReferenceServer|TestShadowTLS.*|TestXrayVMessAEAD|TestXrayVLESS|TestXrayTrojanInterop|TestVerifiedSSHForwarding)$' -count=1 -v
+          go test ./internal/shadowtls -run '^$' -bench '^BenchmarkReferenceServer$' -benchtime=20x -count=1
       - name: Install Linux integration tools
         run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
       - name: Isolated Linux network integration
