@@ -32,31 +32,35 @@ type Client struct {
 }
 
 type session struct {
-	conn      net.Conn
-	owner     *Client
-	scheme    padScheme
-	writeMu   sync.Mutex
-	streamMu  sync.Mutex
-	stream    *stream
-	done      chan struct{}
-	doneOnce  sync.Once
-	packet    int
-	nextID    uint32
-	idleSince time.Time
-	closed    bool
+	conn        net.Conn
+	owner       *Client
+	scheme      padScheme
+	writeMu     sync.Mutex
+	streamMu    sync.Mutex
+	stream      *stream
+	done        chan struct{}
+	doneOnce    sync.Once
+	packet      int
+	nextID      uint32
+	idleSince   time.Time
+	closed      bool
+	terminalErr error // guarded by owner.mu; assigned before done closes
 }
 
 type stream struct {
-	session  *session
-	id       uint32
-	incoming chan received
-	readMu   sync.Mutex
-	pending  []byte
-	readEnd  bool
-	writeMu  sync.Mutex
-	writeEnd bool
-	closeMu  sync.Mutex
-	closed   bool
+	session         *session
+	id              uint32
+	incoming        chan received
+	readMu          sync.Mutex
+	pending         []byte
+	readEnd         bool
+	writeMu         sync.Mutex
+	writeEnd        bool
+	closeMu         sync.Mutex
+	closed          bool
+	deadlineMu      sync.Mutex
+	readDeadline    time.Time
+	deadlineChanged chan struct{}
 }
 
 type received struct {
@@ -92,18 +96,20 @@ func (c *Client) reapIdle() {
 		case <-ticker.C:
 			c.mu.Lock()
 			var keep []*session
+			var expired []*session
 			for _, s := range c.idle {
 				if time.Since(s.idleSince) >= 60*time.Second {
-					s.closed = true
-					delete(c.active, s)
-					s.doneOnce.Do(func() { close(s.done) })
-					_ = s.conn.Close()
+					s.markClosedLocked(net.ErrClosed)
+					expired = append(expired, s)
 				} else {
 					keep = append(keep, s)
 				}
 			}
 			c.idle = keep
 			c.mu.Unlock()
+			for _, s := range expired {
+				_ = s.conn.Close()
+			}
 		case <-c.stop:
 			return
 		}
@@ -118,14 +124,17 @@ func (c *Client) Close() error {
 	}
 	c.closed = true
 	close(c.stop)
+	var sessions []*session
 	for s := range c.active {
-		s.closed = true
-		s.doneOnce.Do(func() { close(s.done) })
-		_ = s.conn.Close()
+		s.markClosedLocked(net.ErrClosed)
+		sessions = append(sessions, s)
 	}
 	c.active = nil
 	c.idle = nil
 	c.mu.Unlock()
+	for _, s := range sessions {
+		_ = s.conn.Close()
+	}
 	return nil
 }
 
@@ -152,6 +161,8 @@ func (c *Client) newSession(ctx context.Context) (*session, error) {
 	s := &session{conn: conn, owner: c, scheme: scheme, done: make(chan struct{})}
 	c.active[s] = struct{}{}
 	c.mu.Unlock()
+	stop := context.AfterFunc(setup, s.discard)
+	defer stop()
 	password := sha256.Sum256([]byte(c.profile.AnyTLS.Password))
 	pad, err := padSize(scheme.steps[0][0])
 	if err != nil {
@@ -166,45 +177,82 @@ func (c *Client) newSession(ctx context.Context) (*session, error) {
 	_ = conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		s.discard()
+		if setup.Err() != nil {
+			return nil, setup.Err()
+		}
 		return nil, fmt.Errorf("AnyTLS authentication write failed")
+	}
+	if err := setup.Err(); err != nil {
+		s.discard()
+		return nil, err
 	}
 	go s.readLoop()
 	return s, nil
 }
 
 func (c *Client) acquire(ctx context.Context) (*session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, net.ErrClosed
 	}
+	var stale []*session
+	var selected *session
 	for len(c.idle) != 0 {
 		last := len(c.idle) - 1
 		s := c.idle[last]
 		c.idle = c.idle[:last]
 		if !s.closed && time.Since(s.idleSince) < 60*time.Second {
-			c.mu.Unlock()
-			return s, nil
+			selected = s
+			break
 		}
-		s.closed = true
-		delete(c.active, s)
-		s.doneOnce.Do(func() { close(s.done) })
-		_ = s.conn.Close()
+		s.markClosedLocked(net.ErrClosed)
+		stale = append(stale, s)
 	}
 	c.mu.Unlock()
+	for _, s := range stale {
+		_ = s.conn.Close()
+	}
+	if selected != nil {
+		return selected, nil
+	}
 	return c.newSession(ctx)
 }
 
 func (s *session) discard() {
+	s.discardError(net.ErrClosed)
+}
+
+// markClosedLocked changes pool state without performing network I/O.
+func (s *session) markClosedLocked(err error) {
+	if s.closed {
+		return
+	}
+	s.closed = true
+	s.terminalErr = err
+	delete(s.owner.active, s)
+	s.doneOnce.Do(func() { close(s.done) })
+}
+
+func (s *session) discardError(err error) {
 	c := s.owner
 	c.mu.Lock()
-	if !s.closed {
-		s.closed = true
-		delete(c.active, s)
-		s.doneOnce.Do(func() { close(s.done) })
-		_ = s.conn.Close()
+	if s.closed {
+		c.mu.Unlock()
+		return
 	}
+	s.markClosedLocked(err)
 	c.mu.Unlock()
+	_ = s.conn.Close()
+}
+
+func (s *session) readError() error {
+	s.owner.mu.Lock()
+	defer s.owner.mu.Unlock()
+	return s.terminalErr
 }
 
 func (s *session) release() {
@@ -217,11 +265,6 @@ func (s *session) release() {
 	if !s.closed && !c.closed {
 		s.idleSince = time.Now()
 		c.idle = append(c.idle, s)
-	} else if !s.closed {
-		s.closed = true
-		delete(c.active, s)
-		s.doneOnce.Do(func() { close(s.done) })
-		_ = s.conn.Close()
 	}
 	c.mu.Unlock()
 }
@@ -255,7 +298,14 @@ func (c *Client) open(ctx context.Context, target string) (*stream, error) {
 	defer s.conn.SetWriteDeadline(time.Time{})
 	if err := s.writePayload(payload); err != nil {
 		s.discard()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("AnyTLS stream open failed")
+	}
+	if err := ctx.Err(); err != nil {
+		s.discard()
+		return nil, err
 	}
 	return stream, nil
 }
@@ -320,10 +370,15 @@ func writeAll(w io.Writer, b []byte) error {
 }
 
 func (s *session) readLoop() {
-	defer s.discard()
+	failure := error(net.ErrClosed)
+	defer func() { s.discardError(failure) }()
 	for {
 		command, streamID, data, err := readFrame(s.conn)
 		if err != nil {
+			failure = err
+			if err == io.EOF {
+				failure = io.ErrUnexpectedEOF
+			}
 			return
 		}
 		switch command {

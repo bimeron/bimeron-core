@@ -20,6 +20,10 @@ unsupported parameters. Support TCP in proxy mode and TCP plus UDP in VPN
 mode. Keep the server-selected padding scheme per client and reuse healthy idle
 sessions.
 
+AnyTLS FIN closes a whole logical stream. The adapter therefore implements
+`CloseRead` and `CloseWrite` as full stream closure, matching the existing
+fallback for transports without TCP half-close support.
+
 ## Alternatives and tradeoffs
 
 - Importing `github.com/anytls/sing-anytls` would reduce protocol work but

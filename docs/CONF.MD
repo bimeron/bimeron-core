@@ -265,7 +265,8 @@ mode exposes TCP CONNECT through the local SOCKS5 listener. TLS sessions are
 reused after streams finish, and the server may update the padding scheme for
 new sessions. UDP uses TCP congestion control and can suffer head-of-line
 blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
-not supported.
+not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
+is unavailable; `CloseRead` and `CloseWrite` close the stream.
 
 ### Hysteria2 over QUIC
 

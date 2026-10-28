@@ -3,9 +3,11 @@ package anytls
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -20,17 +22,14 @@ func (s *stream) Read(b []byte) (int, error) {
 		return 0, io.EOF
 	}
 	for len(s.pending) == 0 {
-		var message received
-		select {
-		case message = <-s.incoming:
-		case <-s.session.done:
-			return 0, net.ErrClosed
-		}
+		message := s.receive()
 		if message.err != nil {
 			if message.err == io.EOF {
 				s.readEnd = true
 			} else {
-				s.session.discard()
+				if !errors.Is(message.err, os.ErrDeadlineExceeded) {
+					s.session.discard()
+				}
 			}
 			return 0, message.err
 		}
@@ -39,6 +38,50 @@ func (s *stream) Read(b []byte) (int, error) {
 	n := copy(b, s.pending)
 	s.pending = s.pending[n:]
 	return n, nil
+}
+
+// Read deadlines belong to the logical stream, not the background control reader.
+// They can be extended after a timeout without destroying the TLS session.
+func (s *stream) receive() received {
+	for {
+		s.deadlineMu.Lock()
+		if s.deadlineChanged == nil {
+			s.deadlineChanged = make(chan struct{})
+		}
+		deadline, changed := s.readDeadline, s.deadlineChanged
+		s.deadlineMu.Unlock()
+		var timer *time.Timer
+		var timeout <-chan time.Time
+		if !deadline.IsZero() {
+			if !time.Now().Before(deadline) {
+				return received{err: os.ErrDeadlineExceeded}
+			}
+			timer = time.NewTimer(time.Until(deadline))
+			timeout = timer.C
+		}
+		var result received
+		select {
+		case result = <-s.incoming:
+		case <-s.session.done:
+			// Preserve frames queued before the transport failed.
+			select {
+			case result = <-s.incoming:
+			default:
+				result.err = s.session.readError()
+			}
+		case <-timeout:
+			result.err = os.ErrDeadlineExceeded
+		case <-changed:
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		return result
+	}
 }
 
 func (s *stream) Write(b []byte) (int, error) {
@@ -61,29 +104,12 @@ func (s *stream) Write(b []byte) (int, error) {
 }
 
 func (s *stream) CloseWrite() error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if s.writeEnd {
-		return nil
-	}
-	s.writeEnd = true
-	if err := s.session.writePayload(frame(cmdFIN, s.id, nil)); err != nil {
-		s.session.discard()
-		return err
-	}
-	return nil
+	// AnyTLS FIN closes the entire logical stream; it is not a TCP half-close.
+	return s.Close()
 }
 
 func (s *stream) CloseRead() error {
-	if !s.readMu.TryLock() {
-		s.session.discard()
-		s.readMu.Lock()
-	}
-	s.readEnd = true
-	s.pending = nil
-	s.readMu.Unlock()
-	s.session.discard()
-	return nil
+	return s.Close()
 }
 
 func (s *stream) Close() error {
@@ -113,11 +139,44 @@ func (s *stream) Close() error {
 	return nil
 }
 
-func (s *stream) LocalAddr() net.Addr                { return s.session.conn.LocalAddr() }
-func (s *stream) RemoteAddr() net.Addr               { return s.session.conn.RemoteAddr() }
-func (s *stream) SetDeadline(t time.Time) error      { return s.session.conn.SetDeadline(t) }
-func (s *stream) SetReadDeadline(t time.Time) error  { return s.session.conn.SetReadDeadline(t) }
-func (s *stream) SetWriteDeadline(t time.Time) error { return s.session.conn.SetWriteDeadline(t) }
+func (s *stream) LocalAddr() net.Addr  { return s.session.conn.LocalAddr() }
+func (s *stream) RemoteAddr() net.Addr { return s.session.conn.RemoteAddr() }
+func (s *stream) SetDeadline(t time.Time) error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return net.ErrClosed
+	}
+	s.setReadDeadline(t)
+	return s.session.conn.SetWriteDeadline(t)
+}
+func (s *stream) SetReadDeadline(t time.Time) error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return net.ErrClosed
+	}
+	s.setReadDeadline(t)
+	return nil
+}
+
+func (s *stream) setReadDeadline(t time.Time) {
+	s.deadlineMu.Lock()
+	defer s.deadlineMu.Unlock()
+	s.readDeadline = t
+	if s.deadlineChanged != nil {
+		close(s.deadlineChanged)
+	}
+	s.deadlineChanged = make(chan struct{})
+}
+func (s *stream) SetWriteDeadline(t time.Time) error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return net.ErrClosed
+	}
+	return s.session.conn.SetWriteDeadline(t)
+}
 
 type packetConn struct {
 	stream  *stream
@@ -134,8 +193,16 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	}
 	// UDP-over-TCP v2's request starts with isConnect=0 and a SOCKS address.
 	request := []byte{0, 1, 0, 0, 0, 0, 0, 0}
-	if _, err := s.Write(request); err != nil {
+	stopSetup := context.AfterFunc(ctx, func() { _ = s.Close() })
+	_ = s.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	_, err = s.Write(request)
+	stopSetup()
+	_ = s.SetWriteDeadline(time.Time{})
+	if err != nil || ctx.Err() != nil {
 		_ = s.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	p := &packetConn{stream: s}
