@@ -222,3 +222,9 @@ only after a new DNS response through Bimeron.
 Build from source on a Mac: `go test ./...`, `go vet ./...`,
 `go build -o bin/bimeron ./cmd/bimeron`. Run root tests only on a dedicated
 test system.
+
+## IKEv2/IPsec availability
+
+The experimental [native IKEv2 backend](IKEV2.MD) currently targets Windows only.
+This platform's packet VPN support does not imply native IKEv2 support. Native
+system profiles are rejected on this platform; no embedded IPsec fallback is provided.

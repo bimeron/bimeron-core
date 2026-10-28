@@ -603,3 +603,13 @@ bundled core containing ADR 0011 and successful `bimeron validate`; ADR 0010
 alone does not establish versioned Chrome support. No released minimum version
 has been assigned. Show unsupported imported values without dropping them.
 These presets do not claim full browser equivalence; see ADR 0011.
+
+## Native IKEv2 boundary
+
+The experimental Windows IKEv2 backend uses a pre-provisioned current-user
+profile and an elevated foreground process. Do not offer it through daemon
+start: IPC rejects it with `ikev2_requires_foreground_user_session`. Read the
+separate `capabilities.ikev2` object instead of inheriting top-level packet
+features. Hide packet rules, kill switch, DNS/MTU overrides and traffic charts
+for this backend. Native stats are explicitly unavailable. See [IKEV2.MD](IKEV2.MD)
+for configuration, profile requirements and unverified live behavior.

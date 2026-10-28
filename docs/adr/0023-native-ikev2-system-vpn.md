@@ -1,4 +1,4 @@
-# ADR 0022: Native IKEv2/IPsec session backend
+# ADR 0023: Native IKEv2/IPsec session backend
 
 Status: accepted for the experimental Windows milestone, October 28, 2026.
 Tracks [issue #56](https://github.com/bimeron/bimeron-core/issues/56).

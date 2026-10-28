@@ -45,6 +45,17 @@ and describe the package scope, including the excluded Apple NetworkExtension.
 
 ## Proposed test and build workflow
 
+Native IKEv2 configuration and lifecycle tests run through the normal suite.
+Linux and Windows race checks include `internal/systemvpn`. Windows also runs
+explicit RAS ABI/profile-guard/read-only API tests, validates the example without
+network changes, and tests the RAS layout under GOARCH=386. Distribution builds
+cover the Windows ARM64 implementation.
+
+CI must leave `BIMERON_IKEV2_TEST_CONFIG` unset: the live native lifecycle test
+is intentionally skipped. Its [isolated procedure and measurement plan](IKEV2.MD#isolated-live-validation-and-measurements)
+require a disposable Windows VPN machine. Passing ordinary CI does not establish
+server interoperability, certificate rejection, leak protection or performance.
+
 Additional jobs could cover:
 
 - Windows, Linux, and macOS: go test ./... and go vet ./....

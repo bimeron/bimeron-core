@@ -61,7 +61,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
       - name: Check core and control races
-        run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
+        run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
       - name: VLESS and VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
@@ -96,7 +96,16 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - name: Check core and control races
-        run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
+        run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/systemvpn
+      - name: Check native IKEv2 ABI and profile guards without connecting
+        run: go test ./internal/systemvpn -run 'Test(RASABI|Native|RejectUnsafeNativeProfiles)' -count=1 -v
+      - name: Validate IKEv2 example without network changes
+        run: go run ./cmd/bimeron validate examples/ikev2-windows.conf
+      - name: Check Windows 386 RAS layout
+        env:
+          GOARCH: '386'
+          CGO_ENABLED: '0'
+        run: go test ./internal/systemvpn
 
   test-apple-unsigned:
     runs-on: macos-15

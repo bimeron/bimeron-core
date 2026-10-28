@@ -1,5 +1,10 @@
 # Bimeron configuration (.conf)
 
+For the experimental Windows system backend, use an exclusive `[IKEv2]`
+section instead of `[AccessKey]`; see [IKEV2.MD](IKEV2.MD) and
+[the example](../examples/ikev2-windows.conf). Packet defaults and automatic
+reconnection described below do not apply to this path.
+
 The format uses WireGuard-style sections. This is a Bimeron configuration, not a
 WireGuard file. One file contains the upstream proxy source, tunnel settings, and
 split-routing rules.

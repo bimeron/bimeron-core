@@ -35,6 +35,11 @@ Git revision you are viewing. For a downloaded package, open its entry in
 
 ## Supported upstreams
 
+An additional [experimental Windows IKEv2/IPsec backend](docs/IKEV2.MD) controls
+a pre-provisioned system profile. It requires an elevated foreground process,
+has no local SOCKS mode, and does not provide the packet backend's rules,
+kill switch or statistics. Live interoperability remains unverified.
+
 Support below applies to this source revision; check the tagged README for a release package.
 
 All upstreams shown here support TCP. The UDP column describes system VPN mode; the local
@@ -147,6 +152,9 @@ For system VPN, set `Mode = vpn` and use the [Windows CLI](docs/CONF.MD#commands
 privileges; the Windows distribution also includes the matching Wintun DLL.
 
 ## Platform status
+
+The table below describes the packet backend. Native IKEv2 is a separate,
+Windows-only experimental path; see its [requirements and limits](docs/IKEV2.MD).
 
 | Desktop target | System VPN | Optional kill switch |
 | --- | --- | --- |
