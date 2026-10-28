@@ -44,6 +44,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | --- | --- | --- |
 | Shadowsocks | TCP, UDP | Yes |
 | Shadowsocks 2022 | TCP, UDP | Yes |
+| Shadowsocks / 2022 + v2ray-plugin | WebSocket, WebSocket/TLS; embedded Mux | No; DNS is forwarded over TCP |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP, WebSocket, gRPC over TLS | Yes |
@@ -56,6 +57,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
+[Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
 and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
 claim Chromium-identical HTTP/2 behavior. Connections to a remote SOCKS5 upstream are not

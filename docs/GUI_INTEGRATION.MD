@@ -500,20 +500,44 @@ is optional. `Type` is required for all explicit parameter groups. An SS or
 SSConf link still uses `SS`, `SSConf`, or `Key` without `Type`. Do not infer
 `shadowsocks` when `Type` is missing.
 
+For embedded Shadowsocks WS/WSS, preserve the complete imported `ss://` URI,
+including its percent-encoded `plugin` query. Do not extract only the cipher,
+password, and endpoint: doing so would discard the required transport. For an
+explicit parameter form, write `Plugin = v2ray-plugin` and `PluginOpts` alongside
+the Shadowsocks parameters. Do not write these fields alongside a URI source.
+See [Shadowsocks transport examples](SHADOWSOCKS_TRANSPORTS.MD).
+
+Expose only the supported plugin options (`mode=websocket`, `tls`, `host`,
+`path`, `mux`), with defaults from that guide. In particular, `host` controls
+both HTTP Host and TLS SNI/certificate verification, and defaults to
+`cloudfront.com`. Omit `tls` to disable TLS; `tls=false` enables it by presence.
+Keep the imported URI and raw options out of logs and analytics.
+
+For plugin profiles, indicate TCP-only proxying and DNS over TCP; disable
+controls that imply proxied UDP support. Explicit direct routes retain their
+usual behavior. Mux concurrency is a limit per shared WebSocket connection,
+not a global connection limit. The embedded client requires no executable
+picker or plugin process installation.
+
 Run `bimeron validate <config-file>` for syntax and field checks without
 network access or system changes. `bimeron check -config <config-file>` tests
 the remote transport over the network without installing a VPN: TCP/TLS and
 UDP/DNS in VPN mode, TCP/TLS only for SOCKS5 in local `proxy` mode. In VPN mode,
+Shadowsocks plugin profiles instead test TCP/TLS and DNS over TCP. For SOCKS5,
 the remote SOCKS5 server must support both TCP `CONNECT` and UDP `ASSOCIATE`;
 failure to relay UDP/DNS prevents startup. Local `proxy` mode needs only TCP
 `CONNECT`. The current VPN implementation resolves Shadowsocks and SOCKS5
-upstream hosts to IPv4; VLESS, Trojan, and Hysteria2 may use IPv6.
+upstream hosts to IPv4 without a plugin; Shadowsocks plugin profiles, VLESS,
+Trojan, and Hysteria2 may use IPv6.
 DNS settings, MTU, split rules, and direct/block actions use the same GUI
 controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
 encrypted by SOCKS5; explain this when users choose the protocol. Keep
 credentials out of status displays, logs, analytics, and crash reports.
 `bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, `hysteria2`, or `shadowsocks`
 without reporting the username or password.
+Plugin profiles still report `type` as `shadowsocks`; `inspect` does not expose
+plugin settings, and their UDP endpoint is empty. It must not be used to
+reconstruct a complete access profile or infer the plugin configuration.
 
 ## Installation, update and diagnostics of Windows/Linux
 
