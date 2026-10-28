@@ -28,6 +28,19 @@ func localProfile(t *testing.T, address string, mux uint32) accesskey.Profile {
 	return accesskey.Profile{TCP: accesskey.Endpoint{Host: host, Port: port, Cipher: "aes-192-gcm", Secret: "test-only"}, SSPlugin: &accesskey.SSPlugin{Host: "ws.example", Path: "/custom", Mux: mux}}
 }
 
+func TestSimpleObfsCannotUseWebSocketTransport(t *testing.T) {
+	for _, mode := range []string{"http", "tls"} {
+		settings, err := accesskey.ParseSSPlugin("obfs-local", "obfs="+mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := accesskey.Profile{TCP: accesskey.Endpoint{Host: "server.example", Port: 8388, Cipher: "aes-256-gcm", Secret: "test-only"}, SSPlugin: settings}
+		if _, err := New(p, net.Dialer{}); err == nil || err.Error() != "simple-obfs transport is not implemented" {
+			t.Fatalf("simple-obfs reached the WebSocket transport: %v", err)
+		}
+	}
+}
+
 func TestWebSocketHostPathAndAES192(t *testing.T) {
 	key, err := shadowsocks.NewEncryptionKey("aes-192-gcm", "test-only")
 	if err != nil {

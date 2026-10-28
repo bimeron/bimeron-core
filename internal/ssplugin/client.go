@@ -48,6 +48,9 @@ func New(p accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	if err := p.SSPlugin.Validate(); err != nil {
 		return nil, err
 	}
+	if p.SSPlugin.Name == "obfs-local" {
+		return nil, fmt.Errorf("simple-obfs transport is not implemented")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{endpoint: p.TCP, settings: *p.SSPlugin, dialer: dialer, connections: make(map[*wsStream]struct{}), ctx: ctx, cancel: cancel}
 	var endpoint transport.StreamEndpoint = transport.FuncStreamEndpoint(c.connect)

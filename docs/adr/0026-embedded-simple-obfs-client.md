@@ -1,9 +1,18 @@
 # ADR 0026: Embed a focused simple-obfs client
 
-Status: Proposed, October 28, 2026. Research and implementation handoff only;
+Status: Proposed, October 28, 2026. Configuration parsing is implemented;
 the transport is not implemented or verified yet.
 
 Tracking issue: [#61](https://github.com/bimeron/bimeron-core/issues/61).
+
+## Implementation progress
+
+The Low configuration stage adds `SSPlugin.Name`, `Mode`, and `Method`, reuses
+Host and Path, and preserves the empty Name as v2ray-plugin. HTTP URIs are
+limited to 4,096 ASCII bytes and must escape whitespace and non-ASCII content.
+URI, JSON, YAML, and explicit INI imports share the existing parser and retain
+the TCP-only plugin policy. Until the Medium transport stage is complete,
+`ssplugin.New` rejects obfs-local explicitly instead of using WebSocket.
 
 ## Context and alternatives
 
