@@ -93,14 +93,19 @@ func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
 
 func TestResolveHTTPSOnVPNPathKeepsTLSName(t *testing.T) {
 	c := DefaultConfig()
+	c.DNS = nil
 	c.Resolve = func(context.Context) (Profile, error) {
-		return accesskey.ParseHTTPConnect("https://localhost:443")
+		p, err := accesskey.ParseHTTPConnect("https://proxy.example.com:443")
+		// Model a resolved endpoint without relying on the runner's hosts file
+		// or external DNS. Bootstrap must normalize the IP, not the TLS identity.
+		p.TCP.Host = "0:0:0:0:0:0:0:1"
+		return p, err
 	}
 	p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.HTTPServerName != "localhost" || net.ParseIP(p.TCP.Host) == nil || endpoints.udp != "" {
+	if p.HTTPServerName != "proxy.example.com" || p.TCP.Host != "::1" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
 		t.Fatal("HTTPS identity or TCP-only behavior lost")
 	}
 }
