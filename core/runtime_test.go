@@ -77,6 +77,20 @@ func TestResolveHTTPOnVPNPathHasOnlyTCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveNaiveOnVPNPathKeepsTLSNameAndNoUDP(t *testing.T) {
+	c := DefaultConfig()
+	c.Resolve = func(context.Context) (Profile, error) {
+		return accesskey.ParseNaive("naive+https://user:pass@[::1]:443?sni=example.com")
+	}
+	p, _, endpoints, err := resolveOnPath(t.Context(), c, networkPath{dialer: net.Dialer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TCP.Host != "::1" || p.Naive.ServerName != "example.com" || endpoints.tcp != "[::1]:443" || endpoints.udp != "" {
+		t.Fatalf("NaiveProxy TLS name or TCP-only endpoint lost: %+v %+v", p, endpoints)
+	}
+}
+
 func TestProxyEngineListenerLifecycle(t *testing.T) {
 	// Only loopback is used; no DNS, external network, or system VPN operations.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
