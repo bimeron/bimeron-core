@@ -24,3 +24,8 @@ URI options and transport combinations.
 - Standard TLS adds no new module dependency. Browser TLS fingerprints and
   WebSocket, gRPC, and REALITY transports need separate interoperability work.
 - Certificate verification is mandatory; profiles have no insecure toggle.
+
+## Follow-up
+
+[ADR 0022](0022-shared-grpc-trojan-transports.md) adds verified WebSocket/TLS
+and gRPC/TLS transports while retaining this TCP/TLS baseline.

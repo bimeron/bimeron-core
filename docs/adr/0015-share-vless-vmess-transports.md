@@ -37,3 +37,9 @@ transport owner into `internal/streamtransport` without changing wire behavior.
 Reference Xray tests cover TCP and UDP over each supported VMess transport and
 both AEAD ciphers. CI checks the compiled dependency graph and third-party
 notices. VLESS tests remain in the full Go suite.
+
+## Follow-up
+
+[ADR 0022](0022-shared-grpc-trojan-transports.md) moves gRPC ownership into
+`internal/streamtransport` for the third consumer, Trojan. XHTTP ownership
+remains in VLESS.

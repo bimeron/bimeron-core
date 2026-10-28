@@ -1,6 +1,7 @@
 package trojan
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -9,6 +10,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -16,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +32,12 @@ func TestXrayTrojanInterop(t *testing.T) {
 	if bin == "" {
 		t.Skip("BIMERON_XRAY_BIN is not set")
 	}
+	for _, network := range []string{"tcp", "ws", "grpc", "grpc-multi"} {
+		t.Run(network, func(t *testing.T) { testXrayTrojan(t, bin, network) })
+	}
+}
+
+func testXrayTrojan(t *testing.T, bin, network string) {
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -41,10 +51,7 @@ func TestXrayTrojanInterop(t *testing.T) {
 			}
 			go func() {
 				defer c.Close()
-				b := make([]byte, 4)
-				if _, err := c.Read(b); err == nil {
-					_, _ = c.Write(b)
-				}
+				_, _ = io.Copy(c, c)
 			}()
 		}
 	}()
@@ -90,6 +97,18 @@ func TestXrayTrojanInterop(t *testing.T) {
 	port := portListener.Addr().(*net.TCPAddr).Port
 	_ = portListener.Close()
 	config := map[string]any{"log": map[string]any{"loglevel": "warning"}, "inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": port, "protocol": "trojan", "settings": map[string]any{"clients": []any{map[string]any{"password": "temporary-test-password"}}}, "streamSettings": map[string]any{"network": "tcp", "security": "tls", "tlsSettings": map[string]any{"certificates": []any{map[string]any{"certificateFile": certPath, "keyFile": keyPath}}}}}}, "outbounds": []any{map[string]any{"protocol": "freedom"}}}
+	settings := config["inbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)
+	transportNetwork := network
+	if network == "grpc-multi" {
+		transportNetwork = "grpc"
+	}
+	settings["network"] = transportNetwork
+	if transportNetwork == "ws" {
+		settings["wsSettings"] = map[string]any{"path": "/trojan", "host": "front.example.com"}
+	}
+	if transportNetwork == "grpc" {
+		settings["grpcSettings"] = map[string]any{"serviceName": "trojan"}
+	}
 	data, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +132,7 @@ func TestXrayTrojanInterop(t *testing.T) {
 	defer func() { cancel(); _ = cmd.Wait() }()
 	root := x509.NewCertPool()
 	root.AppendCertsFromPEM(certPEM)
-	client, err := New(accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost"}}, net.Dialer{Timeout: 2 * time.Second})
+	client, err := New(accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, Trojan: accesskey.Trojan{Password: "temporary-test-password", ServerName: "localhost", Network: transportNetwork, WSPath: wsSetting(transportNetwork, "/trojan"), WSHost: wsSetting(transportNetwork, "front.example.com"), GRPCServiceName: grpcSetting(transportNetwork, "trojan"), GRPCAuthority: grpcSetting(transportNetwork, "front.example.com"), GRPCMultiMode: network == "grpc-multi"}}, net.Dialer{Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +162,32 @@ func TestXrayTrojanInterop(t *testing.T) {
 		t.Fatalf("TCP reply %q: %v", b, err)
 	}
 	_ = stream.Close()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			connection, err := client.DialStream(context.Background(), tcp.Addr().String())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer connection.Close()
+			_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
+			payload := bytes.Repeat([]byte(fmt.Sprintf("session-%d-", i)), 16384)
+			done := make(chan error, 1)
+			go func() { done <- writeAll(connection, payload) }()
+			reply := make([]byte, len(payload))
+			_, err = io.ReadFull(connection, reply)
+			if err != nil || !bytes.Equal(reply, payload) {
+				t.Errorf("large TCP transfer: %v", err)
+			}
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
 	packet, err := client.ListenPacket(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -156,4 +201,54 @@ func TestXrayTrojanInterop(t *testing.T) {
 	if err != nil || string(b[:n]) != "pong" {
 		t.Fatalf("UDP reply %q: %v", b[:n], err)
 	}
+	if transportNetwork == "ws" || transportNetwork == "grpc" {
+		t.Run("reject-wrong-route", func(t *testing.T) {
+			settings := client.settings
+			if transportNetwork == "ws" {
+				settings.WSPath = "/wrong"
+			} else {
+				settings.GRPCServiceName = "wrong"
+			}
+			bad, err := New(accesskey.Profile{Type: "trojan", TCP: client.endpoint, Trojan: settings}, net.Dialer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bad.Close()
+			bad.rootCAs = root
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			connection, err := bad.DialStream(ctx, tcp.Addr().String())
+			if err == nil {
+				defer connection.Close()
+				_ = connection.SetDeadline(time.Now().Add(time.Second))
+				_, err = connection.Write([]byte("ping"))
+				if err == nil {
+					_, err = io.ReadFull(connection, make([]byte, 4))
+				}
+			}
+			if err == nil {
+				t.Fatal("wrong route accepted")
+			}
+		})
+	}
+	_ = client.Close()
+	if _, err := client.DialStream(t.Context(), tcp.Addr().String()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("dial after close: %v", err)
+	}
+	if _, err := packet.WriteTo([]byte("closed"), trojanAddr(udp.LocalAddr().String())); err == nil {
+		t.Fatal("packet survived client close")
+	}
+}
+
+func wsSetting(network, value string) string {
+	if network == "ws" {
+		return value
+	}
+	return ""
+}
+func grpcSetting(network, value string) string {
+	if network == "grpc" {
+		return value
+	}
+	return ""
 }

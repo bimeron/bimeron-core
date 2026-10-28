@@ -63,7 +63,7 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 		}
 	}
 	x := &xhttpConn{ctx: streamCtx, cancel: cancel, client: &http.Client{Transport: transport}, base: *u,
-		remote: grpcAddr(net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))), ready: make(chan struct{}), mode: mode, options: c.settings.XHTTPOptions}
+		remote: xhttpAddr(net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))), ready: make(chan struct{}), mode: mode, options: c.settings.XHTTPOptions}
 	if x.options != nil && x.options.DownloadSettings != nil {
 		download := x.options.DownloadSettings
 		client, err := c.xhttpDownloadClient(download)
@@ -528,7 +528,7 @@ func (x *xhttpConn) Close() error {
 	})
 	return nil
 }
-func (x *xhttpConn) LocalAddr() net.Addr  { return grpcAddr("local") }
+func (x *xhttpConn) LocalAddr() net.Addr  { return xhttpAddr("local") }
 func (x *xhttpConn) RemoteAddr() net.Addr { return x.remote }
 func (x *xhttpConn) SetDeadline(t time.Time) error {
 	x.mu.Lock()
@@ -547,3 +547,8 @@ func (x *xhttpConn) SetReadDeadline(t time.Time) error  { return x.SetDeadline(t
 func (x *xhttpConn) SetWriteDeadline(t time.Time) error { return x.SetDeadline(t) }
 
 var _ net.Conn = (*xhttpConn)(nil)
+
+type xhttpAddr string
+
+func (a xhttpAddr) Network() string { return "tcp" }
+func (a xhttpAddr) String() string  { return string(a) }

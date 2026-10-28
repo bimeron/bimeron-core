@@ -18,3 +18,22 @@ func TestTrojanSources(t *testing.T) {
 		}
 	}
 }
+
+func TestTrojanTransportParameters(t *testing.T) {
+	base := "[Profile]\nVersion = 1\n[AccessKey]\nType = trojan\nServer = example.com\nPort = 443\nPassword = secret\n"
+	for _, options := range []string{"Network = ws\nWSPath = /proxy\nWSHost = front.example.com\nALPN = http/1.1\n", "Network = grpc\nSecurity = tls\nGRPCServiceName = proxy\nGRPCAuthority = front.example.com\nGRPCMultiMode = true\nALPN = h2\n"} {
+		file, err := ParseData([]byte(base + options))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := file.Resolve(nil)
+		if err != nil || p.Trojan.Network == "" {
+			t.Fatalf("invalid transport: %v", err)
+		}
+	}
+	for _, options := range []string{"Network = grpc\n", "Network = ws\nALPN = h2\n", "Network = ws\nID = forbidden\n", "Network = grpc\nGRPCServiceName = proxy\nSecurity = reality\n", "Network = ws\nWSEarlyData = 2048\n", "Network = ws\nWSEarlyData = 0\n"} {
+		if _, err := ParseData([]byte(base + options)); err == nil {
+			t.Fatalf("accepted %s", options)
+		}
+	}
+}

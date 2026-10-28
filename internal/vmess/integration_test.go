@@ -19,10 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/vless"
+	"golang.getoutline.org/sdk/transport"
 )
 
 func testCertificate(t *testing.T) (string, string, *x509.CertPool) {
@@ -72,7 +75,12 @@ func freeUDPPort(t *testing.T) int {
 	return l.LocalAddr().(*net.UDPAddr).Port
 }
 
-func TestXrayVMessAEAD(t *testing.T) {
+func TestXrayVMessAEAD(t *testing.T) { testXrayProtocol(t, "vmess") }
+
+// Share server fixtures so both clients are checked against identical transports.
+func TestXrayVLESSGRPC(t *testing.T) { testXrayProtocol(t, "vless") }
+
+func testXrayProtocol(t *testing.T, protocol string) {
 	bin := os.Getenv("BIMERON_XRAY_BIN")
 	if bin == "" {
 		t.Skip("set BIMERON_XRAY_BIN to run reference interoperability test")
@@ -134,6 +142,9 @@ func TestXrayVMessAEAD(t *testing.T) {
 	}()
 	for _, scenario := range []struct{ network, mode, alpn string }{{"tcp", "", ""}, {"ws", "", ""}, {"httpupgrade", "", ""}, {"grpc", "", ""}, {"grpc", "multi", ""}, {"xhttp", "packet-up", ""}, {"xhttp", "stream-up", ""}, {"xhttp", "stream-one", ""}, {"xhttp", "auto", ""}, {"xhttp", "packet-up", "h3"}, {"xhttp", "stream-up", "h3"}, {"xhttp", "stream-one", "h3"}, {"xhttp", "auto", "h3"}} {
 		network, mode := scenario.network, scenario.mode
+		if protocol == "vless" && network != "grpc" {
+			continue
+		}
 		fingerprints := []string{"", "chrome"}
 		if scenario.alpn == "h3" {
 			fingerprints = []string{""}
@@ -146,6 +157,9 @@ func TestXrayVMessAEAD(t *testing.T) {
 				fingerprints = []string{"chrome"}
 			}
 			for _, security := range []string{"aes-128-gcm", "chacha20-poly1305"} {
+				if protocol == "vless" && security != "aes-128-gcm" {
+					continue
+				}
 				for _, fingerprint := range fingerprints {
 					t.Run(network+"/"+mode+"/"+scenario.alpn+"/"+transportSecurity+"/"+security+"/"+fingerprint, func(t *testing.T) {
 						port := freePort(t)
@@ -166,6 +180,10 @@ func TestXrayVMessAEAD(t *testing.T) {
 							settings = fmt.Sprintf(`{"network":"xhttp","security":"tls","xhttpSettings":{"path":"/vmess","mode":%q}}`, mode)
 						}
 						config := fmt.Sprintf(`{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":"vmess","settings":{"clients":[{"id":%q,"alterId":0}]},"streamSettings":%s}],"outbounds":[{"protocol":"freedom"}]}`, port, id, settings)
+						if protocol == "vless" {
+							config = strings.Replace(config, `"protocol":"vmess"`, `"protocol":"vless"`, 1)
+							config = strings.Replace(config, `"settings":{"clients":`, `"settings":{"decryption":"none","clients":`, 1)
+						}
 						// Add the certificate through streamSettings without relying on a system trust store.
 						tlsOptions := fmt.Sprintf(`"security":"tls","tlsSettings":{"certificates":[{"certificateFile":%q,"keyFile":%q}]}`, cert, key)
 						if scenario.alpn == "h3" {
@@ -225,11 +243,26 @@ func TestXrayVMessAEAD(t *testing.T) {
 							}
 						}
 						p := accesskey.Profile{Type: "vmess", TCP: accesskey.Endpoint{Host: "127.0.0.1", Port: port}, VMess: v}
-						client, err := New(p, net.Dialer{})
-						if err != nil {
-							t.Fatal(err)
+						var client interface {
+							DialStream(context.Context, string) (transport.StreamConn, error)
+							ListenPacket(context.Context) (net.PacketConn, error)
+							Close() error
 						}
-						client.rootCAs = roots
+						if protocol == "vless" {
+							vc, err := vless.New(accesskey.Profile{Type: "vless", TCP: p.TCP, VLESS: accesskey.VLESS{ID: id, Encryption: "none", Network: "grpc", Security: transportSecurity, ServerName: v.ServerName, Fingerprint: v.Fingerprint, PublicKey: v.PublicKey, ShortID: v.ShortID, ALPN: v.ALPN, GRPCServiceName: v.GRPCServiceName, GRPCMultiMode: v.GRPCMultiMode}}, net.Dialer{})
+							if err != nil {
+								t.Fatal(err)
+							}
+							vc.SetRootCAs(roots)
+							client = vc
+						} else {
+							vc, err := New(p, net.Dialer{})
+							if err != nil {
+								t.Fatal(err)
+							}
+							vc.rootCAs = roots
+							client = vc
+						}
 						defer client.Close()
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer cancel()
