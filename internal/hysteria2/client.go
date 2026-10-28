@@ -2,20 +2,68 @@ package hysteria2
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bimeron/internal/accesskey"
 	hy "github.com/apernet/hysteria/core/v2/client"
+	hyerrors "github.com/apernet/hysteria/core/v2/errors"
 	"github.com/apernet/quic-go"
 	"golang.getoutline.org/sdk/transport"
 )
 
 type Client struct{ upstream hy.Client }
+
+// Failure exposes only stable diagnostic values. Never retain an upstream error:
+// its text may contain the server address or authentication material.
+type Failure struct {
+	Code  string
+	Stage string
+	Retry bool
+}
+
+func (e *Failure) Error() string { return e.Code }
+
+func classify(err error) *Failure {
+	var auth hyerrors.AuthError
+	var socket *socketFailure
+	var config hyerrors.ConfigError
+	var dns *net.DNSError
+	var certificate x509.CertificateInvalidError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var record tls.RecordHeaderError
+	var alert tls.AlertError
+	var transport *quic.TransportError
+	var timeout net.Error
+	switch {
+	case errors.As(err, &socket):
+		return &Failure{"hysteria2_outbound_socket_failed", "outbound_socket", true}
+	case errors.As(err, &auth):
+		return &Failure{"hysteria2_auth_rejected", "authentication", false}
+	case errors.As(err, &config):
+		return &Failure{"hysteria2_invalid_config", "configuration", false}
+	case errors.As(err, &dns):
+		return &Failure{"hysteria2_network_failed", "endpoint_resolution", true}
+	case errors.As(err, &certificate), errors.As(err, &unknownAuthority), errors.As(err, &hostname), errors.As(err, &record), errors.As(err, &alert):
+		return &Failure{"hysteria2_tls_failed", "tls", false}
+	// quic-go can flatten a local certificate error into ErrorMessage while
+	// retaining only INTERNAL_ERROR as its code. Match its TLS prefix, never emit it.
+	case errors.As(err, &transport) && (transport.ErrorCode.IsCryptoError() || (!transport.Remote && strings.HasPrefix(transport.ErrorMessage, "tls: "))):
+		return &Failure{"hysteria2_tls_failed", "tls", false}
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &timeout) && timeout.Timeout():
+		return &Failure{"hysteria2_network_timeout", "connection", true}
+	default:
+		return &Failure{"hysteria2_unknown", "connection", false}
+	}
+}
 
 var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
@@ -26,6 +74,10 @@ type connFactory struct {
 	stop    func() bool
 }
 
+type socketFailure struct{ error }
+
+func (e *socketFailure) Unwrap() error { return e.error }
+
 func (f *connFactory) New(addr net.Addr) (net.PacketConn, error) {
 	network := "udp4"
 	if a, ok := addr.(*net.UDPAddr); ok && a.IP.To4() == nil {
@@ -33,7 +85,7 @@ func (f *connFactory) New(addr net.Addr) (net.PacketConn, error) {
 	}
 	p, err := (&net.ListenConfig{Control: f.control.Control}).ListenPacket(f.ctx, network, ":0")
 	if err != nil {
-		return nil, err
+		return nil, &socketFailure{err}
 	}
 	f.stop = context.AfterFunc(f.ctx, func() { _ = p.Close() })
 	return p, nil
@@ -48,12 +100,12 @@ func newClient(ctx context.Context, profile accesskey.Profile, dialer net.Dialer
 		return nil, fmt.Errorf("expected Hysteria2 profile")
 	}
 	if err := profile.Hysteria2.Validate(profile.TCP.Host, profile.TCP.Port); err != nil {
-		return nil, err
+		return nil, &Failure{"hysteria2_invalid_config", "configuration", false}
 	}
 	address := net.JoinHostPort(profile.TCP.Host, strconv.Itoa(profile.TCP.Port))
 	endpoint, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Hysteria2 server endpoint")
+		return nil, classify(err)
 	}
 	factory := &connFactory{ctx: ctx, control: dialer}
 	fingerprint := quic.QUICFingerprint(profile.Hysteria2.Fingerprint)
@@ -65,15 +117,21 @@ func newClient(ctx context.Context, profile accesskey.Profile, dialer net.Dialer
 		factory.stop()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("Hysteria2 connection failed")
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, context.Canceled
+		}
+		return nil, classify(err)
 	}
 	if err := ctx.Err(); err != nil {
 		_ = upstream.Close()
-		return nil, err
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
+		return nil, classify(err)
 	}
 	if !info.UDPEnabled {
 		_ = upstream.Close()
-		return nil, fmt.Errorf("Hysteria2 server disabled UDP")
+		return nil, &Failure{"hysteria2_udp_disabled", "udp_capability", false}
 	}
 	return &Client{upstream: upstream}, nil
 }

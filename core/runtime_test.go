@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/hysteria2"
 )
 
 func TestUnavailableKeyStopsWithoutRetry(t *testing.T) {
@@ -150,6 +151,70 @@ func TestResolverErrorRedacted(t *testing.T) {
 			}
 		default:
 			return
+		}
+	}
+}
+
+func TestHysteria2FailureContractBothModes(t *testing.T) {
+	uri := "hysteria2://127.0.0.1:9?auth=synthetic-secret&sni=localhost&insecure=0&alpn=h3"
+	p, err := accesskey.ParseHysteria2(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Hysteria2.Fingerprint = "unsupported-fingerprint"
+	for _, mode := range []string{"proxy", "vpn"} {
+		t.Run(mode, func(t *testing.T) {
+			c := testConfig()
+			c.Mode = mode
+			c.Resolve = func(context.Context) (Profile, error) { return p, nil }
+			c.ResolveOnNetwork = func(context.Context, http.RoundTripper) (Profile, error) { return p, nil }
+			e := New(Options{RetryMin: time.Millisecond})
+			if mode == "vpn" {
+				e.factory = func(SessionConfig) backend { return &vpnBackend{platform: &inspectOnlyPlatform{}} }
+			}
+			ctx := testDeadline(t)
+			if err := e.Start(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Wait(ctx); err == nil || err.Error() != "hysteria2_invalid_config" {
+				t.Fatal(err)
+			}
+			status := e.Status()
+			if status.State != Failed || status.Attempt != 1 || status.LastError != "hysteria2_invalid_config" || status.ErrorStage != "configuration" {
+				t.Fatal(status)
+			}
+			for len(e.Events()) > 0 {
+				event := <-e.Events()
+				if strings.Contains(event.Message+event.LastError+event.ErrorStage, "synthetic-secret") || strings.Contains(event.Message+event.LastError+event.ErrorStage, uri) {
+					t.Fatal("credential leaked", event)
+				}
+				if event.State == Failed && (event.LastError != status.LastError || event.ErrorStage != status.ErrorStage) {
+					t.Fatal(event)
+				}
+			}
+		})
+	}
+}
+
+func TestHysteria2FailureRetryability(t *testing.T) {
+	if !errors.Is(hysteria2Fault(context.Canceled), context.Canceled) {
+		t.Fatal("cancellation was converted to a transport failure")
+	}
+	for _, tc := range []struct {
+		code, stage string
+		retry       bool
+	}{
+		{"hysteria2_network_timeout", "connection", true},
+		{"hysteria2_outbound_socket_failed", "outbound_socket", true},
+		{"hysteria2_tls_failed", "tls", false},
+		{"hysteria2_auth_rejected", "authentication", false},
+		{"hysteria2_udp_disabled", "udp_capability", false},
+		{"hysteria2_unknown", "connection", false},
+	} {
+		err := hysteria2Fault(&hysteria2.Failure{Code: tc.code, Stage: tc.stage, Retry: tc.retry})
+		var staged *stageError
+		if !errors.As(err, &staged) || err.Error() != tc.code || staged.stage != tc.stage || retryable(err) != tc.retry {
+			t.Fatalf("%s: %v", tc.code, err)
 		}
 	}
 }
