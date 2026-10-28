@@ -9,24 +9,28 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
+	"golang.org/x/net/websocket"
 )
 
 type Client struct {
-	endpoint    accesskey.Endpoint
-	serverName  string
-	password    [56]byte
-	dialer      net.Dialer
-	rootCAs     *x509.CertPool
-	shadowTLS   *accesskey.ShadowTLS
-	mu          sync.Mutex
-	closed      bool
-	connections map[*conn]struct{}
+	grpcTransport *streamtransport.GRPC
+	endpoint      accesskey.Endpoint
+	settings      accesskey.Trojan
+	serverName    string
+	password      [56]byte
+	dialer        net.Dialer
+	rootCAs       *x509.CertPool
+	shadowTLS     *accesskey.ShadowTLS
+	mu            sync.Mutex
+	closed        bool
+	connections   map[*conn]struct{}
 }
 
 var _ transport.StreamDialer = (*Client)(nil)
@@ -42,31 +46,44 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 	if err := profile.Trojan.Validate(profile.TCP.Host, profile.TCP.Port); err != nil {
 		return nil, err
 	}
-	c := &Client{endpoint: profile.TCP, serverName: profile.Trojan.ServerName, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*conn]struct{})}
+	c := &Client{endpoint: profile.TCP, settings: profile.Trojan, serverName: profile.Trojan.ServerName, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*conn]struct{})}
+	if profile.Trojan.Network == "grpc" {
+		t := profile.Trojan
+		authority := t.GRPCAuthority
+		if authority == "" {
+			authority = t.ServerName
+		}
+		c.grpcTransport = streamtransport.NewGRPC(streamtransport.GRPCConfig{
+			Address: net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), Authority: authority,
+			ServiceName: t.GRPCServiceName, MultiMode: t.GRPCMultiMode,
+			DialContext: func(ctx context.Context, _ string) (net.Conn, error) { return c.directTransport(ctx) },
+		})
+	}
 	hash := sha256.Sum224([]byte(profile.Trojan.Password))
 	hex.Encode(c.password[:], hash[:])
 	return c, nil
 }
 
 func (c *Client) open(ctx context.Context, command byte, target string) (*conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	address, err := addressBytes(target)
 	if err != nil {
 		return nil, err
 	}
-	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	endpoint := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
-	raw, err := streamtransport.Dial(setup, c.dialer, endpoint, c.shadowTLS, c.rootCAs)
-	if err == nil {
-		conn, handshakeErr := streamtransport.TLS(setup, raw, c.serverName, nil, "", c.rootCAs)
-		if handshakeErr != nil {
-			_ = raw.Close()
-		}
-		raw, err = conn, handshakeErr
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, net.ErrClosed
 	}
+	raw, err := c.dialTransport(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Trojan TLS connection failed: %w", err)
+		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	defer stop()
 	request := make([]byte, 0, 61+len(address))
 	request = append(request, c.password[:]...)
 	request = append(request, '\r', '\n', command)
@@ -119,6 +136,9 @@ func (c *Client) Close() error {
 	for _, connection := range connections {
 		_ = connection.Close()
 	}
+	if c.grpcTransport != nil {
+		_ = c.grpcTransport.Close()
+	}
 	return nil
 }
 
@@ -159,4 +179,64 @@ func writeAll(w io.Writer, b []byte) error {
 		b = b[n:]
 	}
 	return nil
+}
+
+func (c *Client) dialTransport(ctx context.Context) (net.Conn, error) {
+	if c.grpcTransport != nil {
+		return c.grpcTransport.DialStream(ctx)
+	}
+	return c.directTransport(ctx)
+}
+
+func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
+	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	endpoint := net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port))
+	raw, err := streamtransport.Dial(setup, c.dialer, endpoint, c.shadowTLS, c.rootCAs)
+	if err != nil {
+		return nil, fmt.Errorf("Trojan server unavailable")
+	}
+	ready := false
+	defer func() {
+		if !ready {
+			_ = raw.Close()
+		}
+	}()
+	stop := context.AfterFunc(setup, func() { _ = raw.Close() })
+	defer stop()
+	_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
+	var protocols []string
+	if c.settings.ALPN != "" {
+		protocols = strings.Split(c.settings.ALPN, ",")
+	} else if c.settings.Network == "ws" {
+		protocols = []string{"http/1.1"}
+	} else if c.settings.Network == "grpc" {
+		protocols = []string{"h2"}
+	}
+	conn, err := streamtransport.TLS(setup, raw, c.serverName, protocols, "", c.rootCAs)
+	if err != nil {
+		return nil, fmt.Errorf("Trojan TLS connection failed: %w", err)
+	}
+	if c.settings.Network == "ws" {
+		host, path := c.settings.WSHost, c.settings.WSPath
+		if host == "" {
+			host = c.serverName
+		}
+		if path == "" {
+			path = "/"
+		}
+		config, err := websocket.NewConfig("wss://"+host+path, "https://"+host)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Trojan WebSocket settings")
+		}
+		ws, err := websocket.NewClient(config, conn)
+		if err != nil {
+			return nil, fmt.Errorf("Trojan WebSocket handshake failed")
+		}
+		ws.PayloadType = websocket.BinaryFrame
+		conn = ws
+	}
+	_ = raw.SetDeadline(time.Time{})
+	ready = true
+	return conn, nil
 }

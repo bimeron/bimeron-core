@@ -35,29 +35,30 @@ type File struct {
 	ShadowTLS *accesskey.ShadowTLS
 }
 type Access struct {
-	SS              string
-	SSConf          string
-	SOCKS5          string
-	HTTP            string
-	VLESS           string
-	VMess           string
-	Trojan          string
-	Naive           string
-	Hysteria2       string
-	AnyTLS          string
-	SSH             string
-	TUIC            string
-	Key             string
-	KeyFile         string
-	Type            string
-	Parameters      *Parameters
-	Username        string
-	IdentityFile    string
-	KnownHostsFile  string
-	VLESSParameters *accesskey.VLESS
-	ServerName      string
-	xhttpExtraUsed  bool
-	xhttpFieldsUsed bool
+	SS                string
+	SSConf            string
+	SOCKS5            string
+	HTTP              string
+	VLESS             string
+	VMess             string
+	Trojan            string
+	Naive             string
+	Hysteria2         string
+	AnyTLS            string
+	SSH               string
+	TUIC              string
+	Key               string
+	KeyFile           string
+	Type              string
+	Parameters        *Parameters
+	Username          string
+	IdentityFile      string
+	KnownHostsFile    string
+	VLESSParameters   *accesskey.VLESS
+	ServerName        string
+	xhttpExtraUsed    bool
+	xhttpFieldsUsed   bool
+	trojanUnsupported bool
 }
 type Parameters struct {
 	Server   string
@@ -243,6 +244,11 @@ func parse(b []byte) (*File, error) {
 			case "File":
 				c.Access.KeyFile = value
 			case "ID", "Encryption", "Flow", "Network", "Security", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode":
+				switch key {
+				case "Network", "Security", "ALPN", "WSPath", "WSHost", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode":
+				default:
+					c.Access.trojanUnsupported = true
+				}
 				if c.Access.VLESSParameters == nil {
 					c.Access.VLESSParameters = &accesskey.VLESS{}
 				}
@@ -555,7 +561,7 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 			return c, nil
 		}
 		if c.Access.Type == "trojan" {
-			if c.Access.Username != "" || s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil || s.Password == "" {
+			if c.Access.Username != "" || s.Method != "" || s.Prefix != "" || s.Password == "" {
 				return nil, fmt.Errorf("[AccessKey] invalid Trojan parameters")
 			}
 			name := c.Access.ServerName
@@ -563,6 +569,13 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 				name = s.Server
 			}
 			t := accesskey.Trojan{Password: s.Password, ServerName: name}
+			if v := c.Access.VLESSParameters; v != nil {
+				if c.Access.trojanUnsupported || v.ID != "" || v.Encryption != "" || v.Flow != "" || v.PublicKey != "" || v.ShortID != "" || v.Fingerprint != "" || v.SpiderX != "" || v.WSEarlyData != 0 || v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "" || v.XHTTPOptions != nil || (v.Security != "" && v.Security != "tls") {
+					return nil, fmt.Errorf("[AccessKey] unsupported Trojan transport options")
+				}
+				t.Network, t.ALPN, t.WSPath, t.WSHost = v.Network, v.ALPN, v.WSPath, v.WSHost
+				t.GRPCServiceName, t.GRPCAuthority, t.GRPCMultiMode = v.GRPCServiceName, v.GRPCAuthority, v.GRPCMultiMode
+			}
 			if err := t.Validate(s.Server, s.Port); err != nil {
 				return nil, err
 			}

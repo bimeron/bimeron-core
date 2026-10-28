@@ -21,7 +21,6 @@ import (
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/websocket"
-	"google.golang.org/grpc"
 )
 
 // Client owns all connections opened for one upstream generation.
@@ -37,7 +36,7 @@ type Client struct {
 	closed             bool
 	connections        map[*streamConn]struct{}
 	packets            map[*packetConn]struct{}
-	grpcConn           *grpc.ClientConn
+	grpcTransport      *streamtransport.GRPC
 	xhttpTransport     *http2.Transport
 	xhttpPool          *xhttpMuxPool
 	xhttpH3Transport   *http3.Transport
@@ -300,8 +299,8 @@ func (c *Client) Close() error {
 	for packet := range c.packets {
 		packets = append(packets, packet)
 	}
-	grpcConn := c.grpcConn
-	c.grpcConn = nil
+	grpcTransport := c.grpcTransport
+	c.grpcTransport = nil
 	xhttpTransport := c.xhttpTransport
 	c.xhttpTransport = nil
 	xhttpPool := c.xhttpPool
@@ -321,8 +320,8 @@ func (c *Client) Close() error {
 	for _, conn := range connections {
 		_ = conn.Close()
 	}
-	if grpcConn != nil {
-		_ = grpcConn.Close()
+	if grpcTransport != nil {
+		_ = grpcTransport.Close()
 	}
 	if xhttpTransport != nil {
 		xhttpTransport.CloseIdleConnections()
@@ -360,4 +359,32 @@ func (s *streamConn) Close() error {
 		s.owner.mu.Unlock()
 	})
 	return err
+}
+
+// DialSecure opens only the protected TLS/REALITY connection, without protocol
+// or HTTP framing. It is also used by VMess's shared gRPC transport.
+func (c *Client) DialSecure(ctx context.Context) (net.Conn, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, net.ErrClosed
+	}
+	setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := streamtransport.Dial(setup, c.dialer, net.JoinHostPort(c.endpoint.Host, strconv.Itoa(c.endpoint.Port)), c.shadowTLS, c.rootCAs)
+	if err != nil {
+		return nil, err
+	}
+	var conn net.Conn
+	if c.settings.Security == "reality" {
+		conn, err = realityHandshake(setup, raw, c.settings, c.publicKey, c.shortID)
+	} else {
+		conn, err = c.tlsHandshake(setup, raw)
+	}
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return conn, nil
 }

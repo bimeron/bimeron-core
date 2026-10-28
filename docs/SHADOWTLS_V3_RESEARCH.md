@@ -74,7 +74,7 @@ listed under "Observed verification"; rejected rows fail profile validation.
 | VLESS with TLS, WS/TLS, gRPC/TLS, XHTTP over HTTP/2 | Wrap every underlying TCP connection, preserving inner TLS | Verified with official ShadowTLS and Xray | Preserve inner UDP-over-stream |
 | VLESS with REALITY or Vision | REALITY stays inside the wrapper; Vision's raw connection refers to the wrapped stream | Verified, including TLS 1.3 application traffic through Vision | Preserve inner UDP-over-stream |
 | VMess AEAD over current TLS-based TCP/WS/HTTPUpgrade/gRPC/XHTTP transports | Preserve current TLS/REALITY and AEAD requirements; propagate settings to the shared HTTP transport | Verified with both AEAD ciphers; bare VMess remains unsupported | Preserve inner UDP-over-stream |
-| Trojan TCP/TLS | Retain the inner TLS layer | Verified with official ShadowTLS and Xray | Preserve Trojan UDP-over-stream |
+| Trojan TCP/TLS, WebSocket/TLS, gRPC/TLS | Retain the inner TLS layer | Verified with official ShadowTLS and Xray | Preserve Trojan UDP-over-stream |
 | AnyTLS | Wrap new sessions and preserve session reuse/padding | Verified with official ShadowTLS and the reference AnyTLS server | Preserve UDP-over-TCP v2 |
 | NaiveProxy-compatible HTTPS CONNECT | Retain inner TLS, HTTP/2 CONNECT, pooling and padding | Verified with official ShadowTLS and Caddy/forwardproxy | Existing implementation is TCP-only |
 | SSH | Retain encryption, host-key verification and connection startup behavior | Verified with official ShadowTLS and an SSH protocol fixture | Existing implementation is TCP-only |

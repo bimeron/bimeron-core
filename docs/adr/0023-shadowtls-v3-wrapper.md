@@ -1,4 +1,4 @@
-# ADR 0022: Add an optional strict ShadowTLS v3 stream wrapper
+# ADR 0023: Add an optional strict ShadowTLS v3 stream wrapper
 
 Status: Accepted with expanded scope, October 28, 2026.
 

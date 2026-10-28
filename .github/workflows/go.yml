@@ -32,8 +32,8 @@ jobs:
           done
       - run: go test ./...
       - run: go vet ./...
-      - name: Check VLESS and VMess transport races
-        run: CGO_ENABLED=1 go test -race ./internal/vless ./internal/vmess
+      - name: Check shared, VLESS, VMess, and Trojan transport races
+        run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
       - name: Check AnyTLS transport races
         run: CGO_ENABLED=1 go test -race ./internal/anytls ./internal/accesskey ./internal/config
       - name: AnyTLS interoperability with reference server
@@ -62,13 +62,13 @@ jobs:
           BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
       - name: Check core and control races
         run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
-      - name: VMess transport interoperability with Xray
+      - name: VLESS and VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
           go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
-          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXrayVMessAEAD$' -count=1 -v
-      - name: Trojan TCP and UDP interoperability with Xray
-        run: BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
+          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXray(VMessAEAD|VLESSGRPC)$' -count=1 -v
+      - name: Trojan TCP, WebSocket, and gRPC interoperability with Xray
+        run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
       - name: Shadowsocks 2022 interoperability with Xray
         run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -run '^TestXrayInterop$' -count=1 -v
       - name: ShadowTLS v3 interoperability with independent servers

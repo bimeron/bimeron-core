@@ -80,7 +80,7 @@ All rows require strict v3 and a verified TLS 1.3 handshake target.
 | Shadowsocks 2022 | The three supported `2022-blake3-*` methods over TCP | No; captured DNS uses TCP |
 | VLESS | Existing TCP/TLS, WS/TLS, gRPC and HTTP/2 XHTTP combinations; permitted REALITY and Vision combinations | Existing UDP-over-stream |
 | VMess AEAD | Existing TCP, WS, HTTPUpgrade, gRPC and HTTP/2 XHTTP combinations with TLS/REALITY | Existing UDP-over-stream |
-| Trojan | TCP/TLS | Existing UDP-over-stream |
+| Trojan | TCP/TLS, WebSocket/TLS, gRPC/TLS | Existing UDP-over-stream |
 | AnyTLS | TLS with existing session reuse and padding | UDP-over-TCP v2 |
 | NaiveProxy-compatible | TLS with HTTP/2 CONNECT and padding | No; captured DNS uses TCP |
 | SSH | Existing encrypted forwarding and host-key verification | No; captured DNS uses TCP |
@@ -123,4 +123,4 @@ ALPN; its settings are fixed. This does not claim browser-identical traffic,
 resistance to a particular censorship system, every inner fingerprint/extra-
 option combination, or live mobile/system-VPN validation. See
 [the recorded matrix and evidence](SHADOWTLS_V3_RESEARCH.md),
-[ADR 0022](adr/0022-shadowtls-v3-wrapper.md) and [CI checks](CI.MD).
+[ADR 0023](adr/0023-shadowtls-v3-wrapper.md) and [CI checks](CI.MD).

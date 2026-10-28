@@ -202,9 +202,12 @@ func ParseHysteria2(raw string) (Profile, error) {
 	return Profile{Type: "hysteria2", Name: u.Fragment, TCP: e, UDP: e, Hysteria2: h}, nil
 }
 
-// Trojan holds settings for the standard TCP/TLS transport.
+// Trojan holds authentication and verified TLS transport settings.
 type Trojan struct {
-	Password, ServerName string
+	Password, ServerName           string
+	Network, ALPN, WSPath, WSHost  string
+	GRPCServiceName, GRPCAuthority string
+	GRPCMultiMode                  bool
 }
 
 func (t Trojan) Validate(host string, port int) error {
@@ -216,6 +219,46 @@ func (t Trojan) Validate(host string, port int) error {
 	}
 	if t.ServerName == "" || strings.ContainsAny(t.ServerName, " /\t\r\n") {
 		return fmt.Errorf("invalid Trojan server name")
+	}
+	network := t.Network
+	if network == "" {
+		network = "tcp"
+	}
+	if network != "tcp" && network != "ws" && network != "grpc" {
+		return fmt.Errorf("unsupported Trojan transport")
+	}
+	if network != "ws" && (t.WSPath != "" || t.WSHost != "") {
+		return fmt.Errorf("Trojan WebSocket options require type=ws")
+	}
+	if network == "ws" {
+		if t.WSPath != "" {
+			path, err := url.ParseRequestURI(t.WSPath)
+			if err != nil || path.IsAbs() || !strings.HasPrefix(t.WSPath, "/") || strings.ContainsAny(t.WSPath, "#\\\r\n") || path.Query().Has("ed") {
+				return fmt.Errorf("invalid or unsupported Trojan WebSocket path")
+			}
+		}
+		if t.WSHost != "" {
+			h, err := url.Parse("https://" + t.WSHost)
+			if err != nil || h.Hostname() == "" || h.User != nil || h.Path != "" || h.RawQuery != "" || h.Fragment != "" || strings.ContainsAny(t.WSHost, " \t\r\n") {
+				return fmt.Errorf("invalid Trojan WebSocket host")
+			}
+		}
+	}
+	if network != "grpc" && (t.GRPCServiceName != "" || t.GRPCAuthority != "" || t.GRPCMultiMode) {
+		return fmt.Errorf("Trojan gRPC options require type=grpc")
+	}
+	if network == "grpc" && (t.GRPCServiceName == "" || strings.ContainsAny(t.GRPCServiceName, "/?\\#| \t\r\n")) {
+		return fmt.Errorf("invalid Trojan gRPC service name")
+	}
+	if t.GRPCAuthority != "" && (strings.ContainsAny(t.GRPCAuthority, " /\\@?#\t\r\n") || strings.HasPrefix(t.GRPCAuthority, ":")) {
+		return fmt.Errorf("invalid Trojan gRPC authority")
+	}
+	if t.ALPN != "" {
+		for _, protocol := range strings.Split(t.ALPN, ",") {
+			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (network == "ws" && protocol != "http/1.1") || (network == "grpc" && protocol != "h2") {
+				return fmt.Errorf("invalid Trojan ALPN")
+			}
+		}
 	}
 	return nil
 }
@@ -238,14 +281,20 @@ func ParseTrojan(raw string) (Profile, error) {
 		return Profile{}, fmt.Errorf("invalid Trojan options")
 	}
 	for key, values := range q {
-		if (key != "sni" && key != "type" && key != "security") || len(values) != 1 {
+		if (key != "sni" && key != "type" && key != "security" && key != "alpn" && key != "path" && key != "host" && key != "serviceName" && key != "authority" && key != "mode") || len(values) != 1 {
 			return Profile{}, fmt.Errorf("unsupported or duplicate Trojan option")
 		}
 	}
-	if (q.Has("type") && q.Get("type") != "tcp") || (q.Has("security") && q.Get("security") != "tls") {
+	if (q.Has("type") && q.Get("type") == "") || (q.Has("security") && q.Get("security") != "tls") {
 		return Profile{}, fmt.Errorf("unsupported Trojan transport or security")
 	}
-	t := Trojan{Password: u.User.Username(), ServerName: q.Get("sni")}
+	t := Trojan{Password: u.User.Username(), ServerName: q.Get("sni"), Network: q.Get("type"), ALPN: q.Get("alpn"), WSPath: q.Get("path"), WSHost: q.Get("host"), GRPCServiceName: q.Get("serviceName"), GRPCAuthority: q.Get("authority"), GRPCMultiMode: q.Get("mode") == "multi"}
+	if t.Network == "" {
+		t.Network = "tcp"
+	}
+	if ((q.Has("path") || q.Has("host")) && t.Network != "ws") || ((q.Has("serviceName") || q.Has("authority") || q.Has("mode")) && t.Network != "grpc") || (q.Has("mode") && q.Get("mode") != "gun" && q.Get("mode") != "multi") {
+		return Profile{}, fmt.Errorf("unsupported Trojan transport options")
+	}
 	if t.ServerName == "" && !q.Has("sni") {
 		t.ServerName = u.Hostname()
 	}

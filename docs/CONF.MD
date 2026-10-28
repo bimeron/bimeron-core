@@ -234,7 +234,7 @@ the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
 transport, `scy=zero`, other networks, and unknown JSON fields are rejected.
 VMess has no explicit parameter form in this release.
 
-### Trojan over TCP/TLS
+### Trojan over TCP, WebSocket, and gRPC with TLS
 
 Use a complete URI as the sole `[AccessKey]` source:
 
@@ -246,8 +246,9 @@ Trojan = trojan://replace-me@server.example.com:443?security=tls&type=tcp&sni=se
 `Key` and `File` also accept this URI. Percent-encode reserved password
 characters. The optional fragment is the profile label. `sni` defaults to
 the server address; an explicit empty `sni` is rejected. The optional
-`security=tls` and `type=tcp` values may be omitted, but other values and
-unknown or duplicate options are rejected. TLS verifies the certificate and
+`security=tls` and `type=tcp` values may be omitted. `type=ws` and
+`type=grpc` select WebSocket and gRPC over TLS. Unknown or duplicate options
+and unsupported security values are rejected. TLS verifies the certificate and
 server name. There is no insecure certificate option.
 
 For an explicit profile, see [`examples/trojan.conf`](../examples/trojan.conf):
@@ -264,8 +265,21 @@ ServerName = server.example.com
 `ServerName` is optional and defaults to `Server`. The password must be
 nonempty and must not contain a line break. Trojan supports TCP and UDP in
 VPN mode; UDP datagrams travel over a TLS connection. The local SOCKS5
-listener in `proxy` mode accepts TCP CONNECT only. WebSocket, gRPC, REALITY,
-TLS fingerprints, custom ALPN, and insecure TLS are unsupported.
+listener in `proxy` mode accepts TCP CONNECT only.
+
+WebSocket accepts `path` (default `/`) and `host` (default SNI). gRPC requires
+`serviceName` and optionally accepts `authority` and `mode=gun|multi`.
+Explicit profiles use `Network = ws|grpc`, `WSPath`, `WSHost`,
+`GRPCServiceName`, `GRPCAuthority`, and `GRPCMultiMode = true|false`.
+`Security = tls` is optional. `ALPN`/`alpn` must be `http/1.1` for WS or `h2`
+for gRPC when supplied; the transport selects these defaults otherwise.
+
+See [the compatibility contract](TROJAN_TRANSPORTS.MD) and the
+[WebSocket](../examples/trojan-ws.conf) and
+[gRPC](../examples/trojan-grpc.conf) examples. Xray gRPC single and multi are
+verified targets. WebSocket early data, custom gRPC method paths, REALITY,
+TLS fingerprints, and insecure TLS are unsupported for Trojan. Trojan-Go
+extensions are not certified.
 
 ### AnyTLS over TCP/TLS
 

@@ -24,18 +24,19 @@ import (
 )
 
 type Client struct {
-	endpoint    accesskey.Endpoint
-	settings    accesskey.VMess
-	id          [16]byte
-	dialer      net.Dialer
-	rootCAs     *x509.CertPool
-	shadowTLS   *accesskey.ShadowTLS
-	rootsOnce   sync.Once
-	httpStream  *vless.Client
-	mu          sync.Mutex
-	closed      bool
-	connections map[*streamConn]struct{}
-	packets     map[*packetConn]struct{}
+	endpoint      accesskey.Endpoint
+	settings      accesskey.VMess
+	id            [16]byte
+	dialer        net.Dialer
+	rootCAs       *x509.CertPool
+	shadowTLS     *accesskey.ShadowTLS
+	rootsOnce     sync.Once
+	httpStream    *vless.Client
+	grpcTransport *streamtransport.GRPC
+	mu            sync.Mutex
+	closed        bool
+	connections   map[*streamConn]struct{}
+	packets       map[*packetConn]struct{}
 }
 
 var _ transport.StreamDialer = (*Client)(nil)
@@ -57,7 +58,7 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		return nil, fmt.Errorf("invalid VMess user ID")
 	}
 	c := &Client{endpoint: profile.TCP, settings: profile.VMess, dialer: dialer, shadowTLS: profile.ShadowTLS, connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{})}
-	if profile.VMess.Network == "grpc" || profile.VMess.Network == "xhttp" || profile.VMess.TLS == "reality" {
+	if profile.VMess.Network == "xhttp" || profile.VMess.TLS == "reality" {
 		v := accesskey.VLESS{ID: profile.VMess.ID, Network: profile.VMess.Network, Security: profile.VMess.TLS, Encryption: "none", ServerName: profile.VMess.ServerName, Fingerprint: profile.VMess.Fingerprint, ALPN: profile.VMess.ALPN,
 			PublicKey: profile.VMess.PublicKey, ShortID: profile.VMess.ShortID, SpiderX: profile.VMess.SpiderX,
 			GRPCServiceName: profile.VMess.GRPCServiceName, GRPCAuthority: profile.VMess.GRPCAuthority, GRPCMultiMode: profile.VMess.GRPCMultiMode,
@@ -67,6 +68,27 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid VMess HTTP transport: %w", err)
 		}
+	}
+	if profile.VMess.Network == "grpc" {
+		v := profile.VMess
+		authority := v.GRPCAuthority
+		if authority == "" {
+			authority = v.ServerName
+		}
+		if authority == "" {
+			authority = profile.TCP.Host
+		}
+		c.grpcTransport = streamtransport.NewGRPC(streamtransport.GRPCConfig{
+			Address: net.JoinHostPort(profile.TCP.Host, strconv.Itoa(profile.TCP.Port)), Authority: authority,
+			ServiceName: v.GRPCServiceName, MultiMode: v.GRPCMultiMode,
+			DialContext: func(ctx context.Context, _ string) (net.Conn, error) {
+				if c.httpStream != nil {
+					c.rootsOnce.Do(func() { c.httpStream.SetRootCAs(c.rootCAs) })
+					return c.httpStream.DialSecure(ctx)
+				}
+				return c.directTransport(ctx)
+			},
+		})
 	}
 	copy(c.id[:], idBytes)
 	return c, nil
@@ -98,7 +120,9 @@ func (c *Client) open(ctx context.Context, command byte, target string) (*stream
 			_ = conn.Close()
 		}
 	}()
-	if c.httpStream != nil {
+	if c.grpcTransport != nil {
+		conn, err = c.grpcTransport.DialStream(ctx)
+	} else if c.httpStream != nil {
 		c.rootsOnce.Do(func() { c.httpStream.SetRootCAs(c.rootCAs) })
 		conn, err = c.httpStream.DialTransport(ctx)
 	} else {
@@ -158,6 +182,8 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		protocols = strings.Split(c.settings.ALPN, ",")
 	} else if c.settings.Network == "ws" || c.settings.Network == "httpupgrade" {
 		protocols = []string{"http/1.1"}
+	} else if c.settings.Network == "grpc" {
+		protocols = []string{"h2"}
 	}
 	conn, err := streamtransport.TLS(setup, raw, c.settings.ServerName, protocols, c.settings.Fingerprint, c.rootCAs)
 	if err != nil {
@@ -238,6 +264,9 @@ func (c *Client) Close() error {
 	}
 	for _, x := range connections {
 		_ = x.Close()
+	}
+	if c.grpcTransport != nil {
+		_ = c.grpcTransport.Close()
 	}
 	if c.httpStream != nil {
 		_ = c.httpStream.Close()
