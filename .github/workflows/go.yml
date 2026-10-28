@@ -34,6 +34,14 @@ jobs:
       - run: go vet ./...
       - name: Check VLESS and VMess transport races
         run: CGO_ENABLED=1 go test -race ./internal/vless ./internal/vmess
+      - name: Check NaiveProxy transport races
+        run: CGO_ENABLED=1 go test -race ./internal/naive ./internal/accesskey ./internal/config
+      - name: NaiveProxy interoperability with reference server
+        run: |
+          cd "$RUNNER_TEMP"
+          go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.5 build v2.11.7 --output "$RUNNER_TEMP/naive-caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@c096d6a00cb28e019cc1995b04bdc6a9311d8024
+          cd "$GITHUB_WORKSPACE"
+          BIMERON_NAIVE_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test ./internal/naive -run '^TestReferenceServer$' -count=1 -v
       - name: Check core and control races
         run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing
       - name: VMess transport interoperability with Xray
