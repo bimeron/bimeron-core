@@ -103,7 +103,8 @@ jobs:
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
 
   test-apple-unsigned:
-    runs-on: macos-15
+    # Keep ARM64 coverage while avoiding the unavailable macOS 15 image pool.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
