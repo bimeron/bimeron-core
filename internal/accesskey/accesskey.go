@@ -42,6 +42,7 @@ type Profile struct {
 	AnyTLS         AnyTLS
 	SSH            SSH
 	TUIC           TUIC
+	ShadowTLS      *ShadowTLS
 }
 
 // AnyTLS contains password authentication and verified TLS settings.

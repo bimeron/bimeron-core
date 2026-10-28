@@ -42,6 +42,9 @@ var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.StreamConn = (*stream)(nil)
 
 func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
+	if err := profile.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
 	if profile.Type != "naive" {
 		return nil, fmt.Errorf("expected NaiveProxy profile")
 	}
@@ -56,7 +59,7 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		stop := context.AfterFunc(c.ctx, cancel)
 		defer stop()
 		endpoint := net.JoinHostPort(profile.TCP.Host, strconv.Itoa(profile.TCP.Port))
-		raw, err := dialer.DialContext(ctx, "tcp", endpoint)
+		raw, err := streamtransport.Dial(ctx, dialer, endpoint, profile.ShadowTLS, c.rootCAs)
 		if err != nil {
 			return nil, err
 		}

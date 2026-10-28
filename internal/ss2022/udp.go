@@ -20,6 +20,9 @@ type packetListener struct{ client *Client }
 func (c *Client) PacketListener() *packetListener { return &packetListener{c} }
 
 func (l *packetListener) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	if l.client.streamOnly {
+		return nil, fmt.Errorf("native UDP unavailable for wrapped Shadowsocks")
+	}
 	conn, err := l.client.dialer.DialContext(ctx, "udp", l.client.server)
 	if err != nil {
 		return nil, err

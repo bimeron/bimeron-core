@@ -16,6 +16,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
 	"bimeron/internal/ss2022"
+	"bimeron/internal/streamtransport"
 	"bimeron/internal/telemetry"
 
 	"golang.getoutline.org/sdk/transport"
@@ -26,17 +27,31 @@ func Outline(e accesskey.Endpoint) (transport.StreamDialer, error) {
 	return OutlineTCP(e, net.Dialer{Timeout: 15 * time.Second})
 }
 func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer, error) {
+	return OutlineProfile(accesskey.Profile{TCP: e}, dialer)
+}
+
+// OutlineProfile creates an encrypted stream, including the optional wrapper.
+// Wrapped profiles deliberately have no native UDP transport.
+func OutlineProfile(p accesskey.Profile, dialer net.Dialer) (transport.StreamDialer, error) {
+	if err := p.ValidateShadowTLS(); err != nil {
+		return nil, err
+	}
+	e := p.TCP
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 	if ss2022.IsMethod(e.Cipher) {
+		if p.ShadowTLS != nil {
+			endpoint := streamtransport.Endpoint(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer, p.ShadowTLS, nil)
+			return ss2022.NewWithEndpoint(e, dialer, endpoint)
+		}
 		return ss2022.New(e, dialer)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("could not create encryption key")
 	}
-	d, err := shadowsocks.NewStreamDialer(&transport.TCPEndpoint{Address: net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), Dialer: dialer}, key)
+	d, err := shadowsocks.NewStreamDialer(streamtransport.Endpoint(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), dialer, p.ShadowTLS, nil), key)
 	if err != nil {
 		return nil, err
 	}
