@@ -295,6 +295,11 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			if err != nil {
 				answer.Error = "invalid_configuration"
 			} else {
+				if cfg.IKEv2 != nil {
+					answer.Error = "ikev2_requires_foreground_user_session"
+					s.command.Unlock()
+					break
+				}
 				cfg.SSHPrompt = s.prompt
 				cfg.SSHDefaultKeys = false // Service home is not the GUI user's home.
 				if err = s.engine.Start(ctx, cfg); err != nil {

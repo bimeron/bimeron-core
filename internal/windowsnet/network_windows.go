@@ -35,11 +35,12 @@ type Snapshot struct {
 	DNS       []string `json:"dns"`
 }
 type Config struct {
-	Action string `json:"action"`
-	Name   string `json:"name"`
-	Tag    string `json:"tag"`
-	Index  int    `json:"index"`
-	MTU    int    `json:"mtu"`
+	Action string   `json:"action"`
+	Name   string   `json:"name"`
+	Tag    string   `json:"tag"`
+	Index  int      `json:"index"`
+	MTU    int      `json:"mtu"`
+	DNS    []string `json:"dns,omitempty"`
 }
 type SetupTiming struct {
 	InterfaceMs int64 `json:"interfaceMs"`

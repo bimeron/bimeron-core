@@ -7,6 +7,22 @@ NetworkExtension is described in [APPLE_NETWORK_EXTENSION.MD](APPLE_NETWORK_EXTE
 
 ## Using the Go API
 
+For native Windows IKEv2, load an [IKEv2 configuration](IKEV2.MD), or construct
+`core.SessionConfig{Mode: "vpn", IKEv2: &core.IKEv2Config{WindowsProfile: "Corporate VPN", ServerName: "vpn.example.com"}}`.
+Do not start from `DefaultConfig`: its packet options are rejected. This path
+requires an elevated foreground user process and a pre-provisioned profile.
+Native `connected` means RAS readiness plus requested protection setup. Set
+`IKEv2Config.KillSwitch = true` to enable native persistent WFP/NRPT protection;
+the top-level packet `SessionConfig.KillSwitch` is rejected. Unexpected native
+loss retains protection until explicit recovery. Windows owns mobility/rekey,
+while a disconnect ends the session without Engine redial. Packet DNS interception and Windows
+reconnection described below apply only to the packet backend.
+
+Read `PlatformCapabilities().IKEv2` for native support and limitations.
+Native metadata reports `Backend = "ikev2"`, `IPv6 = "system"` and
+`StatsUnavailable = true`; `Stats().Unavailable` is true even after Stop.
+Do not display zero counters as observed native traffic.
+
 ```go
 cfg, err := core.LoadConfig("profiles/main.conf")
 if err != nil {

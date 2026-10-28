@@ -1,5 +1,15 @@
 # Local control contract, version 1
 
+Native Windows IKEv2 requires foreground execution. Daemon `start` rejects
+such profiles with `ikev2_requires_foreground_user_session`. The optional
+`capabilities.ikev2` object describes native support independently of the
+top-level packet capabilities. Older daemons may omit it. See [IKEV2.MD](IKEV2.MD).
+
+Native Go API sessions add optional Session fields `backend: "ikev2"` and
+`stats_unavailable: true`, use `ipv6: "system"`, and mark stats snapshots
+`unavailable: true`. Unsupported counters must not be interpreted as zero traffic.
+These additive fields do not change protocol version 1.
+
 Transport: a local Windows named pipe or Unix socket. Each connection carries one
 request and one response: UTF-8 JSON terminated by LF. Requests are limited to
 16 KiB and responses to 256 KiB. Unknown request fields are rejected. Profiles

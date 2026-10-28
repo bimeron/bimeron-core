@@ -57,6 +57,9 @@ type vpnBackend struct {
 }
 
 func newBackend(c SessionConfig) backend {
+	if c.IKEv2 != nil {
+		return newIKEv2Backend()
+	}
 	if c.Mode == "proxy" {
 		return proxyBackend{}
 	}

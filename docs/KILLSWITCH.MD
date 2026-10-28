@@ -1,5 +1,11 @@
 # Windows kill switch
 
+The following rules describe the packet backend. For the experimental native
+IKEv2 backend, use `[IKEv2] KillSwitch = true` and follow
+[its traffic/DNS protection contract](IKEV2.MD#native-traffic-and-dns-protection).
+Native protection has no general executable or direct-routing exemption and
+retains rules after unexpected native session loss until explicit recovery.
+
 ```ini
 [Interface]
 Mode = vpn
