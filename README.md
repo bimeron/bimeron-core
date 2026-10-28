@@ -38,7 +38,7 @@ Git revision you are viewing. For a downloaded package, open its entry in
 Support below applies to this source revision; check the tagged README for a release package.
 
 All upstreams shown here support TCP. The UDP column describes system VPN mode; the local
-SOCKS5 listener accepts TCP `CONNECT` only.
+SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIATE`.
 
 | Upstream | Transport | UDP in VPN mode |
 | --- | --- | --- |
@@ -55,6 +55,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | TUIC v5 | QUIC | Stream-mode relay |
 | Remote SOCKS5 | TCP, UDP | With upstream `UDP ASSOCIATE` |
 | Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
+| MASQUE | HTTP/3 CONNECT and CONNECT-UDP over QUIC | QUIC DATAGRAM; also available through local SOCKS5 |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
 
 Optional [ShadowTLS v3](docs/SHADOWTLS.MD) wraps the encrypted TCP upstreams
@@ -64,7 +65,7 @@ wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
-and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
+[MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
 claim Chromium-identical TLS, HTTP/2, or QUIC behavior. Connections to a remote SOCKS5 upstream are not
 encrypted by the core. HTTP CONNECT accepts `https://` proxies with certificate and server-name
 verification. With `http://`, proxy traffic and Basic credentials use plaintext transport.

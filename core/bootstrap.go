@@ -58,6 +58,9 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 	if err := p.ValidateShadowTLS(); err != nil {
 		return Profile{}, d, sessionEndpoints{}, fault("invalid_tcp_transport", false)
 	}
+	if p.Type == "masque" && p.MASQUE.ProxyHost == "" {
+		p.MASQUE.ProxyHost = p.TCP.Host
+	}
 	original := p
 	if p.Type == "vless" && p.VLESS.XHTTPOptions != nil && p.VLESS.XHTTPOptions.DownloadSettings != nil {
 		options := *p.VLESS.XHTTPOptions
@@ -79,11 +82,14 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		download.ResolvedAddress = chosen.Unmap().String()
 	}
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
+		if p.Type == "masque" && ep == &p.UDP {
+			continue
+		}
 		if p.Type == "ssh" || ((p.TCPOnly() || p.ShadowTLS != nil) && ep == &p.UDP) {
 			continue
 		}
 		family := "ip4"
-		if p.SSPlugin != nil || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
+		if p.SSPlugin != nil || p.Type == "masque" || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
@@ -101,6 +107,9 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 			}
 		}
 		ep.Host = chosen.Unmap().String()
+	}
+	if p.Type == "masque" {
+		p.UDP = p.TCP
 	}
 	domain := func(host string) string {
 		if _, err := netip.ParseAddr(host); err == nil {

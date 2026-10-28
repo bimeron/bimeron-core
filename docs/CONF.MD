@@ -43,7 +43,7 @@ local files as needed.
 
 ## [AccessKey]
 
-**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
+**Choose exactly one source: `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `MASQUE`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `SSH`, `TUIC`, `Key`, or explicit parameters.** Specifying two
 sources is an error; neither takes automatic precedence.
 
 ### Key in a file
@@ -156,6 +156,58 @@ on a trusted network. There is no fallback from HTTPS to plaintext HTTP.
 HTTP CONNECT carries TCP only. In VPN mode, DNS uses TCP through the proxy and
 other proxied UDP is dropped. Direct routing rules still use the physical
 network. In `Mode = proxy`, the local listener remains SOCKS5.
+
+### MASQUE HTTP/3 proxy
+
+```ini
+[AccessKey]
+MASQUE = masque://alice:replace-me@proxy.example.com:443
+```
+
+`Key` and `File` also accept `masque://` URIs. Port defaults to `443`. Omit
+both username and password for an unauthenticated server. Percent-encode
+reserved characters in credentials and query values. The URI accepts an empty
+path or `/`, an optional display-name fragment, and these query options:
+
+| URI option | Meaning |
+| --- | --- |
+| `sni` | Verified TLS server name; defaults to the proxy host. HTTP authority retains the original proxy host. |
+| `udp_path` | Path template; defaults to `/.well-known/masque/udp/{target_host}/{target_port}/`. Use exactly one `{target_host}` and `{target_port}` with simple RFC 6570 expansion. |
+| `ca` | Absolute path to an additional PEM CA file. System certificate roots remain enabled. |
+
+Unknown, empty, or duplicate URI options are rejected. A plain `https://` URI
+does not enable MASQUE. The server must support both ordinary TCP CONNECT and
+RFC 9298 CONNECT-UDP over HTTP/3, with Extended CONNECT, HTTP Datagrams and
+QUIC DATAGRAM enabled. TLS verification cannot be disabled.
+
+Alternatively, configure explicit parameters:
+
+```ini
+[AccessKey]
+Type = masque
+Server = proxy.example.com
+Port = 443
+Username = alice
+Password = replace-me
+# ServerName = proxy.example.com
+# CAFile = proxy-ca.pem
+# MASQUEPath = /.well-known/masque/udp/{target_host}/{target_port}/
+```
+
+`Server` and `Port` are required for explicit parameters. `Username` and
+`Password` must both be present or both absent. `ServerName` defaults to
+`Server`. Relative `CAFile` paths are resolved against the configuration
+file's directory; in-memory configurations require absolute paths.
+`MASQUEPath` and `CAFile` fields require `Type = masque`; URI profiles carry
+these options inside their URI. The path template cannot change the proxy
+scheme or authority and cannot contain query or fragment templates.
+
+Both VPN mode and local SOCKS5 proxy mode support TCP and UDP. UDP applications
+in proxy mode must use SOCKS5 UDP ASSOCIATE. The proxy's UDP port must be
+reachable from the client. There is no HTTP/2/TCP fallback or fragmentation;
+the effective UDP payload limit depends on QUIC's current MTU and is at most
+1500 bytes. See [MASQUE setup and compatibility](MASQUE.MD) and the complete
+[example profile](../examples/masque.conf).
 
 ### Inline VLESS URI
 
@@ -433,9 +485,9 @@ The generic `Key` option is retained for existing configurations:
 Key = ssconf://server.example.com/config
 ```
 
-It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `vless://`, `vmess://`, `trojan://`,
+It accepts `ss://`, `ssconf://`, `socks5://`, `http://`, `https://`, `masque://`, `vless://`, `vmess://`, `trojan://`,
 `naive+https://`, `naive+quic://`, `hysteria2://`, `hy2://`, `anytls://`, `ssh://`, or `tuic://`. `Key` is a separate source and cannot be
-combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
+combined with `File`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `MASQUE`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`,
 `SSH`, `TUIC`, or the explicit parameters below.
 Prefer the scheme-specific options in new configurations.
 
@@ -550,7 +602,7 @@ This section is optional; missing options receive defaults.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `Mode` | `vpn` | `vpn`: system Windows Wintun or Linux TUN, or experimental macOS utun; `proxy`: local TCP SOCKS5 proxy. Determines `run` behavior. |
+| `Mode` | `vpn` | `vpn`: system Windows Wintun or Linux TUN, or experimental macOS utun; `proxy`: local SOCKS5 proxy (TCP; also UDP with MASQUE). Determines `run` behavior. |
 | `Name` | `Bimeron` | Interface name in `vpn` mode. 1–32 ASCII characters on Windows, up to 15 on Linux: letters, digits, `_`, `-`; the first character must be a letter. An occupied name is rejected. On macOS, this is a logical label; the OS assigns utunN. |
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |

@@ -83,6 +83,7 @@ func OutlineStream(e accesskey.Endpoint, endpoint transport.StreamEndpoint) (tra
 
 type Server struct {
 	Proxy  transport.StreamDialer
+	Packet transport.PacketListener
 	Policy *routing.Policy
 	Stats  *telemetry.Counters
 }
@@ -171,11 +172,11 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	if _, err := io.ReadFull(c, request[:]); err != nil || request[0] != 5 || request[2] != 0 {
 		return
 	}
-	if request[1] != 1 {
+	if request[1] != 1 && (request[1] != 3 || s.Packet == nil) {
 		_ = reply(c, 7)
 		finishReply(c)
 		return
-	} // TCP CONNECT only; no fake UDP success.
+	}
 	host := ""
 	switch request[3] {
 	case 1, 4:
@@ -207,6 +208,10 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	port := binary.BigEndian.Uint16(portBytes[:])
+	if request[1] == 3 {
+		s.serveUDP(ctx, c, host, int(port))
+		return
+	}
 	if port == 0 {
 		_ = reply(c, 1)
 		return

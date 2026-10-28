@@ -12,6 +12,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/masque"
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
 	"bimeron/internal/sshtunnel"
@@ -117,6 +118,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	} else if p.Type == "socks5" {
 		s := &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: outbound}
 		tcp, udp = s, s
+	} else if p.Type == "masque" {
+		client, clientErr := masque.New(p, outbound)
+		if clientErr != nil {
+			return nil, nil, nil, nil, fault("invalid_masque_transport", false)
+		}
+		tcp, udp, closeTransport = client, client, client.Close
 	} else if p.Type == "http" {
 		tcp = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: outbound}
 	} else if p.Type == "vless" {
@@ -383,6 +390,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("access_key_resolve_failed", true)
 	}
 	var d transport.StreamDialer
+	var packets transport.PacketListener
 	if err := p.ValidateShadowTLS(); err != nil {
 		return nil, fault("invalid_tcp_transport", false)
 	}
@@ -395,6 +403,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		d, closeTransport = client, client.Close
 	} else if p.Type == "socks5" {
 		d = &proxy.SOCKS5{Endpoint: p.TCP, Username: p.Username, Dialer: net.Dialer{Timeout: 15 * time.Second}}
+	} else if p.Type == "masque" {
+		client, clientErr := masque.New(p, net.Dialer{Timeout: 15 * time.Second})
+		if clientErr != nil {
+			return nil, fault("invalid_masque_transport", false)
+		}
+		d, packets, closeTransport = client, client, client.Close
 	} else if p.Type == "http" {
 		d = &proxy.HTTPConnect{Endpoint: p.TCP, Username: p.Username, ServerName: p.HTTPServerName, Dialer: net.Dialer{Timeout: 15 * time.Second}}
 	} else if p.Type == "vless" {
@@ -460,12 +474,20 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	serveCtx, stop := context.WithCancel(ctx)
 	if c.endpointChanged != nil {
-		c.endpointChanged(sessionEndpoints{tcp: net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))})
+		endpoints := sessionEndpoints{tcp: net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))}
+		if p.Type == "masque" {
+			endpoints.udp = endpoints.tcp
+		}
+		c.endpointChanged(endpoints)
 	}
 	s := &proxySession{cancel: stop, done: make(chan struct{}), listener: l, closeTransport: closeTransport}
-	report("proxy_listen", fmt.Sprintf("SOCKS5 TCP listening on %s", l.Addr()))
+	protocols := "TCP"
+	if packets != nil {
+		protocols = "TCP/UDP"
+	}
+	report("proxy_listen", fmt.Sprintf("SOCKS5 %s listening on %s", protocols, l.Addr()))
 	go func() {
-		s.err = (&proxy.Server{Proxy: d, Policy: c.Policy, Stats: c.stats}).Serve(serveCtx, l)
+		s.err = (&proxy.Server{Proxy: d, Packet: packets, Policy: c.Policy, Stats: c.stats}).Serve(serveCtx, l)
 		close(s.done)
 	}()
 	return s, nil

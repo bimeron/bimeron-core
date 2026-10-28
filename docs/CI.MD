@@ -207,3 +207,35 @@ independent wire fixtures and datagram-size boundaries. Parser fuzz seeds
 run with normal accesskey tests; a bounded fuzz campaign and identity-header
 benchmarks run in the same Linux job. Benchmarks report results without a
 hardware-dependent pass/fail threshold.
+
+## MASQUE CONNECT-UDP
+
+Linux and Windows jobs build `internal/masque/testdata/reference-server` once
+with `GOWORK=off` and `-mod=readonly`, then export its absolute path through
+`BIMERON_MASQUE_REFERENCE_BIN`. The separate module pins masque-go to commit
+`a08a5a221b16281f5c9d73d542f264478bf85a56` with upstream quic-go v0.63.0.
+The core uses a local quic-go v0.64.1 snapshot with the send-completion and
+GOAWAY grace patch described in `third_party/quic-go/PATCHES.md`. Both reference-module checksum files participate in
+the Go build cache key.
+
+The normal test suite runs reference interoperability, the SOCKS5 backend and
+VPN flow-handler integration on both jobs. Linux additionally runs the MASQUE
+package under the race detector, a five-second `FuzzMASQUEURI` campaign and
+64/512/1200-byte UDP echo benchmarks. Windows includes MASQUE in its existing
+race step. Benchmarks report results without a performance threshold.
+
+The loopback fixture checks TCP CONNECT, CONNECT-UDP, DNS, IPv6 when available,
+nested HTTP/3 with packet loss, TLS/authentication/capability failures,
+deadlines, limits and cleanup. No public proxy or administrator-owned system
+VPN is required. The Linux namespace step runs `TestLinuxTUNMASQUE` with real TUN
+TCP IPv4/IPv6 and UDP flows, policy routing and an interface-bound QUIC socket.
+Synthetic application destinations map to allowlisted loopback fixture services.
+Physical Wi-Fi/Ethernet handover remains a manual platform acceptance check. See [MASQUE](MASQUE.MD#reproduce-interoperability-tests)
+for local commands and the compatibility limits.
+
+The dependency test matrix runs the local quic-go root and HTTP/3 suites under
+the race detector on Linux and Windows. Regressions cover data/FIN ACK ordering,
+loss and retransmission, reset/shutdown cleanup, and GOAWAY after response EOF.
+MASQUE lifecycle tests additionally delay the server's application read until
+after transport ACK, check CloseRead/CloseWrite, and bound cleanup while client
+QUIC packets are dropped.

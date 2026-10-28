@@ -17,6 +17,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            internal/masque/testdata/reference-server/go.sum
       - name: Reject incompatible VLESS modules
         run: |
           if go list -m all | grep -E 'github.com/(sagernet/|juju/ratelimit|xtls/reality|xtls/xray-core)'; then
@@ -31,10 +34,19 @@ jobs:
               exit 1
             fi
           done
+      - name: Build pinned MASQUE reference server
+        run: |
+          GOWORK=off go -C internal/masque/testdata/reference-server build -mod=readonly -o "$RUNNER_TEMP/masque-reference" .
+          echo "BIMERON_MASQUE_REFERENCE_BIN=$RUNNER_TEMP/masque-reference" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: go vet ./...
       - name: Check shared, VLESS, VMess, and Trojan transport races
         run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
+      - name: Check MASQUE interoperability and transport races
+        run: |
+          CGO_ENABLED=1 go test -race ./internal/masque -count=1 -v
+          go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=5s
+          go test ./internal/masque -run '^$' -bench '^BenchmarkUDPEcho$' -benchtime=200ms -count=1
       - name: Check AnyTLS transport races
         run: CGO_ENABLED=1 go test -race ./internal/anytls ./internal/accesskey ./internal/config
       - name: AnyTLS interoperability with reference server
@@ -141,7 +153,7 @@ jobs:
         run: |
           go test -c -o "$RUNNER_TEMP/bimeron-core.test" ./core
           go test -c -o "$RUNNER_TEMP/bimeron-linuxnet.test" ./internal/linuxnet
-          sudo unshare -n env BIMERON_NETNS_TEST=1 "$RUNNER_TEMP/bimeron-core.test" -test.run='TestLinuxTUN(HTTP|CleanupAndImmediateReopen)$' -test.v
+          sudo unshare -n env BIMERON_NETNS_TEST=1 BIMERON_MASQUE_REFERENCE_BIN="$BIMERON_MASQUE_REFERENCE_BIN" "$RUNNER_TEMP/bimeron-core.test" -test.run='TestLinuxTUN(HTTP|MASQUE|CleanupAndImmediateReopen)$' -test.v
           sudo unshare -n env BIMERON_NETNS_TEST=1 BIMERON_NFT_BIN="$(command -v nft)" "$RUNNER_TEMP/bimeron-linuxnet.test" -test.run='^TestNativeNetworkConfigureRecover$' -test.v
       - name: Isolated Linux daemon integration
         run: |
@@ -157,10 +169,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            internal/masque/testdata/reference-server/go.sum
+      - name: Build pinned MASQUE reference server
+        run: |
+          $env:GOWORK = 'off'
+          $masqueBinary = Join-Path $env:RUNNER_TEMP 'masque-reference.exe'
+          go -C internal/masque/testdata/reference-server build -mod=readonly -o $masqueBinary .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "BIMERON_MASQUE_REFERENCE_BIN=$masqueBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: go test ./...
       - run: go vet ./...
       - name: Check core and control races
-        run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing
+        run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque
 
   test-apple-unsigned:
     # ARM64 hosted runners currently fail before acquiring a machine.
@@ -194,9 +216,13 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            third_party/quic-go/go.sum
             third_party/apernet-quic-go/go.sum
             third_party/hysteria-core/go.sum
             internal/hysteria2/testdata/reference-server/go.sum
+      - name: Check QUIC send completion and HTTP/3 GOAWAY lifecycle
+        working-directory: third_party/quic-go
+        run: go test -race . ./http3 -timeout 120s
       - name: QUIC unit and wire tests
         working-directory: third_party/apernet-quic-go
         run: go test . ./internal/handshake ./internal/wire ./internal/ackhandler
