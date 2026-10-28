@@ -65,12 +65,12 @@ fi
 EXT="$EXT_BUNDLE/Contents"
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 if test "$APPLE_EXTENSION_KIND" = system-extension; then
-    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift apple/PacketTunnel/system-main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -framework NetworkExtension -framework Network -framework Security -framework Foundation -o "$EXT/MacOS/BimeronPacketTunnel"
+    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift apple/PacketTunnel/system-main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -o "$EXT/MacOS/BimeronPacketTunnel"
 else
-    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -application-extension -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -framework NetworkExtension -framework Network -framework Security -framework Foundation -Xlinker -e -Xlinker _NSExtensionMain -o "$EXT/MacOS/BimeronPacketTunnel"
+    swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -application-extension -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -Xlinker -e -Xlinker _NSExtensionMain -o "$EXT/MacOS/BimeronPacketTunnel"
 fi
-swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" apple/Shared/ProfileStore.swift apple/Control/SystemActivation.swift apple/Control/main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -framework NetworkExtension -framework SystemExtensions -framework Security -framework Foundation -o "$APP/MacOS/BimeronControl"
-clang -I "$APPLE_BUILD_DIR/bridge" apple/Tests/bridge.c "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lpthread -framework CoreFoundation -framework Security -framework Foundation -o "$APPLE_BUILD_DIR/bridge-test"
+swiftc -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" apple/Shared/ProfileStore.swift apple/Control/SystemActivation.swift apple/Control/main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework SystemExtensions -framework Security -framework Foundation -o "$APP/MacOS/BimeronControl"
+clang -I "$APPLE_BUILD_DIR/bridge" apple/Tests/bridge.c "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -lpthread -framework CoreFoundation -framework Security -framework Foundation -o "$APPLE_BUILD_DIR/bridge-test"
 "$APPLE_BUILD_DIR/bridge-test"
 if test -n "${SIGN_IDENTITY:-}"; then
     test -n "$TEAM_ID"

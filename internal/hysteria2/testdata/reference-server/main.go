@@ -69,7 +69,17 @@ func main() {
 		panic(err)
 	}
 	defer s.Close()
-	config, _ := json.Marshal(map[string]string{"server": listener.LocalAddr().String(), "tcp": tcp.Addr().String(), "udp": udp.LocalAddr().String(), "certificate": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))})
+	disabledListener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	disabled, err := server.NewServer(&server.Config{Conn: disabledListener, Authenticator: auth{}, DisableUDP: true, TLSConfig: server.TLSConfig{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}})
+	if err != nil {
+		panic(err)
+	}
+	defer disabled.Close()
+	go func() { _ = disabled.Serve() }()
+	config, _ := json.Marshal(map[string]string{"server": listener.LocalAddr().String(), "udp_disabled_server": disabledListener.LocalAddr().String(), "tcp": tcp.Addr().String(), "udp": udp.LocalAddr().String(), "certificate": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))})
 	fmt.Println(string(config))
 	if err = s.Serve(); err != nil {
 		panic(err)

@@ -45,8 +45,8 @@ settings or callbacks while the session is running.
 - `stopping`: a requested stop is in progress.
 - `failed`: a non-retryable error or cleanup failure; details are in `LastError`.
 
-`Status()` returns the state, attempt number, transition time, and last error
-code. `Events()` is a bounded event queue for one consumer. It lives as long as
+`Status()` returns the state, attempt number, transition time, last error
+code, and `ErrorStage`. `Events()` is a bounded event queue for one consumer. It lives as long as
 the Engine and does not close between starts. A slow consumer may miss events;
 the current state is always available through `Status`. Identical diagnostic
 messages are limited to one every 5 seconds. Events contain no keys, passwords,
@@ -171,9 +171,38 @@ the Windows VPN process must still run with administrator privileges.
 | `transport_suspend`, `transport_retry` | The tunnel is retained while the transport refreshes; `proxy` traffic does not go directly. |
 | `tunnel_adapter_lost` | The tunnel adapter disappeared; the session failed. |
 | `transport_check_failed`, `transport_unavailable` | Upstream TCP/TLS or UDP/DNS checks are failing. |
+| `hysteria2_invalid_config` | The Hysteria2 profile or fingerprint is invalid. |
+| `hysteria2_network_failed` | Server endpoint resolution failed. |
+| `hysteria2_network_timeout` | Connection setup timed out. |
+| `hysteria2_outbound_socket_failed` | The outbound UDP socket or interface binding failed. |
+| `hysteria2_tls_failed` | TLS certificate verification or negotiation failed. |
+| `hysteria2_auth_rejected` | The server rejected authentication. |
+| `hysteria2_udp_disabled` | The server accepted the connection but disabled UDP relay. |
+| `hysteria2_unknown` | Connection setup failed without a safely identifiable cause. |
 | `tcp_dial_failed`, `tcp_read_failed`, `dns_failed` | An individual flow failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |
+
+### Hysteria2 error contract for desktop clients
+
+`Status.LastError` and `Event.LastError` contain a stable code from the table
+above. `Status.ErrorStage` and `Event.ErrorStage` contain a bounded stage name:
+`configuration`, `endpoint_resolution`, `outbound_socket`, `connection`, `tls`,
+`authentication`, or `udp_capability`. The event `Code` remains `state` for
+state transitions; use `LastError` for the failure category. Both `ErrorStage`
+fields are omitted from JSON when empty. `Status()` is authoritative if an
+event is dropped. A successful connection clears both error fields.
+
+`hysteria2_network_failed`, `hysteria2_network_timeout`, and
+`hysteria2_outbound_socket_failed` are retryable. Invalid configuration, TLS
+failure, authentication rejection, disabled UDP relay, and unknown failure are
+terminal. The last category is deliberately terminal until evidence identifies
+a safe retry condition. Upstream error text, passwords, complete URIs, and
+authentication headers must never be included in these fields or messages.
+
+For a real connection failure, record the code, stage, attempt count, selected
+fingerprint, outbound interface selection, and server-side result separately.
+The code alone cannot establish a server or fingerprint defect.
 
 Messages for `tcp_dial_failed` and `tcp_read_failed` include the `direct` or
 `proxy` direction and a safe cause category, such as

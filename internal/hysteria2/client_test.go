@@ -1,11 +1,45 @@
 package hysteria2
 
 import (
+	"context"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
+
+	hyerrors "github.com/apernet/hysteria/core/v2/errors"
 )
+
+func TestSafeFailureCategories(t *testing.T) {
+	secret := "synthetic-secret"
+	uri := "hysteria2://" + secret + "@example.invalid:443"
+	for _, tc := range []struct {
+		name        string
+		err         error
+		code, stage string
+		retry       bool
+	}{
+		{"timeout", context.DeadlineExceeded, "hysteria2_network_timeout", "connection", true},
+		{"dns", &net.DNSError{Err: secret, Name: uri}, "hysteria2_network_failed", "endpoint_resolution", true},
+		{"socket", &socketFailure{errors.New(uri)}, "hysteria2_outbound_socket_failed", "outbound_socket", true},
+		{"tls", x509.UnknownAuthorityError{}, "hysteria2_tls_failed", "tls", false},
+		{"auth", hyerrors.AuthError{StatusCode: 403}, "hysteria2_auth_rejected", "authentication", false},
+		{"unknown", errors.New(uri), "hysteria2_unknown", "connection", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := classify(fmt.Errorf("wrapped %s: %w", secret, tc.err))
+			if failure.Code != tc.code || failure.Stage != tc.stage || failure.Retry != tc.retry {
+				t.Fatal(failure)
+			}
+			if strings.Contains(failure.Error(), secret) || strings.Contains(failure.Error(), uri) {
+				t.Fatal("secret leaked")
+			}
+		})
+	}
+}
 
 type fakeUDP struct {
 	incoming chan packet
