@@ -400,6 +400,14 @@ func (e Endpoint) Validate() error {
 	}
 	switch e.Cipher {
 	case "chacha20-ietf-poly1305", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm":
+	case "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		if e.Prefix != "" {
+			return fmt.Errorf("Shadowsocks 2022 does not support salt prefixes")
+		}
+		key, err := base64.StdEncoding.Strict().DecodeString(e.Secret)
+		if err != nil || len(key) != map[string]int{"2022-blake3-aes-128-gcm": 16, "2022-blake3-aes-256-gcm": 32, "2022-blake3-chacha20-poly1305": 32}[e.Cipher] {
+			return fmt.Errorf("invalid Shadowsocks 2022 key")
+		}
 	default:
 		return fmt.Errorf("unsupported Shadowsocks cipher")
 	}
