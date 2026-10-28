@@ -2,8 +2,10 @@
 
 Bimeron controls a pre-provisioned current-user Windows VPN profile through
 native RAS APIs. Windows owns IPsec, credentials, certificates, routes and DNS.
-This backend bypasses Wintun and the Go packet stack. Live strongSwan/RRAS
-interoperability and leak behavior remain unverified. Other platforms are not
+This backend bypasses Wintun and the Go packet stack. An initial
+[Windows 10/strongSwan live run](IKEV2_LIVE_VALIDATION.MD) verified IPv4 traffic,
+certificate rejection, cancellation and rekey. IPv6 required manual diagnostic
+changes; RRAS and leak protection remain unverified. Other platforms are not
 implemented yet; see [ADR 0023](adr/0023-native-ikev2-system-vpn.md).
 
 ## Prepare the profile

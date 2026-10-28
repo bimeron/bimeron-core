@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -26,7 +28,18 @@ var (
 	rasHangUp              = rasDLL.NewProc("RasHangUpW")
 	// One process-wide callback avoids leaking one Windows callback thunk per
 	// connection. RAS runs asynchronously; authoritative state is polled below.
-	rasNotifier = syscall.NewCallback(func(uintptr, uint32, uint32, uint32, uint32) uintptr { return 0 })
+	rasNotifier = syscall.NewCallback(func(id uintptr, _ uint32, _ uintptr, _ uint32, state, code, _ uint32) uintptr {
+		if value, ok := rasAttempts.Load(id); ok {
+			a := value.(*rasAttempt)
+			a.mu.Lock()
+			a.latest = connectionState{state: state, code: code}
+			a.connected = a.connected || state == stateConnected
+			a.mu.Unlock()
+		}
+		return 1
+	})
+	rasAttempts  sync.Map
+	rasAttemptID atomic.Uintptr
 )
 
 const pointerWords = unsafe.Sizeof(uintptr(0)) / 4
@@ -124,7 +137,32 @@ type rasStatus struct {
 	Substate                      uint32
 }
 
-type windowsDriver struct{ phonebook string }
+type rasAttempt struct {
+	mu             sync.Mutex
+	latest         connectionState
+	closing        bool
+	hangupAccepted bool
+	connected      bool
+	id             uintptr
+	identity       *rasEapIdentity
+}
+
+func (a *rasAttempt) invalidStatus() (connectionState, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// RasDial's asynchronous acknowledgement can precede allocation of its
+	// port: ERROR_INVALID_HANDLE is transient until a terminal callback.
+	terminal := a.connected || a.latest.state == stateDisconnected || a.latest.code != 0
+	if (a.closing && a.hangupAccepted) || (terminal && (a.closing || a.connected)) {
+		return connectionState{}, errInvalidHandle
+	}
+	return a.latest, nil
+}
+
+type windowsDriver struct {
+	phonebook string
+	attempt   *rasAttempt
+}
 
 // Open uses only the current user's phonebook and saved EAP credentials.
 // It does not create/modify profiles, import certificates or display auth UI.
@@ -235,23 +273,30 @@ func (d *windowsDriver) dial(cfg Config) (uintptr, error) {
 	params.EncPassword = packedPointer{}
 	var identity *rasEapIdentity
 	code, _, _ = rasGetEapUserIdentity.Call(uintptr(unsafe.Pointer(book)), uintptr(unsafe.Pointer(name)), 2, 0, uintptr(unsafe.Pointer(&identity)))
-	if identity != nil {
-		defer rasFreeEapUserIdentity.Call(uintptr(unsafe.Pointer(identity)))
-	}
 	if code != 0 || identity == nil {
+		if identity != nil {
+			rasFreeEapUserIdentity.Call(uintptr(unsafe.Pointer(identity)))
+		}
 		return 0, errors.New("ikev2_saved_eap_identity_required")
 	}
 	if identity.Size > 1024*1024 {
+		rasFreeEapUserIdentity.Call(uintptr(unsafe.Pointer(identity)))
 		return 0, errors.New("ikev2_invalid_eap_identity")
 	}
 	params.UserName = identity.UserName
+	d.attempt = &rasAttempt{id: rasAttemptID.Add(1), identity: identity}
+	rasAttempts.Store(d.attempt.id, d.attempt)
+	params.CallbackID.set(d.attempt.id)
 	ext := rasDialExtensions{Size: uint32(unsafe.Sizeof(rasDialExtensions{})), Options: 0x40 | 0x80 | 0x100, EapSize: identity.Size}
 	if identity.Size != 0 {
 		ext.EapInfo.set(uintptr(unsafe.Pointer(identity)) + unsafe.Offsetof(identity.Size) + 4)
 	}
 	var h uintptr
-	code, _, _ = rasDial.Call(uintptr(unsafe.Pointer(&ext)), uintptr(unsafe.Pointer(book)), uintptr(unsafe.Pointer(&params)), 1, rasNotifier, uintptr(unsafe.Pointer(&h)))
+	code, _, _ = rasDial.Call(uintptr(unsafe.Pointer(&ext)), uintptr(unsafe.Pointer(book)), uintptr(unsafe.Pointer(&params)), 2, rasNotifier, uintptr(unsafe.Pointer(&h)))
 	runtime.KeepAlive(identity)
+	if h == 0 {
+		d.release()
+	}
 	if code != 0 {
 		return h, rasError(uint32(code))
 	}
@@ -261,16 +306,55 @@ func (d *windowsDriver) dial(cfg Config) (uintptr, error) {
 func (d *windowsDriver) status(h uintptr) (connectionState, error) {
 	s := rasStatus{Size: uint32(unsafe.Sizeof(rasStatus{}))}
 	code, _, _ := rasGetConnectStatus.Call(h, uintptr(unsafe.Pointer(&s)))
+	if code == 6 && d.attempt != nil {
+		return d.attempt.invalidStatus()
+	}
 	if code != 0 {
 		return connectionState{}, rasError(uint32(code))
+	}
+	if s.State == stateConnected && d.attempt != nil {
+		d.attempt.mu.Lock()
+		d.attempt.connected = true
+		d.attempt.mu.Unlock()
 	}
 	return connectionState{state: s.State, code: s.Error}, nil
 }
 
 func (d *windowsDriver) hangup(h uintptr) error {
+	if d.attempt != nil {
+		d.attempt.mu.Lock()
+		d.attempt.closing = true
+		d.attempt.mu.Unlock()
+	}
 	code, _, _ := rasHangUp.Call(h)
+	if code == 0 && d.attempt != nil {
+		d.attempt.mu.Lock()
+		d.attempt.hangupAccepted = true
+		d.attempt.mu.Unlock()
+	}
+	if (code == 6 || code == 668) && d.attempt != nil {
+		d.attempt.mu.Lock()
+		latest := d.attempt.latest
+		connected := d.attempt.connected
+		d.attempt.mu.Unlock()
+		if !connected && latest.state != stateDisconnected && latest.code == 0 {
+			return errDialPending
+		}
+		return errInvalidHandle
+	}
 	if code != 0 {
 		return rasError(uint32(code))
 	}
 	return nil
+}
+
+func (d *windowsDriver) release() {
+	if d.attempt == nil {
+		return
+	}
+	rasAttempts.Delete(d.attempt.id)
+	if d.attempt.identity != nil {
+		rasFreeEapUserIdentity.Call(uintptr(unsafe.Pointer(d.attempt.identity)))
+		d.attempt.identity = nil
+	}
 }

@@ -21,6 +21,7 @@ type driver interface {
 	dial(Config) (uintptr, error)
 	status(uintptr) (connectionState, error)
 	hangup(uintptr) error
+	release()
 }
 
 type Session struct {
@@ -98,10 +99,7 @@ func (s *Session) wait(ctx context.Context, connecting bool) error {
 func (s *Session) Close() error {
 	s.once.Do(func() {
 		if s.handle == 0 {
-			return
-		}
-		if err := s.driver.hangup(s.handle); err != nil && !errors.Is(err, errInvalidHandle) {
-			s.closeErr = errors.New("ikev2_cleanup_failed")
+			s.driver.release()
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
@@ -109,8 +107,25 @@ func (s *Session) Close() error {
 		ticker := time.NewTicker(s.interval)
 		defer ticker.Stop()
 		for {
+			err := s.driver.hangup(s.handle)
+			if err == nil || errors.Is(err, errInvalidHandle) {
+				break
+			}
+			if !errors.Is(err, errDialPending) {
+				s.closeErr = errors.New("ikev2_cleanup_failed")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				s.closeErr = errors.New("ikev2_cleanup_timeout")
+				return
+			case <-ticker.C:
+			}
+		}
+		for {
 			_, err := s.driver.status(s.handle)
 			if errors.Is(err, errInvalidHandle) {
+				s.driver.release()
 				return
 			}
 			if err != nil {
@@ -129,6 +144,7 @@ func (s *Session) Close() error {
 }
 
 var errInvalidHandle = errors.New("ikev2_connection_handle_invalid")
+var errDialPending = errors.New("ikev2_dial_pending")
 
 // Return only bounded codes, never native error strings containing identities.
 func rasError(code uint32) error {

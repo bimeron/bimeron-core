@@ -3,6 +3,7 @@
 package systemvpn
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,34 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestAsyncPortNotAllocatedIsPendingUntilTerminalCallback(t *testing.T) {
+	a := &rasAttempt{}
+	if state, err := a.invalidStatus(); err != nil || state.code != 0 {
+		t.Fatal("early invalid handle was treated as failure", state, err)
+	}
+	a.closing = true
+	if _, err := a.invalidStatus(); err != nil {
+		t.Fatal("cancellation discarded a still-pending dial", err)
+	}
+	a.latest = connectionState{code: 691}
+	a.closing = false
+	if state, err := a.invalidStatus(); err != nil || state.code != 691 {
+		t.Fatal("lost asynchronous auth error", state, err)
+	}
+	a.closing = true
+	if _, err := a.invalidStatus(); !errors.Is(err, errInvalidHandle) {
+		t.Fatal("failed unallocated port not released", err)
+	}
+	a = &rasAttempt{closing: true, hangupAccepted: true}
+	if _, err := a.invalidStatus(); !errors.Is(err, errInvalidHandle) {
+		t.Fatal("acknowledged hangup not finalized", err)
+	}
+	a = &rasAttempt{connected: true}
+	if _, err := a.invalidStatus(); !errors.Is(err, errInvalidHandle) {
+		t.Fatal("lost connected handle treated as startup", err)
+	}
+}
 
 func validEntry() rasEntry {
 	e := rasEntry{Type: 2, VPNStrategy: 7, CustomAuthKey: 26, Options: 0x20000 | 0x10, Options2: 0x2000, NetProtocols: 0xc, EncryptionType: 1}

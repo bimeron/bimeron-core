@@ -29,6 +29,10 @@ asynchronously, poll status and hang up only the returned handle. Saved dial
 parameters contain an opaque password handle; no plaintext password enters
 the configuration, command line or logs. EAP memory is released with the native
 API. One process-wide callback is used, avoiding a callback allocation per run.
+RASDIALFUNC2 attempt IDs route notifications to the owning session. Before port
+allocation, invalid-handle status and no-connection hangup are pending rather
+than terminal. Cancellation waits/retries until hangup is accepted or a terminal
+callback confirms failure; native EAP memory is retained through cleanup.
 Windows ABI structures retain ras.h's four-byte packing on both pointer widths.
 
 The existing global Bimeron lock and retained WFP protection checks are reused.

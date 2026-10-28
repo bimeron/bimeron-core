@@ -38,7 +38,8 @@ Git revision you are viewing. For a downloaded package, open its entry in
 An additional [experimental Windows IKEv2/IPsec backend](docs/IKEV2.MD) controls
 a pre-provisioned system profile. It requires an elevated foreground process,
 has no local SOCKS mode, and does not provide the packet backend's rules,
-kill switch or statistics. Live interoperability remains unverified.
+kill switch or statistics. Initial [Windows 10/strongSwan checks](docs/IKEV2_LIVE_VALIDATION.MD)
+passed; automatic IPv6 readiness and broader interoperability remain unverified.
 
 Support below applies to this source revision; check the tagged README for a release package.
 

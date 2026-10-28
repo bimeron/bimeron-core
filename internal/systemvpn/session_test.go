@@ -9,10 +9,17 @@ import (
 )
 
 type fakeDriver struct {
+	releaseFn func()
 	inspectFn func(Config) error
 	dialFn    func(Config) (uintptr, error)
 	statusFn  func(uintptr) (connectionState, error)
 	hangupFn  func(uintptr) error
+}
+
+func (d fakeDriver) release() {
+	if d.releaseFn != nil {
+		d.releaseFn()
+	}
 }
 
 func (d fakeDriver) inspect(c Config) error {
@@ -187,6 +194,29 @@ func TestCleanupTimeoutAndZeroHandle(t *testing.T) {
 	d = fakeDriver{dialFn: func(Config) (uintptr, error) { return 0, errors.New("dial failed") }, hangupFn: func(uintptr) error { t.Fatal("zero handle hangup"); return nil }}
 	if _, err := connect(context.Background(), testConfig(), d); err == nil {
 		t.Fatal("accepted zero handle")
+	}
+}
+
+func TestCloseRetriesUntilPendingDialCanBeCancelled(t *testing.T) {
+	calls, releases := 0, 0
+	d := fakeDriver{hangupFn: func(uintptr) error {
+		calls++
+		if calls < 3 {
+			return errDialPending
+		}
+		return nil
+	}, statusFn: func(uintptr) (connectionState, error) { return connectionState{}, errInvalidHandle }, releaseFn: func() { releases++ }}
+	s := &Session{driver: d, handle: 1, interval: time.Millisecond, cleanupTimeout: time.Second}
+	if err := s.Close(); err != nil || calls != 3 || releases != 1 {
+		t.Fatal(err, calls, releases)
+	}
+}
+
+func TestPendingCancellationTimeoutDoesNotFreeNativeData(t *testing.T) {
+	d := fakeDriver{hangupFn: func(uintptr) error { return errDialPending }, releaseFn: func() { t.Error("freed native data before cancellation") }}
+	s := &Session{driver: d, handle: 1, interval: time.Millisecond, cleanupTimeout: 3 * time.Millisecond}
+	if err := s.Close(); err == nil || err.Error() != "ikev2_cleanup_timeout" {
+		t.Fatal(err)
 	}
 }
 
