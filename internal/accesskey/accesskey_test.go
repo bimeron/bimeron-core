@@ -27,6 +27,31 @@ func TestStaticFormats(t *testing.T) {
 		t.Fatalf("IPv6: %v", err)
 	}
 }
+func TestShadowsocks2022Keys(t *testing.T) {
+	for _, method := range []string{"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"} {
+		size := 32
+		if method == "2022-blake3-aes-128-gcm" {
+			size = 16
+		}
+		key := base64.StdEncoding.EncodeToString(make([]byte, size))
+		uri := "ss://" + base64.RawURLEncoding.EncodeToString([]byte(method+":"+key)) + "@example.com:8388"
+		if _, err := ParseSS(uri); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		config := []byte("server: example.com\nserver_port: 8388\nmethod: " + method + "\npassword: " + key + "\n")
+		if _, err := ParseConfig(config); err != nil {
+			t.Fatalf("%s config: %v", method, err)
+		}
+		for _, invalid := range []Endpoint{
+			{Host: "example.com", Port: 8388, Cipher: method, Secret: "password"},
+			{Host: "example.com", Port: 8388, Cipher: method, Secret: key, Prefix: "GET "},
+		} {
+			if err := invalid.Validate(); err == nil {
+				t.Fatalf("accepted invalid %s endpoint", method)
+			}
+		}
+	}
+}
 func TestRejectedKeys(t *testing.T) {
 	for _, key := range []string{"ss://bad", "ss://aes-256-gcm:s@host:0", "ss://aes-256-gcm:s@host:65536", "ss://rc4-md5:s@host:80", "ss://aes-256-gcm:s@host:80/?plugin=unsupported", "ss://aes-256-gcm:@host:80"} {
 		if _, err := ParseSS(key); err == nil {

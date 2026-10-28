@@ -15,6 +15,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
+	"bimeron/internal/ss2022"
 	"bimeron/internal/telemetry"
 
 	"golang.getoutline.org/sdk/transport"
@@ -24,9 +25,12 @@ import (
 func Outline(e accesskey.Endpoint) (transport.StreamDialer, error) {
 	return OutlineTCP(e, net.Dialer{Timeout: 15 * time.Second})
 }
-func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (*shadowsocks.StreamDialer, error) {
+func OutlineTCP(e accesskey.Endpoint, dialer net.Dialer) (transport.StreamDialer, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
+	}
+	if ss2022.IsMethod(e.Cipher) {
+		return ss2022.New(e, dialer)
 	}
 	key, err := shadowsocks.NewEncryptionKey(e.Cipher, e.Secret)
 	if err != nil {

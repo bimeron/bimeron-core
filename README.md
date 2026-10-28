@@ -43,6 +43,7 @@ SOCKS5 listener accepts TCP `CONNECT` only.
 | Upstream | Transport | UDP in VPN mode |
 | --- | --- | --- |
 | Shadowsocks | TCP, UDP | Yes |
+| Shadowsocks 2022 | TCP, UDP | Yes |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP/TLS | Yes |
