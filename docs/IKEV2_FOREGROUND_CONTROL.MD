@@ -180,6 +180,13 @@ owned DNS cleanup/cache flush, WFP release. Partial failure retains/marks unknow
 protection; disconnected/process exit alone does not prove cleanup success.
 
 GUI/IPC loss never cancels the owner. Terminal owners remain available until
+close_owner. Even fatal listener failure keeps the foreground owner/Engine alive
+for explicit owner cancellation, with the network-owner marker held; it neither
+recreates the endpoint nor silently falls back. Unknown transport state blocks
+new sessions. A foreground control-loop panic does not request graceful Engine
+cleanup before the process exits and persistent protection takes effect.
+
+Terminal owners remain available until
 close_owner; active owners refuse it with session_not_terminal. Closing a failed
 owner does not remove retained policy. Recovery remains a separately confirmed
 administrative operation after owner closure, with explicit handling of surviving
