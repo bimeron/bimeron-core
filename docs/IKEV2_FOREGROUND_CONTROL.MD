@@ -186,8 +186,7 @@ recreates the endpoint nor silently falls back. Unknown transport state blocks
 new sessions. A foreground control-loop panic does not request graceful Engine
 cleanup before the process exits and persistent protection takes effect.
 
-Terminal owners remain available until
-close_owner; active owners refuse it with session_not_terminal. Closing a failed
+Active owners refuse close_owner with session_not_terminal. Closing a failed
 owner does not remove retained policy. Recovery remains a separately confirmed
 administrative operation after owner closure, with explicit handling of surviving
 RAS tunnels in Windows. Foreign RAS handles/policy are never adopted or removed.
