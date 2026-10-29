@@ -113,6 +113,54 @@ func TestForegroundStopTimeoutDoesNotRestartOrCloseOwner(t *testing.T) {
 	}
 }
 
+type foregroundFailureListener struct{ accepted chan struct{} }
+
+func (l foregroundFailureListener) Accept() (net.Conn, error) {
+	close(l.accepted)
+	return nil, errors.New("broken IPC")
+}
+func (l foregroundFailureListener) Close() error   { return nil }
+func (l foregroundFailureListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+type stopCountForegroundEngine struct {
+	fakeEngine
+	stops atomic.Int32
+}
+
+func (e *stopCountForegroundEngine) Stop(ctx context.Context) error {
+	e.stops.Add(1)
+	return e.fakeEngine.Stop(ctx)
+}
+
+func TestForegroundListenerLossDoesNotDisconnect(t *testing.T) {
+	e := &stopCountForegroundEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
+	s := NewServer(e)
+	s.foreground = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener := foregroundFailureListener{accepted: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, listener) }()
+	<-listener.accepted
+	select {
+	case <-done:
+		t.Fatal("IPC loss terminated owner")
+	case <-time.After(10 * time.Millisecond):
+	}
+	if e.stops.Load() != 0 {
+		t.Fatal("IPC loss stopped Engine")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("explicit owner cancellation stuck")
+	}
+	if e.stops.Load() != 1 {
+		t.Fatal("explicit cancellation did not wait for cleanup")
+	}
+}
+
 func TestForegroundDeniedPeerAndMalformedFramesCannotDispatch(t *testing.T) {
 	for _, raw := range []string{"{\"version\":1,\"id\":\"a\",\"command\":\"hello\",\"command\":\"stop\"}\n", strings.Repeat("x", maxRequest+1)} {
 		e := &fakeEngine{}

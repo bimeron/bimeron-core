@@ -157,10 +157,13 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	defer func() {
+		stopEngine := !s.foreground || ctx.Err() != nil
 		cancel()
 		_ = l.Close()
 		workers.Wait()
-		result = errors.Join(result, s.engine.Stop(context.Background()))
+		if stopEngine {
+			result = errors.Join(result, s.engine.Stop(context.Background()))
+		}
 	}()
 	slots := make(chan struct{}, 32)
 	workers.Add(1)
@@ -183,6 +186,12 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			// A broken private control transport is not a disconnect request.
+			// Keep the foreground owner/Engine/marker alive for explicit owner
+			// cancellation; never recreate or fall back to another endpoint.
+			if s.foreground {
+				<-ctx.Done()
 			}
 			return fmt.Errorf("control listener failed")
 		}
