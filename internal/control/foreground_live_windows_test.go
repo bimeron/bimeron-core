@@ -4,9 +4,11 @@ package control
 
 import (
 	"bimeron/core"
+	"bimeron/internal/killswitch"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"golang.org/x/sys/windows"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +23,10 @@ import (
 func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 	if os.Getenv("BIMERON_IKEV2_FOREGROUND_LIVE") != "1" {
 		t.Skip("isolated VM and controlled server required")
+	}
+	mode := os.Getenv("BIMERON_IKEV2_FOREGROUND_SCENARIO")
+	if mode != "" && mode != "bootstrap-stop" && mode != "dns-stop" && mode != "crash" && mode != "retained-refusal" && mode != "dns-modified" {
+		t.Fatal("unknown explicit lab scenario")
 	}
 	binary, path, revision := os.Getenv("BIMERON_IKEV2_FOREGROUND_BIN"), os.Getenv("BIMERON_IKEV2_TEST_CONFIG"), os.Getenv("BIMERON_IKEV2_FOREGROUND_REVISION")
 	if binary == "" || path == "" || len(revision) != 40 {
@@ -65,11 +71,15 @@ func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
-	client := NewForegroundClient(digest)
+	crashed, expectedTerminalFailure := false, false
+	client := NewForegroundClient(digest, os.Getenv("BIMERON_IKEV2_FOREGROUND_INSTALLATION"))
 	var hello Response
 	var session string
 	cleanup := func() {
 		defer client.Close()
+		if crashed {
+			return
+		}
 		if hello.Instance == "" {
 			t.Error("owner outcome unknown; manual VM inspection required")
 			return
@@ -96,7 +106,7 @@ func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 		}
 		select {
 		case exitErr := <-exited:
-			if exitErr != nil {
+			if exitErr != nil && !expectedTerminalFailure {
 				t.Error("owner exited with failure")
 			}
 		case <-time.After(20 * time.Second):
@@ -129,8 +139,32 @@ func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 		t.Fatal("activation not accepted")
 	}
 	session = a.Status.Session.ID
+	earlyStop := mode == "bootstrap-stop" || mode == "dns-stop"
+	if mode == "bootstrap-stop" {
+		time.Sleep(100 * time.Millisecond)
+	}
 	deadline = time.Now().Add(150 * time.Second)
-	for a.Status.State != core.Connected {
+	for {
+		if mode == "bootstrap-stop" {
+			break
+		}
+		if mode == "dns-stop" && a.Status.Native != nil && a.Status.Native.DNS == "installing" {
+			break
+		}
+		if a.Status.State == core.Connected {
+			if mode == "dns-stop" || mode == "retained-refusal" {
+				t.Fatal("required scenario window/refusal not observed")
+			}
+			break
+		}
+		if mode == "retained-refusal" && a.Status.State == core.Failed {
+			if a.Status.LastError != "ikev2_existing_kill_switch_requires_recovery" || a.Status.Attempt != 0 || a.Status.Native == nil || !a.Status.Native.RecoveryRequired {
+				t.Fatal("retained protection not refused before native open")
+			}
+			expectedTerminalFailure = true
+			t.Log("retained protection refused before native open; explicit recovery still required")
+			return
+		}
 		if a.Status.State == core.Failed || time.Now().After(deadline) {
 			t.Fatal("native readiness failed")
 		}
@@ -140,19 +174,65 @@ func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 			t.Fatal("status unavailable")
 		}
 	}
-	if !a.Status.Session.StatsUnavailable {
-		t.Fatal("native counters advertised")
+	if !earlyStop {
+		if !a.Status.Session.StatsUnavailable {
+			t.Fatal("native counters advertised")
+		}
+		if cfg.IKEv2.KillSwitch && (a.Status.Native == nil || a.Status.Native.WFP != "active" || a.Status.Native.DNS != "active") {
+			t.Fatal("premature protected readiness")
+		}
+		t.Logf("activation-to-connected: %s", time.Since(started))
+		client.Close()
+		client = NewForegroundClient(digest, os.Getenv("BIMERON_IKEV2_FOREGROUND_INSTALLATION"))
+		a, err = client.Call(context.Background(), Request{Version: 1, ID: "reconnect", Command: "hello"})
+		if err != nil || a.Status.Session == nil || a.Status.Session.ID != session || a.Instance != hello.Instance {
+			t.Fatal("GUI reconnect changed owner/session")
+		}
+		if mode == "crash" {
+			if !cfg.IKEv2.KillSwitch {
+				t.Fatal("crash fixture requires native protection")
+			}
+			// Deliberate failure injection after authoritative protected readiness.
+			// This is never a timeout remedy and never touches an unrelated process.
+			if cmd.Process.Kill() != nil {
+				t.Fatal("deliberate crash injection failed")
+			}
+			crashed = true
+			select {
+			case <-exited:
+			case <-time.After(20 * time.Second):
+				t.Fatal("crash outcome unknown")
+			}
+			pending, err := killswitch.NativePending()
+			if err != nil || !pending {
+				t.Fatal("persistent native protection not retained")
+			}
+			if _, err = client.Call(context.Background(), Request{Version: 1, ID: "after-crash", Command: "status", Instance: hello.Instance, Session: session}); err == nil {
+				t.Fatal("crashed owner still reported status")
+			}
+			t.Log("intentional owner crash retained native WFP; separate explicit VM recovery required")
+			return
+		}
+
 	}
-	if cfg.IKEv2.KillSwitch && (a.Status.Native == nil || a.Status.Native.WFP != "active" || a.Status.Native.DNS != "active") {
-		t.Fatal("premature protected readiness")
+
+	if mode == "dns-modified" {
+		if !cfg.IKEv2.KillSwitch {
+			t.Fatal("modified policy fixture requires protection")
+		}
+		root, err := windows.GetWindowsDirectory()
+		if err != nil {
+			t.Fatal("Windows directory unavailable")
+		}
+		script := `$ErrorActionPreference='Stop'; $tag='BimeronForegroundForeignFixture:f17bf33'; if(@(Get-DnsClientNrptRule|Where-Object Comment -eq $tag).Count -ne 0){throw 'Existing fixture'}; $owned=@(Get-DnsClientNrptRule|Where-Object Comment -match '^BimeronIKEv2DNS:[a-f0-9]{32}$'); if($owned.Count -ne 1){throw 'Ambiguous owned policy'}; Set-DnsClientNrptRule -Name $owned[0].Name -NameServers '127.0.0.2' -ErrorAction Stop; Add-DnsClientNrptRule -Namespace '.bimeron-foreground.invalid' -NameServers '127.0.0.3' -Comment $tag -ErrorAction Stop|Out-Null`
+		fixture := exec.Command(root+`\System32\WindowsPowerShell\v1.0\powershell.exe`, "-NoProfile", "-NonInteractive", "-Command", script)
+		fixture.Stdout = io.Discard
+		fixture.Stderr = io.Discard
+		if fixture.Run() != nil {
+			t.Fatal("controlled policy fixture failed; inspect VM")
+		}
 	}
-	t.Logf("activation-to-connected: %s", time.Since(started))
-	client.Close()
-	client = NewForegroundClient(digest)
-	a, err = client.Call(context.Background(), Request{Version: 1, ID: "reconnect", Command: "hello"})
-	if err != nil || a.Status.Session == nil || a.Status.Session.ID != session || a.Instance != hello.Instance {
-		t.Fatal("GUI reconnect changed owner/session")
-	}
+
 	stopped := time.Now()
 	deadline = time.Now().Add(120 * time.Second)
 	for {
@@ -160,15 +240,23 @@ func TestWindowsForegroundLiveLifecycle(t *testing.T) {
 		if err == nil {
 			break
 		}
+		if mode == "dns-modified" && a.Error == "session_stop_failed" {
+			if a.Status.Session == nil || a.Status.Session.Active || a.Status.Native == nil || a.Status.Native.DNS != "modified" || a.Status.Native.WFP != "retained" || a.Status.Native.RASCleanup != "succeeded" || !a.Status.Native.RecoveryRequired {
+				t.Fatal("modified-policy cleanup outcome inconsistent")
+			}
+			expectedTerminalFailure = true
+			t.Log("modified owned DNS refused cleanup; WFP retained; separate explicit recovery required")
+			return
+		}
 		if a.Error != "cleanup_pending" || time.Now().After(deadline) {
 			t.Fatal("ordered cleanup did not succeed")
 		}
 	}
-	if a.Status.Session.Active || a.Status.Native == nil || a.Status.Native.RASCleanup != "succeeded" || a.Status.Native.RecoveryRequired {
+	if a.Status.Session.Active || a.Status.Native == nil || (a.Status.Native.RASCleanup != "succeeded" && !(earlyStop && a.Status.Native.RASCleanup == "not_started")) || a.Status.Native.RecoveryRequired {
 		t.Fatal("cleanup outcome inconsistent")
 	}
 	if cfg.IKEv2.KillSwitch && (a.Status.Native.DNS != "inactive" || a.Status.Native.WFP != "inactive") {
 		t.Fatal("owned policy retained after successful cleanup")
 	}
-	t.Logf("stop-to-cleanup: %s", time.Since(stopped))
+	t.Logf("stop-to-cleanup: %s; scenario=%s", time.Since(stopped), mode)
 }

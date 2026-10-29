@@ -14,15 +14,40 @@ Files alone is insufficient. Existing installations with a user-owned executable
 must be corrected by their installer; this endpoint never silently repairs ACLs.
 Development binaries in writable directories are refused.
 
+The installer must create `bimeron-foreground.json` beside the selected Core
+executable, with the same protected ownership/DACL requirements. Core reads only
+this fixed filename, pins it for the owner lifetime, and never creates/repairs it
+from IPC or launch arguments. UTF-8 JSON is limited to 4 KiB; unknown/duplicate
+fields are refused:
+
+```json
+{"schema":1,"installation":"<32-lowercase-hex-installation-id>","gui_sha256":"<64-lowercase-hex-approved-GUI-digest>"}
+```
+
+The public installation ID is unique per installation and is not a secret.
+The manifest authorizes exactly one GUI hash; another protected executable under
+the same SID is insufficient. Pin Desktop, never a general script host. The GUI
+reads this protected metadata and verifies the binding in every exchange.
+Missing/unsafe metadata fails before network mutation. Updating the GUI/manifest
+requires explicitly closing the owner. There is no IPC policy-write operation.
+
 Processes of the same SID are not isolated from each other's GUI memory or
 intent. This design does not claim protection against injection/control of the
 trusted GUI by that SID, another administrator, or privileged OS policy changes.
 It narrows the elevated interface to one reviewed native operation and verifies
 the installed binaries rather than trusting a random pipe name or a claimed PID.
-Go callers can use `NewForegroundClient` to pin verified image/process handles
+Go callers pass the selected Core digest and installation ID to
+`NewForegroundClient` to pin verified image/process handles
 between polls and avoid rehashing binaries; Close releases those handles. Calls
 on one client are serialized. The GUI must implement the same checks, including checking
 the selected Core executable digest before sending even the initial hello.
+
+Privileged embedded Windows scripts use the Windows API system directory,
+fixed child cwd/PATH, a limited OS environment and Windows-shipped modules only.
+The module path is reset inside the trusted script after PowerShell startup.
+Inherited executable/module overrides cannot redirect these operations. Existing
+DNS deadlines and synchronous provisioning rollback remain unchanged. See
+[Microsoft's module documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_modules?view=powershell-5.1).
 
 ## Launch and discovery
 
@@ -96,10 +121,10 @@ seconds. Use asynchronous client calls, at least seven seconds for stop exchange
 and bounded status polling (for example 500 ms active, two seconds terminal).
 
 ```json
-{"version":1,"id":"hello-1","command":"hello"}
+{"version":1,"id":"hello-1","command":"hello","installation":"<installation-id>"}
 ```
 
-Hello includes `core` BuildDetails (version, exact revision, modified, platform,
+Hello includes the same `installation` and `core` BuildDetails (version, exact revision, modified, platform,
 architecture and build metadata), `capabilities.ikev2`, `instance`, `status`,
 `endpoint:"ikev2_foreground"` and `owner`. Owner fields are `pid`, `created`,
 `sid`, `session`, `image_sha256`, `image_volume`, `image_index`, `elevated`.
@@ -109,21 +134,22 @@ Build metadata is not a substitute for executable authentication. Before startin
 confirm the reviewed identity on the same owner:
 
 ```json
-{"version":1,"id":"activate-1","command":"hello","instance":"<owner-instance>","accept_revision":"<reviewed-40-hex-Core-SHA>"}
+{"version":1,"id":"activate-1","command":"hello","installation":"<installation-id>","instance":"<owner-instance>","accept_revision":"<reviewed-40-hex-Core-SHA>"}
 ```
 
 Missing/mismatched/modified revision returns core_identity_mismatch without Start.
 After an ambiguous activation timeout, read status on that instance; do not launch
 a second owner. The owner cannot start a different config or a second session.
 
-Every subsequent request supplies that `instance` and `status.Session.id` as
+Every request supplies the installation binding. Subsequent requests also supply
+that `instance` and `status.Session.id` as
 `session`; a session not yet accepted uses an empty session string:
 
 ```json
-{"version":1,"id":"status-1","command":"status","instance":"<owner-instance>","session":"<session-id>"}
-{"version":1,"id":"events-1","command":"events","instance":"<owner-instance>","session":"<session-id>","after":0}
-{"version":1,"id":"stop-1","command":"stop","instance":"<owner-instance>","session":"<session-id>"}
-{"version":1,"id":"close-1","command":"close_owner","instance":"<owner-instance>","session":"<session-id>"}
+{"version":1,"id":"status-1","command":"status","installation":"<installation-id>","instance":"<owner-instance>","session":"<session-id>"}
+{"version":1,"id":"events-1","command":"events","installation":"<installation-id>","instance":"<owner-instance>","session":"<session-id>","after":0}
+{"version":1,"id":"stop-1","command":"stop","installation":"<installation-id>","instance":"<owner-instance>","session":"<session-id>"}
+{"version":1,"id":"close-1","command":"close_owner","installation":"<installation-id>","instance":"<owner-instance>","session":"<session-id>"}
 ```
 
 Responses preserve existing capitalized Status/Event field names. Session states
@@ -159,7 +185,8 @@ owner does not remove retained policy. Recovery remains a separately confirmed
 administrative operation after owner closure, with explicit handling of surviving
 RAS tunnels in Windows. Foreign RAS handles/policy are never adopted or removed.
 
-Safe errors include existing IPC codes plus stale_instance, cleanup_pending,
+Safe errors include existing IPC codes plus installation_mismatch,
+foreground_installation_policy_rejected, stale_instance, cleanup_pending,
 session_not_terminal, foreground_identity_rejected, foreground_owner_unavailable,
 foreground_configuration_rejected/changed. Display a generic localized message
 for unknown codes; never display arbitrary elevated stdout/stderr/native errors.
@@ -222,6 +249,7 @@ Set only public test metadata:
 $env:BIMERON_IKEV2_FOREGROUND_LIVE = '1'
 $env:BIMERON_IKEV2_FOREGROUND_BIN = '<protected absolute Core executable>'
 $env:BIMERON_IKEV2_FOREGROUND_REVISION = '<reviewed immutable Core SHA>'
+$env:BIMERON_IKEV2_FOREGROUND_INSTALLATION = '<protected manifest installation ID>'
 $env:BIMERON_IKEV2_TEST_CONFIG = '<local absolute native test config>'
 & '<protected control.test.exe>' -test.run '^TestWindowsForegroundLiveLifecycle$' -test.v -test.timeout 10m
 ```
@@ -231,7 +259,39 @@ activation, authoritative connected/protection state, IPC reconnect preserving
 session identity, unavailable statistics, and ordered cleanup. It records
 activation/stop latency without endpoint/credential data and closes the owner
 only after a structured stop outcome. Unknown outcomes never cause force-kill or
-automatic recovery. This harness does not establish UAC interaction, another-user
-login refusal, crash/modified-policy recovery or physical leak behavior; those
-require the separately documented manual disposable-VM matrix. Compilation or
-skipping this test is not live evidence.
+automatic recovery.
+
+For separately authorized negative tests, `BIMERON_IKEV2_FOREGROUND_SCENARIO`
+selects `bootstrap-stop`, `dns-stop`, `crash`, `retained-refusal`, or
+`dns-modified`. Empty selects ordinary lifecycle. The crash fixture deliberately
+ends its own connected owner to test retention, never as a timeout remedy.
+Crash/modified-DNS scenarios leave protection for a separate explicit
+administrative recovery after all owners stop. The modified-DNS fixture creates
+an unrelated NRPT test rule: recovery must preserve it, and the operator removes
+that unchanged fixture separately. Use these modes only with a recovery plan.
+
+`TestWindowsForegroundMediumClientLive` supports lab modes `medium`,
+`medium-exit`, `medium-reopen`, and `high-idle-cleanup` through
+`BIMERON_IKEV2_FOREGROUND_CLIENT_MODE`. A privileged lab orchestrator starts the
+same-SID interactive owner while the test client remains unelevated. Exit/reopen
+modes use `BIMERON_IKEV2_FOREGROUND_RECEIPT` for bounded public identity metadata
+solely to assert owner/session continuity. This is a test assertion aid, not a
+Core authentication credential or product discovery store. Idle cleanup refuses
+an active session and never recovers networking.
+
+`TestWindowsForegroundProfileControlLive` is separately gated by
+`BIMERON_IKEV2_FOREGROUND_PROFILE_LIVE=1`. It verifies authenticated preview,
+unreviewed-token refusal, apply/idempotency/remove receipts for one unique owned
+profile. The existing profile-preparation suite covers collisions, settings/route
+modifications, interrupted journals and rollback.
+
+`TestWindowsIKEv2ActivePreparationRefusal` requires
+`BIMERON_IKEV2_ACTIVE_PREPARATION_LIVE=1`, an existing Windows-owned saved profile
+in `BIMERON_IKEV2_ACTIVE_PROFILE`, and its public DNS identity in
+`BIMERON_IKEV2_PROFILE_TEST_SERVER`. It owns one native RAS handle and verifies
+that preparation refuses active RAS without changing or adopting it.
+
+These fixtures do not establish actual ShellExecute/UAC consent/cancellation or
+another-account interactive login. Those remain manual caller-integration
+checks. Compilation/skipping a fixture is not live evidence. Windows 11/RRAS,
+physical mobility/public IPv6 and ARM64 runtime remain outside these results.

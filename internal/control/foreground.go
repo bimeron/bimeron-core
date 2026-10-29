@@ -11,6 +11,10 @@ import (
 // supplies the only configuration; the IPC peer can never start another one.
 func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 	a := Response{ID: r.ID, Instance: s.instance, Version: Version, Status: s.engine.Status()}
+	if r.Installation != s.installation {
+		a.Error = "installation_mismatch"
+		return a
+	}
 	if r.ID == "" || len(r.ID) > 64 || r.Config != "" || r.ChallengeID != "" || len(r.Answers) != 0 || r.PlanToken != "" {
 		a.Error = "invalid_request"
 		return a
@@ -76,6 +80,9 @@ func (server *Server) bindForegroundSession(ctx context.Context, cfg core.Sessio
 	var launchMu sync.Mutex
 	var launchErr error
 	server.foregroundDispatch = func(requestContext context.Context, r Request) Response {
+		if r.Installation != server.installation {
+			return Response{Version: Version, ID: r.ID, Instance: server.instance, Error: "installation_mismatch", Status: server.engine.Status()}
+		}
 		launchMu.Lock()
 		// Identity discovery is read-only. Activation binds approval of an exact
 		// unmodified revision to this owner before any network mutation.

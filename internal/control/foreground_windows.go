@@ -62,13 +62,14 @@ func RunForeground(ctx context.Context, opts ForegroundOptions) error {
 type ForegroundClient struct {
 	mu            sync.Mutex
 	expectedImage string
+	installation  string
 	peer          *ProcessIdentity
 	release       func()
 	closed        bool
 }
 
-func NewForegroundClient(expectedImage string) *ForegroundClient {
-	return &ForegroundClient{expectedImage: expectedImage}
+func NewForegroundClient(expectedImage, installation string) *ForegroundClient {
+	return &ForegroundClient{expectedImage: expectedImage, installation: installation}
 }
 func (client *ForegroundClient) Close() {
 	client.mu.Lock()
@@ -81,8 +82,8 @@ func (client *ForegroundClient) Close() {
 	}
 }
 
-func CallForeground(ctx context.Context, expectedImage string, r Request) (Response, error) {
-	client := NewForegroundClient(expectedImage)
+func CallForeground(ctx context.Context, expectedImage, installation string, r Request) (Response, error) {
+	client := NewForegroundClient(expectedImage, installation)
 	defer client.Close()
 	return client.Call(ctx, r)
 }
@@ -93,6 +94,13 @@ func (client *ForegroundClient) Call(ctx context.Context, r Request) (Response, 
 	ctx = bounded
 	client.mu.Lock()
 	defer client.mu.Unlock()
+	if !lowerHex(client.expectedImage, 64) || !lowerHex(client.installation, 32) {
+		return Response{}, errForegroundIdentity
+	}
+	if r.Installation != "" && r.Installation != client.installation {
+		return Response{}, errors.New("installation_mismatch")
+	}
+	r.Installation = client.installation
 	if client.closed {
 		return Response{}, errors.New("foreground_client_closed")
 	}
@@ -126,7 +134,7 @@ func (client *ForegroundClient) Call(ctx context.Context, r Request) (Response, 
 		release = func() {}
 	}
 	a, callErr := exchange(ctx, c, r)
-	if a.Owner == nil || *a.Owner != peer || a.Instance == "" || (a.Endpoint != "ikev2_foreground" && a.Endpoint != "ikev2_profile") {
+	if a.Installation != client.installation || a.Owner == nil || *a.Owner != peer || a.Instance == "" || (a.Endpoint != "ikev2_foreground" && a.Endpoint != "ikev2_profile") {
 		return Response{}, errForegroundIdentity
 	}
 	return a, callErr
@@ -142,13 +150,20 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 		releaseSelf()
 		return nil, nil, nil, errors.New("administrator_required")
 	}
+	policy, releasePolicy, err := loadForegroundInstallation()
+	if err != nil {
+		releaseSelf()
+		return nil, nil, nil, err
+	}
+	originalReleaseSelf := releaseSelf
+	releaseSelf = func() { releasePolicy(); originalReleaseSelf() }
 	requester, releaseRequester, err := inspectProcess(opts.RequesterPID)
 	if err != nil {
 		releaseSelf()
 		return nil, nil, nil, err
 	}
 
-	if requester.Created != opts.RequesterCreated || requester.SID != self.SID || requester.Session != self.Session {
+	if requester.ImageSHA256 != policy.GUIHash || requester.Created != opts.RequesterCreated || requester.SID != self.SID || requester.Session != self.Session {
 		releaseRequester()
 		releaseSelf()
 		return nil, nil, nil, errForegroundIdentity
@@ -169,6 +184,7 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 	engine := core.New(core.Options{})
 	server := NewServer(engine)
 	server.foreground = true
+	server.installation = policy.Installation
 	server.owner = &self
 	server.endpoint = "ikev2_foreground"
 	server.authorize = func(c net.Conn) (func(), error) {

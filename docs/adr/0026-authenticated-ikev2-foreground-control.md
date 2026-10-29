@@ -18,6 +18,12 @@ WFP or NRPT itself.
 
 ## Approved decisions
 
+Installation identity is a protected, bounded `bimeron-foreground.json` next to
+Core: schema 1, public installation ID and one authorized GUI SHA256. Core pins
+this file, refuses an unapproved requester image even in Program Files, and
+requires the installation ID on every request/response. Only the installer or
+administrator writes this metadata; there is no IPC registration/update command.
+
 Use the same Core executable as an elevated interactive foreground owner under
 the GUI user's SID. Reject over-the-shoulder elevation before network mutation.
 Production native GUI launches require an executable in a protected location;
@@ -72,6 +78,13 @@ the packet service's rejection of IKEv2. Do not stop another backend implicitly.
 Provisioning remains a separate explicit operation with bounded structured
 results carried through an authenticated channel, not arbitrary elevated stdout.
 Network recovery does not repair interrupted provisioning transactions.
+
+Privileged PowerShell must not resolve its executable through inherited
+SystemRoot/PATH or autoload user modules. Share a Windows-system command
+constructor for runtime and provisioning scripts, preserving their existing
+cancellation policies. Reset the system module path after startup and exclude
+unrelated application environment secrets. This is part of the privileged
+boundary rather than a new networking backend.
 
 ## Validation and release gate
 

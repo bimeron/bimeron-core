@@ -19,6 +19,32 @@ import (
 
 var errForegroundIdentity = errors.New("foreground_identity_rejected")
 
+func loadForegroundInstallation() (foregroundInstallation, func(), error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return foregroundInstallation{}, nil, errForegroundInstallation
+	}
+	f, err := openLocked(filepath.Join(filepath.Dir(exe), ForegroundInstallationFile), false)
+	if err != nil {
+		return foregroundInstallation{}, nil, errForegroundInstallation
+	}
+	if protectedObject(windows.Handle(f.Fd())) != nil {
+		f.Close()
+		return foregroundInstallation{}, nil, errForegroundInstallation
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil {
+		f.Close()
+		return foregroundInstallation{}, nil, errForegroundInstallation
+	}
+	policy, err := parseForegroundInstallation(data)
+	if err != nil {
+		f.Close()
+		return foregroundInstallation{}, nil, err
+	}
+	return policy, func() { f.Close() }, nil
+}
+
 func trustedFileOwner(sid string) bool {
 	return sid == "S-1-5-18" || sid == "S-1-5-32-544" || sid == "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 }
