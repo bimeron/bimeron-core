@@ -1,7 +1,8 @@
 # ADR 0026: Authenticated Windows IKEv2 foreground control
 
-Status: architecture approved; implementation under validation.
+Status: implemented experimentally; focused offline and Windows 10 live validation completed.
 Tracks issue #68. This document does not lift the Desktop implementation gate.
+See [validation evidence and remaining gates](../IKEV2_FOREGROUND_VALIDATION.MD).
 
 ## Context
 
