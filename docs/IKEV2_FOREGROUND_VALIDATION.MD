@@ -43,7 +43,8 @@ Opt-in live tests remain disabled in shared CI.
 Compile checks passed for cmd/bimeron, core and internal/control on Linux
 amd64/arm64, Windows arm64/386, and Darwin amd64/arm64. These are build checks,
 not runtime support or native IKEv2 validation on those targets.
-Local checks do not represent a remote CI run; no branch was pushed.
+Local checks do not represent a remote CI run. The branch was subsequently pushed
+and PR #69 opened after review; its required checks must pass before merge.
 
 ## Live results on the final source
 
@@ -93,11 +94,23 @@ or stored in repository artifacts. Test-launch quoting and public receipt ACL
 mistakes were corrected before these final observations; they are not product
 failures. This validates the Core CLI boundary, not a finished Desktop UAC UI.
 Afterward the temporary account was disabled, removed from Administrators and
-deleted; all UAC fixture tasks were removed. Windows still reported its user
-profile loaded with no remaining account processes, so that profile directory
-was left for removal after a VM restart rather than force-deleted while loaded.
-The temporary public-receipt read ACL was removed. Repeated network inspection
-again matched the original routes/DNS and found no NRPT/WFP or active RAS state.
+deleted; all UAC fixture tasks were removed. An orderly disposable-VM restart
+unloaded its remaining user profile. The exact deleted account SID and profile
+path were verified, then the unloaded profile was removed through
+Win32_UserProfile. Final inspection confirmed that the temporary account, profile
+record and directory were absent. The temporary public-receipt read ACL was
+removed. Repeated network inspection again matched the original routes/DNS and
+found no NRPT/WFP or active RAS state.
+
+### Pre-PR review
+
+Source review covered the privileged identity/config boundary, private command
+allowlist and instance binding, owner lifetime on client/transport loss, ordered
+cleanup/retention, reviewed provisioning, and shared-daemon compatibility. No
+blocking findings were identified in this author review; it is not an independent
+security audit. Focused control/Core/systemvpn/windowsnet/killswitch tests were
+repeated uncached, together with `go vet ./...` and `git diff --check`, and passed.
+Remote CI results are tracked by PR #69 and are separate from local evidence.
 
 Final inspection found routes and DNS server settings equal to the recorded
 pre-test baseline; zero NRPT rules, absent Bimeron WFP filters, zero active RAS
