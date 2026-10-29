@@ -183,6 +183,11 @@ jobs:
       - run: go vet ./...
       - name: Check core and control races
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque ./internal/systemvpn
+      - name: Check private foreground control without networking
+        run: |
+          go test ./internal/control ./core ./internal/systemvpn -run 'Test(Foreground|ProfileControl|ObservedFailedStartup|NativeCleanupSnapshot|NativeStatusIsCopied|ReviewedProfileToken)' -count=1
+          go test ./internal/control -run '^$' -bench '^BenchmarkForegroundStatus$' -benchtime=200ms -count=1
+          go test ./internal/windowsnet -run '^TestPowerShell' -count=1
       - name: Check native IKEv2 ABI and profile guards without connecting
         run: go test ./internal/systemvpn -run 'Test(RASABI|Native|RejectUnsafeNativeProfiles)' -count=1 -v
       - name: Check IKEv2 preparation ownership and transaction records without provisioning

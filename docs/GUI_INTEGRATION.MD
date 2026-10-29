@@ -1,5 +1,10 @@
 # Bimeron Core: integration of individual GUI projects
 
+The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FOREGROUND_CONTROL.MD)
+is available in development source. It does not change daemon start, the beta.1
+baseline, published assets or Desktop compatibility approval.
+
+
 Current as of October 23, 2026. This document can be copied into a separate project:
 it describes the implemented contract without requiring access to other repository
 files. Recheck the contract against core changes made after this date.
