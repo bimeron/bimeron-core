@@ -12,6 +12,7 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 	var mu sync.Mutex
 	var once sync.Once
 	var tasks sync.WaitGroup
+	var closing bool
 
 	var plan *systemvpn.ProfilePlan
 	operation, code := "preview_pending", ""
@@ -34,6 +35,10 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 		}
 		if r.Command != "hello" && r.Instance != s.instance {
 			a.Error = "stale_instance"
+			return finish()
+		}
+		if closing {
+			a.Error = "owner_closing"
 			return finish()
 		}
 		switch r.Command {
@@ -107,6 +112,9 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 			}
 			if operation == "applying" || operation == "previewing" {
 				a.Error = "operation_pending"
+			} else {
+				closing = true
+				a.closeAccepted = true
 			}
 		default:
 			a.Error = "unknown_command"

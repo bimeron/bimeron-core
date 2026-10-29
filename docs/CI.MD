@@ -252,3 +252,14 @@ loss and retransmission, reset/shutdown cleanup, and GOAWAY after response EOF.
 MASQUE lifecycle tests additionally delay the server's application read until
 after transport ACK, check CloseRead/CloseWrite, and bound cleanup while client
 QUIC packets are dropped.
+
+## Foreground owner lifecycle and installer guard
+
+The normal control suite and existing Linux/Windows control race steps include
+channel-gated activation/close, preactivation cancellation, pending close response
+writes, write failure/oversized fallback shutdown, malformed/stale requests,
+provisioning admission and task draining. The existing Windows windowsnet race
+step covers isolated mutex security/existing-object/abandonment and installer vs
+owner/packet admission tests. Administrator-owned mutex fixtures skip explicitly
+without elevation; they use unique Local test objects, never production locks.
+These checks do not replace live Desktop/MSI rollback/commit or VPN validation.

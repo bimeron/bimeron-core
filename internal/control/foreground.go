@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// foregroundDispatcher is deliberately separate from daemon dispatch. Launch
-// supplies the only configuration; the IPC peer can never start another one.
-func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
+// validateForeground checks request shape and the current owner/session binding.
+func (s *Server) validateForeground(r Request) Response {
 	a := Response{ID: r.ID, Instance: s.instance, Version: Version, Status: s.engine.Status()}
 	if r.Installation != s.installation {
 		a.Error = "installation_mismatch"
@@ -35,6 +34,17 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 		a.Error = "stale_instance"
 		return a
 	}
+	if r.Command != "events" && r.After != 0 {
+		a.Error = "invalid_request"
+	}
+	return a
+}
+
+func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
+	a := s.validateForeground(r)
+	if a.Error != "" {
+		return a
+	}
 	switch r.Command {
 	case "hello", "status", "events":
 		answer := s.dispatch(ctx, r)
@@ -46,10 +56,6 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 		}
 		return answer
 	case "stop":
-		if r.After != 0 {
-			a.Error = "invalid_request"
-			return a
-		}
 		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := s.engine.Stop(wait); err != nil {
@@ -61,10 +67,6 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 		}
 		a.Status = s.engine.Status()
 	case "close_owner":
-		if r.After != 0 {
-			a.Error = "invalid_request"
-			return a
-		}
 		if (a.Status.State != core.Disconnected && a.Status.State != core.Failed) || (a.Status.Session != nil && a.Status.Session.Active) {
 			a.Error = "session_not_terminal"
 		}
@@ -76,33 +78,66 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 
 func (server *Server) bindForegroundSession(ctx context.Context, cfg core.SessionConfig) {
 	server.foreground = true
-	var first sync.Once
 	var launchMu sync.Mutex
+	var launched, cancelled, closing bool
 	var launchErr error
 	server.foregroundDispatch = func(requestContext context.Context, r Request) Response {
-		if r.Installation != server.installation {
-			return Response{Version: Version, ID: r.ID, Instance: server.instance, Error: "installation_mismatch", Status: server.engine.Status()}
-		}
 		launchMu.Lock()
-		// Identity discovery is read-only. Activation binds approval of an exact
-		// unmodified revision to this owner before any network mutation.
+		// Status and session identity are refreshed under the same admission lock.
+		a := server.validateForeground(r)
+		if a.Error != "" {
+			launchMu.Unlock()
+			return a
+		}
 		if r.Command == "hello" && r.AcceptRevision != "" {
-			if !server.acceptedRevision(r.AcceptRevision) {
-				launchMu.Unlock()
-				return Response{Version: Version, ID: r.ID, Instance: server.instance, Error: "core_identity_mismatch", Status: server.engine.Status()}
-			}
-			if r.Version == Version && r.ID != "" && len(r.ID) <= 64 && r.Config == "" && r.After == 0 && r.ChallengeID == "" && len(r.Answers) == 0 && r.PlanToken == "" && r.Instance == server.instance && r.Session == "" {
-				first.Do(func() { launchErr = server.engine.Start(ctx, cfg) })
-			} else {
-				launchMu.Unlock()
-				return Response{Version: Version, ID: r.ID, Instance: server.instance, Error: "invalid_request", Status: server.engine.Status()}
+			if r.Instance != server.instance || r.After != 0 {
+				a.Error = "invalid_request"
+			} else if !server.acceptedRevision(r.AcceptRevision) {
+				a.Error = "core_identity_mismatch"
 			}
 		}
-
+		if a.Error != "" {
+			launchMu.Unlock()
+			return a
+		}
+		if closing {
+			a.Error = "owner_closing"
+			launchMu.Unlock()
+			return a
+		}
+		switch r.Command {
+		case "hello":
+			if r.AcceptRevision != "" {
+				if cancelled {
+					a.Error = "activation_cancelled"
+					launchMu.Unlock()
+					return a
+				}
+				if !launched {
+					launched = true
+					// Start only validates/schedules; it does not wait for cleanup or call IPC.
+					launchErr = server.engine.Start(ctx, cfg)
+				}
+			}
+		case "stop":
+			if !launched {
+				cancelled = true
+			}
+		case "close_owner":
+			if (a.Status.State != core.Disconnected && a.Status.State != core.Failed) || (a.Status.Session != nil && a.Status.Session.Active) {
+				a.Error = "session_not_terminal"
+			} else {
+				closing = true
+				a.closeAccepted = true
+			}
+			launchMu.Unlock()
+			return a
+		}
 		failed := launchErr != nil
 		launchMu.Unlock()
-		a := server.foregroundDispatcher(requestContext, r)
-		if failed && r.Command != "close_owner" {
+		// In particular Stop waits outside launchMu; Engine callbacks never need it.
+		a = server.foregroundDispatcher(requestContext, r)
+		if failed && a.Error == "" {
 			a.Error = "session_start_failed"
 		}
 		return a

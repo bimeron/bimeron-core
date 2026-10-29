@@ -141,6 +141,20 @@ func (client *ForegroundClient) Call(ctx context.Context, r Request) (Response, 
 }
 
 func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), error) {
+	if !windowsnet.Elevated() {
+		return nil, nil, nil, errors.New("administrator_required")
+	}
+	// Publish admission before inspecting/pinning images or reading policy.
+	markerRelease, err := windowsnet.BeginForegroundOwnership()
+	if err != nil {
+		return nil, nil, nil, errors.New("foreground_owner_unavailable")
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			markerRelease()
+		}
+	}()
 	self, releaseSelf, err := inspectProcess(uint32(os.Getpid()))
 	if err != nil {
 		return nil, nil, nil, err
@@ -168,15 +182,8 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 		releaseSelf()
 		return nil, nil, nil, errForegroundIdentity
 	}
-	markerRelease, err := windowsnet.BeginForegroundOwnership()
-	if err != nil {
-		releaseRequester()
-		releaseSelf()
-		return nil, nil, nil, errors.New("foreground_owner_unavailable")
-	}
 	l, err := winio.ListenPipe(foregroundPipe(self.SID, self.Session), &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;" + self.SID + ")S:(ML;;NW;;;ME)", InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
 	if err != nil {
-		markerRelease()
 		releaseRequester()
 		releaseSelf()
 		return nil, nil, nil, errors.New("foreground_owner_unavailable")
@@ -199,5 +206,6 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 		return release, nil
 	}
 
-	return server, l, func() { l.Close(); markerRelease(); releaseRequester(); releaseSelf() }, nil
+	admitted = true
+	return server, l, func() { l.Close(); releaseRequester(); releaseSelf(); markerRelease() }, nil
 }
