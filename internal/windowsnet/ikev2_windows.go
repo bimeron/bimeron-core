@@ -86,6 +86,9 @@ func ConfigureIKEv2DNS(ctx context.Context, tag string, servers []string) error 
 }
 func CleanupIKEv2DNS(ctx context.Context, tag string, servers []string) error {
 	_, err := executeScript(ctx, Config{Action: "cleanup", Tag: tag, DNS: servers}, nativeDNSScript)
+	if err != nil && strings.Contains(err.Error(), "Owned DNS policy changed") {
+		return errors.New("ikev2_owned_dns_policy_modified")
+	}
 	return err
 }
 func RecoverIKEv2DNS(ctx context.Context) error {

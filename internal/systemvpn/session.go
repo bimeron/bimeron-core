@@ -25,15 +25,20 @@ type driver interface {
 }
 
 type Session struct {
-	driver         driver
-	handle         uintptr
-	interval       time.Duration
-	cleanupTimeout time.Duration
-	once           sync.Once
-	closeErr       error
+	driver          driver
+	handle          uintptr
+	interval        time.Duration
+	cleanupTimeout  time.Duration
+	once            sync.Once
+	closeErr        error
+	cleanupObserver func(string)
 }
 
 func connect(ctx context.Context, cfg Config, d driver) (*Session, error) {
+	return connectObserved(ctx, cfg, d, nil)
+}
+
+func connectObserved(ctx context.Context, cfg Config, d driver, observe func(string)) (*Session, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -47,7 +52,7 @@ func connect(ctx context.Context, cfg Config, d driver) (*Session, error) {
 		return nil, err
 	}
 	h, err := d.dial(cfg)
-	s := &Session{driver: d, handle: h, interval: 100 * time.Millisecond, cleanupTimeout: 30 * time.Second}
+	s := &Session{driver: d, handle: h, interval: 100 * time.Millisecond, cleanupTimeout: 30 * time.Second, cleanupObserver: observe}
 	if err == nil && h == 0 {
 		err = errors.New("ikev2_invalid_connection_handle")
 	}
@@ -98,6 +103,16 @@ func (s *Session) wait(ctx context.Context, connecting bool) error {
 // rollback. Only the handle returned by our own dial call is ever disconnected.
 func (s *Session) Close() error {
 	s.once.Do(func() {
+		if s.cleanupObserver != nil {
+			s.cleanupObserver("pending")
+			defer func() {
+				if s.closeErr != nil {
+					s.cleanupObserver("failed")
+				} else {
+					s.cleanupObserver("succeeded")
+				}
+			}()
+		}
 		if s.handle == 0 {
 			s.driver.release()
 			return

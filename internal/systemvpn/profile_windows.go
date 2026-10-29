@@ -5,17 +5,13 @@ package systemvpn
 import (
 	"bimeron/internal/windowsnet"
 	"bytes"
+	"context"
 	_ "embed"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -26,19 +22,11 @@ var profileScript string
 
 func profileOperation(action string, cfg Config, expected string) (string, error) {
 	payload, _ := json.Marshal(map[string]string{"action": action, "name": cfg.WindowsProfile, "server": cfg.ServerName, "expected": expected})
-	units := utf16.Encode([]rune(profileScript))
-	encoded := make([]byte, 2*len(units))
-	for i, u := range units {
-		binary.LittleEndian.PutUint16(encoded[2*i:], u)
-	}
-	root, err := windows.GetWindowsDirectory()
+	// Mutations remain synchronous: cancellation cannot interrupt rollback.
+	cmd, err := windowsnet.PowerShellCommand(context.Background(), profileScript)
 	if err != nil {
-		return "", errors.New("ikev2_windows_directory_unavailable")
+		return "", errors.New("ikev2_profile_windows_operation_failed")
 	}
-	// Mutations are intentionally synchronous: cancellation must not kill the
-	// child halfway through rollback. A crash leaves the pending journal intact.
-	cmd := exec.Command(filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Stdin = bytes.NewReader(payload)
 	out, err := cmd.Output()
 	if err != nil {
@@ -132,6 +120,19 @@ func writeProfileRecord(path string, record profileRecord, exclusive bool) error
 // PrepareProfile previews by default, or explicitly creates/removes an owned
 // current-user profile. It never reads saved credentials or installs trust.
 func PrepareProfile(cfg Config, apply, remove bool) (ProfilePlan, error) {
+	return prepareProfile(cfg, apply, remove, "")
+}
+
+// PrepareProfileReviewed requires the state token returned by preview and
+// rechecks it under the same lock as the mutation. It never adopts a journal.
+func PrepareProfileReviewed(cfg Config, remove bool, expected string) (ProfilePlan, error) {
+	if len(expected) != 64 {
+		return ProfilePlan{}, errors.New("ikev2_profile_preview_required")
+	}
+	return prepareProfile(cfg, !remove, remove, expected)
+}
+
+func prepareProfile(cfg Config, apply, remove bool, expected string) (ProfilePlan, error) {
 	plan := newProfilePlan(cfg)
 	if err := validatePreparationConfig(cfg); err != nil {
 		return plan, err
@@ -169,6 +170,10 @@ func PrepareProfile(cfg Config, apply, remove bool) (ProfilePlan, error) {
 	}
 	if err := checkProfileRecord(record, cfg, snapshot); err != nil {
 		return plan, err
+	}
+	plan.StateToken = profileStateToken(cfg, snapshot, record)
+	if expected != "" && expected != plan.StateToken {
+		return plan, errors.New("ikev2_profile_preview_changed")
 	}
 	if record != nil {
 		plan.Action = "unchanged"
