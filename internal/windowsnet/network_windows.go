@@ -70,6 +70,8 @@ func executeScript(ctx context.Context, c Config, body string) ([]byte, error) {
 }
 func Elevated() bool { return windows.GetCurrentProcessToken().IsElevated() }
 
+const connectMutex = `Global\BimeronCoreConnect`
+
 const foregroundOwnerMutex = `Global\BimeronCoreForegroundOwner`
 
 var foregroundProcess atomic.Bool
@@ -77,13 +79,17 @@ var foregroundProcess atomic.Bool
 // BeginForegroundOwnership excludes packet/recovery operations for the entire
 // owner lifetime, including unknown startup and retained terminal results.
 func BeginForegroundOwnership() (func(), error) {
-	release, err := Acquire()
+	return beginForegroundOwnership(connectMutex, foregroundOwnerMutex)
+}
+
+func beginForegroundOwnership(connect, marker string) (func(), error) {
+	release, err := acquireConnectNamed(connect, marker, true, false)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	name, _ := windows.UTF16PtrFromString(foregroundOwnerMutex)
-	sd, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;BU)")
+	name, _ := windows.UTF16PtrFromString(marker)
+	sd, err := windows.SecurityDescriptorFromString("O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;BU)")
 	if err != nil {
 		return nil, err
 	}
@@ -98,11 +104,25 @@ func BeginForegroundOwnership() (func(), error) {
 	foregroundProcess.Store(true)
 	return func() { foregroundProcess.Store(false); windows.CloseHandle(h) }, nil
 }
-func Acquire() (func(), error) {
+
+// BeginInstallationTransaction excludes updated network/foreground owners until
+// replacement AND rollback/commit complete. Release on this acquiring goroutine;
+// the OS thread remains pinned. Abandonment requires manual review, never repair.
+func BeginInstallationTransaction() (func(), error) {
+	return acquireConnect(false, true)
+}
+
+func Acquire() (func(), error) { return acquireConnect(true, false) }
+
+func acquireConnect(allowForeground, refuseAbandoned bool) (func(), error) {
+	return acquireConnectNamed(connectMutex, foregroundOwnerMutex, allowForeground, refuseAbandoned)
+}
+
+func acquireConnectNamed(connect, markerName string, allowForeground, refuseAbandoned bool) (func(), error) {
 	runtime.LockOSThread()
-	name, _ := windows.UTF16PtrFromString(`Global\BimeronCoreConnect`)
-	handle, err := windows.CreateMutex(nil, false, name)
-	if err != nil && err != windows.ERROR_ALREADY_EXISTS {
+	name, _ := windows.UTF16PtrFromString(connect)
+	handle, err := createConnectMutex(name)
+	if err != nil {
 		runtime.UnlockOSThread()
 		return nil, fmt.Errorf("could not create VPN lock")
 	}
@@ -112,8 +132,14 @@ func Acquire() (func(), error) {
 		runtime.UnlockOSThread()
 		return nil, fmt.Errorf("another bimeron VPN is running; stop it with Ctrl+C")
 	}
-	if !foregroundProcess.Load() {
-		marker, _ := windows.UTF16PtrFromString(foregroundOwnerMutex)
+	if refuseAbandoned && status == windows.WAIT_ABANDONED {
+		windows.ReleaseMutex(handle)
+		windows.CloseHandle(handle)
+		runtime.UnlockOSThread()
+		return nil, fmt.Errorf("installation transaction abandoned; manual review required")
+	}
+	if !allowForeground || !foregroundProcess.Load() {
+		marker, _ := windows.UTF16PtrFromString(markerName)
 		owner, ownerErr := windows.OpenMutex(windows.SYNCHRONIZE, false, marker)
 		if ownerErr != windows.ERROR_FILE_NOT_FOUND {
 			if owner != 0 {

@@ -56,7 +56,7 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 	t.Setenv("PSModulePath", temp)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd, err := PowerShellCommand(ctx, `$ErrorActionPreference='Stop'; $c=Get-Command Get-NetRoute -ErrorAction Stop; if(-not $c.Module.ModuleBase.StartsWith($PSHOME+'\Modules',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted module'}; [Console]::Out.Write('trusted-system-module')`)
+	cmd, err := PowerShellCommand(ctx, fixtureEntry+`[Console]::Error.WriteLine('diag:fixture'); $c=Get-Command Get-NetRoute -ErrorAction Stop; foreach($h in @('System32','SysWOW64')) { if($c.Module.ModuleBase -eq ($env:SystemRoot+'\'+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP')) { [Console]::Error.WriteLine('diag:module='+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP') } }; if(-not $c.Module.ModuleBase.StartsWith($PSHOME+'\Modules',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted module'}; [Console]::Out.Write('trusted-system-module'); [Console]::Error.WriteLine('diag:done')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +68,9 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 			cmd.Env[i] = "PSModulePath=" + temp
 		}
 	}
-	out, err := cmd.Output()
+	out, err, diagnostic := runFixture(ctx, cmd, nil)
 	if err != nil || string(out) != "trusted-system-module" {
-		t.Fatal("trusted system module resolution failed")
+		t.Fatalf("trusted system module resolution failed: %s", diagnostic)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("user module executed")

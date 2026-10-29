@@ -152,3 +152,111 @@ the change adds control/lifecycle paths rather than a new packet transport.
 Protocol, installation and recovery requirements are defined in
 [the foreground contract](IKEV2_FOREGROUND_CONTROL.MD) and
 [ADR 0026](adr/0026-authenticated-ikev2-foreground-control.md).
+
+## Lifecycle correction offline evidence (issue #70)
+
+The implementation source is `8f8a72895a44b481ce05aa6d586b1221803399b1`
+on `fix/foreground-owner-lifecycle`, following the accepted plan commit
+`9c77049`. The following checks ran on its identical code/test tree on October
+30, 2026, using Go 1.26.9 on Windows amd64. A subsequent evidence-only commit
+adds this section; the PR records its exact head for independent review and CI.
+
+Before production edits, deterministic fake-engine regressions failed on the
+baseline: activation after accepted close and preactivation stop each returned
+success with one Start; apply after previewed close invoked the mutation callback.
+The initial close-response regression also reproduced activation after close.
+Final tests use explicit channels at the response Write boundary to hold accepted
+close responses pending while another activation/apply attempts admission.
+
+Passed locally:
+
+- `go test ./...` and `go vet ./...`.
+- `CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/systemvpn ./internal/windowsnet ./internal/killswitch`.
+- Twenty repeated race runs of focused control/windowsnet lifecycle, profile and
+  installer tests; subsequently added terminal-activity, invalid-profile-close
+  and wrong-type-marker cases also passed in the final full/focused race runs.
+- Focused verbose tests confirmed protected native mutex fixtures executed rather
+  than skipped. They use unique Local objects; abandonment is induced by exiting
+  a child test process holding only its isolated mutex, never a Core owner.
+- Builds of `cmd/bimeron`, `core` and `internal/control` with CGO disabled for
+  Linux amd64/arm64, Windows amd64/arm64/386 and Darwin amd64/arm64; windowsnet
+  additionally built on all three Windows targets. An initial command including
+  windowsnet on Linux correctly rejected that Windows-only package; the corrected
+  applicable matrix passed.
+- `git diff --check`. Existing CI includes these tests in its full suites and
+  control/windowsnet race jobs; hosted exact-head results remain for the parent
+  reviewer to inspect before merge.
+
+Coverage includes both activation/close and apply/close orderings, accepted close
+with a paused response and concurrent mutation, normal/failed/oversized response
+shutdown, stop before activation, stop waits outside admission locks, malformed
+and stale requests without transitions, terminal-but-active refusal, refused-close
+usability and transaction draining. Installer fixtures cover replacement-lock
+exclusion of starting foreground/packet hosts, the inverse lifetime-marker
+ordering, safe/unsafe existing mutex security, abandonment and wrong-type markers.
+
+The control-only benchmark measured 2547 ns/op, 2094 B/op, 16 allocs/op over a
+200 ms run on the same i7-12700K host; it excludes authentication/native networking
+and is not a throughput or live latency claim.
+
+No VM was available for this correction. No host VPN/routes/DNS/WFP changes,
+credentials, release, tag or assets were involved. The historical executable
+SHA256 `14a3da9a87e07dfe78600c702a3b2f3e7c48e7dbd76baae1c4778c1826067795`
+continues to identify **only** source `6a9bf825ecc0391e2440638b67ffe61b45a1e9c7`.
+It is not evidence for this correction. The beta tag remains unchanged.
+
+Desktop/MSI implementation must independently validate one-thread guard retention
+through real replacement, sharing failures, rollback and commit, durable journal
+refusal after interruption, concurrent launch, UAC/identity and cleanup behavior
+against the agreed new immutable Core executable. Old service/proxy limitations,
+Windows 11/RRAS/physical/ARM64/public-IPv6 gates and the existing Desktop
+compatibility gate remain open. The protected installation schema is unchanged:
+exact GUI hash plus unique installation ID, with approved Core digest/revision
+embedded in the GUI. No automatic kill, close, recovery or policy migration was
+added.
+
+## Windows fixture diagnostic follow-up (PR #71)
+
+The test-only follow-up follows acceptance commit `b6d3d02` and is identified by
+the exact commit recorded in PR #71. Production PowerShell execution,
+cancellation and deadlines are unchanged. Mocked fixtures retain their
+15-second budget, DNS ownership/conflict assertions and in-memory network
+cmdlets. Native64 discovery still resolves only Get-NetRoute metadata and checks
+the poisoned user-module marker; it never executes a networking command.
+
+Failure reports include elapsed time, context status, sanitized process exit
+code/error type and fixed phase records: script entry, JSON conversion start/end,
+fixture entry and completion. Child bitness and recognized PSHOME/module bases
+are reported as allowlisted paths relative to SystemRoot. Arbitrary environment,
+configuration, stdout, stderr and exception messages are excluded. Stderr capture
+is capped at 4096 bytes and records are deduplicated; controlled cancellation
+and oversized secret-bearing failure output regressions check useful bounded
+diagnostics. The test wrapper reconstructs configuration conversion around the
+existing trusted PowerShellCommand; production executeScript is not instrumented.
+
+On October 30, 2026, Windows amd64 / Go 1.26.9 checks passed:
+
+- Uncached `go test ./...`, `go vet ./...` and focused uncached race tests for
+  windowsnet, control, core, systemvpn and killswitch.
+- GOARCH=386 / CGO_ENABLED=0 uncached tests and vet for systemvpn, killswitch and
+  windowsnet.
+- An isolated temporary harness copied the current trusted launcher, diagnostics,
+  native DNS script/fixtures and mock helper. Four concurrent workers (two per
+  architecture), each repeating three times with a 90-second process test budget,
+  passed. Every fixture invocation starts a fresh PowerShell child. AMD64 DNS
+  tests took 0.21-0.48 seconds and metadata smoke 0.34-0.37 seconds; 386 DNS tests
+  took 0.53-1.77 seconds. Controlled cancellation reported 64-bit/System32 and
+  32-bit/SysWOW64 children respectively. The native64-only smoke skipped on 386
+  as designed. No fixture network cmdlet escaped its in-memory mock.
+
+These repetitions do not reproduce or explain the hosted CI stall. At source
+`d5a5b5e`, run 40972922473 exhausted the 15-second native64 discovery budget;
+its retried Windows job 123796412769 exhausted two 386 DNS fixture budgets.
+Parallel run 40972954734 passed, with 386 windowsnet taking 11.999 seconds.
+WOW64 redirection is expected, not a demonstrated defect. Load, scanning and
+module initialization remain hypotheses only. No retries or deadline inflation
+were added. Markers cannot identify stalls before script entry, distinguish all
+internal module-loading stages, or recover records beyond the capture cap;
+unrecognized paths and arbitrary process error details are intentionally omitted.
+Hosted exact-head CI, independent review and merge remain with the coordinating
+parent. No manual CI run, VM credentials or host network mutation was used.
