@@ -33,7 +33,8 @@ type Event struct {
 	ErrorStage    string `json:",omitempty"`
 }
 type Status struct {
-	Session    *SessionInfo `json:"Session,omitempty"`
+	Native     *NativeStatus `json:"native,omitempty"`
+	Session    *SessionInfo  `json:"Session,omitempty"`
 	State      State
 	Attempt    int
 	Since      time.Time
@@ -69,6 +70,7 @@ type Engine struct {
 	opts       Options
 	status     Status
 	events     chan Event
+	eventDrops uint64
 	runResult  *runResult
 	cancel     context.CancelFunc
 	active     bool
@@ -110,6 +112,10 @@ func (e *Engine) Status() Status {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	status := e.status
+	if status.Native != nil {
+		snapshot := *status.Native
+		status.Native = &snapshot
+	}
 	if status.Session != nil {
 		info := *status.Session
 		info.Active = e.active
@@ -120,10 +126,14 @@ func (e *Engine) Status() Status {
 
 // Events is one stream for the lifetime of Engine. It is not closed between runs.
 func (e *Engine) Events() <-chan Event { return e.events }
+
+// EventDrops counts loss before the control history buffer.
+func (e *Engine) EventDrops() uint64 { e.mu.Lock(); defer e.mu.Unlock(); return e.eventDrops }
 func (e *Engine) emitLocked(code, message string) {
 	select {
 	case e.events <- Event{Time: time.Now(), State: e.status.State, Code: code, Message: message, Attempt: e.status.Attempt, LastError: e.status.LastError, ErrorStage: e.status.ErrorStage}:
 	default:
+		e.eventDrops++
 	}
 }
 func (e *Engine) transition(state State, err error) {
@@ -194,6 +204,14 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.runResult = &runResult{done: make(chan struct{})}
 	e.active = true
 	e.status = Status{Session: info, State: Connecting, Since: time.Now()}
+	if cfg.IKEv2 != nil {
+		e.status.Native = &NativeStatus{ProfileReadiness: "not_checked", CredentialReadiness: "not_checked", CertificateReadiness: "not_checked", Requested: cfg.IKEv2.KillSwitch, WFP: "inactive", DNS: "inactive", RASCleanup: "not_started", DNSCleanup: "not_started", WFPCleanup: "not_started"}
+		cfg.nativeUpdate = func(update func(*NativeStatus)) {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			update(e.status.Native)
+		}
+	}
 	e.lastReport = map[string]time.Time{}
 	e.emitLocked("state", string(Connecting))
 	go e.run(ctx, cfg, e.runResult)
@@ -267,6 +285,9 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	b := e.factory(cfg)
 	release, err := b.Acquire(ctx)
 	if err != nil {
+		if cfg.IKEv2 != nil && err.Error() == "ikev2_existing_kill_switch_requires_recovery" {
+			cfg.updateNative(func(n *NativeStatus) { n.WFP = "unknown"; n.DNS = "unknown"; n.RecoveryRequired = true })
+		}
 		if ctx.Err() == nil {
 			result = err
 		}

@@ -16,9 +16,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -79,6 +81,35 @@ func executeScript(ctx context.Context, c Config, body string) ([]byte, error) {
 	return out, nil
 }
 func Elevated() bool { return windows.GetCurrentProcessToken().IsElevated() }
+
+const foregroundOwnerMutex = `Global\BimeronCoreForegroundOwner`
+
+var foregroundProcess atomic.Bool
+
+// BeginForegroundOwnership excludes packet/recovery operations for the entire
+// owner lifetime, including unknown startup and retained terminal results.
+func BeginForegroundOwnership() (func(), error) {
+	release, err := Acquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	name, _ := windows.UTF16PtrFromString(foregroundOwnerMutex)
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;BU)")
+	if err != nil {
+		return nil, err
+	}
+	sa := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	h, err := windows.CreateMutex(&sa, false, name)
+	if err != nil {
+		if h != 0 {
+			windows.CloseHandle(h)
+		}
+		return nil, fmt.Errorf("foreground owner already exists or is unknown")
+	}
+	foregroundProcess.Store(true)
+	return func() { foregroundProcess.Store(false); windows.CloseHandle(h) }, nil
+}
 func Acquire() (func(), error) {
 	runtime.LockOSThread()
 	name, _ := windows.UTF16PtrFromString(`Global\BimeronCoreConnect`)
@@ -92,6 +123,19 @@ func Acquire() (func(), error) {
 		_ = windows.CloseHandle(handle)
 		runtime.UnlockOSThread()
 		return nil, fmt.Errorf("another bimeron VPN is running; stop it with Ctrl+C")
+	}
+	if !foregroundProcess.Load() {
+		marker, _ := windows.UTF16PtrFromString(foregroundOwnerMutex)
+		owner, ownerErr := windows.OpenMutex(windows.SYNCHRONIZE, false, marker)
+		if ownerErr != windows.ERROR_FILE_NOT_FOUND {
+			if owner != 0 {
+				windows.CloseHandle(owner)
+			}
+			windows.ReleaseMutex(handle)
+			windows.CloseHandle(handle)
+			runtime.UnlockOSThread()
+			return nil, fmt.Errorf("foreground owner present or unknown; close it explicitly first")
+		}
 	}
 	return func() { _ = windows.ReleaseMutex(handle); _ = windows.CloseHandle(handle); runtime.UnlockOSThread() }, nil
 }

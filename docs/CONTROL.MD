@@ -1,5 +1,10 @@
 # Local control contract, version 1
 
+The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FOREGROUND_CONTROL.MD)
+is available in development source. It does not change daemon start, the beta.1
+baseline, published assets or Desktop compatibility approval.
+
+
 Native Windows IKEv2 requires foreground execution. Daemon `start` rejects
 such profiles with `ikev2_requires_foreground_user_session`. The optional
 `capabilities.ikev2` object describes native support independently of the

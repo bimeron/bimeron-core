@@ -52,8 +52,20 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 	}
 	report("ikev2_connect", "Connecting through the Windows IKEv2 client")
-	s, err := systemvpn.Open(setup, *c.IKEv2)
+	s, err := systemvpn.OpenObserved(setup, *c.IKEv2, func(state string) { c.updateNative(func(n *NativeStatus) { n.RASCleanup = state }) })
 	if err != nil {
+		c.updateNative(func(n *NativeStatus) {
+			switch err.Error() {
+			case "ikev2_windows_profile_not_found":
+				n.ProfileReadiness = "missing"
+			case "ikev2_saved_credentials_required", "ikev2_saved_eap_identity_required":
+				n.CredentialReadiness = "missing"
+			case "ikev2_certificate_or_authentication_failed":
+				n.CertificateReadiness = "authentication_failed"
+			case "ikev2_cleanup_failed", "ikev2_cleanup_timeout":
+				n.RASCleanup = "failed"
+			}
+		})
 		if err == context.Canceled {
 			return nil, err
 		}
@@ -62,14 +74,20 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		return nil, fault(err.Error(), false)
 	}
+	c.updateNative(func(n *NativeStatus) {
+		n.ProfileReadiness = "validated"
+		n.CredentialReadiness = "usable"
+		n.CertificateReadiness = "windows_authenticated"
+	})
+	observed := &observedNativeSession{native: s, config: c}
 	if !c.IKEv2.KillSwitch {
-		return s, nil
+		return observed, nil
 	}
 	// RAS bootstrap is deliberately outside the protection boundary. Connected
 	// is not published until WFP and the DNS policy have both been installed.
 	endpoint, err := s.ProtectionEndpoint()
 	if err != nil {
-		if s.Close() != nil {
+		if observed.Close() != nil {
 			return nil, fault("ikev2_cleanup_failed", false)
 		}
 		if ctx.Err() != nil {
@@ -79,7 +97,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	network, err := windowsnet.ObserveVPN(setup, c.IKEv2.WindowsProfile)
 	if err != nil {
-		if s.Close() != nil {
+		if observed.Close() != nil {
 			return nil, fault("ikev2_cleanup_failed", false)
 		}
 		if ctx.Err() != nil {
@@ -89,12 +107,13 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	guard, err := killswitch.ArmIKEv2(network.Index, network.LUID, endpoint)
 	if err != nil {
-		if s.Close() != nil {
+		if observed.Close() != nil {
 			return nil, fault("ikev2_cleanup_failed", false)
 		}
 		return nil, fault("ikev2_protection_install_failed", false)
 	}
-	protected := &protectedIKEv2Session{native: s, guard: guard, cleanupDNS: func() error {
+	c.updateNative(func(n *NativeStatus) { n.WFP = "active"; n.DNS = "installing" })
+	protected := &protectedIKEv2Session{native: observed, guard: guard, update: c.nativeUpdate, cleanupDNS: func() error {
 		cleanup, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		return windowsnet.CleanupIKEv2DNS(cleanup, tag, network.DNS)
@@ -107,6 +126,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		err = windowsnet.ConfigureIKEv2DNS(dnsSetup, tag, network.DNS)
 		if dnsSetup.Err() != nil {
 			protected.lost = true
+			c.updateNative(func(n *NativeStatus) { n.DNS = "unknown" })
 		} // Outcome uncertain; explicit recovery.
 		finish()
 	}
@@ -122,6 +142,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		return nil, fault("ikev2_dns_protection_install_failed", false)
 	}
+	c.updateNative(func(n *NativeStatus) { n.DNS = "active" })
 	report("ikev2_protection_active", "Persistent Windows traffic protection and tunnel DNS are active")
 	return protected, nil
 }

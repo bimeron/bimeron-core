@@ -132,6 +132,19 @@ func writeProfileRecord(path string, record profileRecord, exclusive bool) error
 // PrepareProfile previews by default, or explicitly creates/removes an owned
 // current-user profile. It never reads saved credentials or installs trust.
 func PrepareProfile(cfg Config, apply, remove bool) (ProfilePlan, error) {
+	return prepareProfile(cfg, apply, remove, "")
+}
+
+// PrepareProfileReviewed requires the state token returned by preview and
+// rechecks it under the same lock as the mutation. It never adopts a journal.
+func PrepareProfileReviewed(cfg Config, remove bool, expected string) (ProfilePlan, error) {
+	if len(expected) != 64 {
+		return ProfilePlan{}, errors.New("ikev2_profile_preview_required")
+	}
+	return prepareProfile(cfg, !remove, remove, expected)
+}
+
+func prepareProfile(cfg Config, apply, remove bool, expected string) (ProfilePlan, error) {
 	plan := newProfilePlan(cfg)
 	if err := validatePreparationConfig(cfg); err != nil {
 		return plan, err
@@ -169,6 +182,10 @@ func PrepareProfile(cfg Config, apply, remove bool) (ProfilePlan, error) {
 	}
 	if err := checkProfileRecord(record, cfg, snapshot); err != nil {
 		return plan, err
+	}
+	plan.StateToken = profileStateToken(cfg, snapshot, record)
+	if expected != "" && expected != plan.StateToken {
+		return plan, errors.New("ikev2_profile_preview_changed")
 	}
 	if record != nil {
 		plan.Action = "unchanged"
