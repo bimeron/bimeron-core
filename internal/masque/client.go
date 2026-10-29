@@ -95,6 +95,10 @@ func New(p accesskey.Profile, d net.Dialer) (*Client, error) {
 }
 
 func (c *Client) connection(ctx context.Context) (*http3.ClientConn, error) {
+	// Client closure takes precedence over setup cancellation during admission.
+	if c.ctx.Err() != nil {
+		return nil, net.ErrClosed
+	}
 	select {
 	case c.connecting <- struct{}{}:
 	case <-ctx.Done():
