@@ -203,6 +203,11 @@ func (s *Session) ProtectionEndpoint() (netip.Addr, error) {
 // Open uses only the current user's phonebook and saved EAP credentials.
 // It does not create/modify profiles, import certificates or display auth UI.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
+	return OpenObserved(ctx, cfg, nil)
+}
+
+// OpenObserved reports cleanup of failed startup as well as normal Close.
+func OpenObserved(ctx context.Context, cfg Config, observe func(string)) (*Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -219,7 +224,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, errors.New("ikev2_user_phonebook_unavailable")
 	}
-	return connect(ctx, cfg, &windowsDriver{phonebook: filepath.Join(appData, "Microsoft", "Network", "Connections", "Pbk", "rasphone.pbk")})
+	return connectObserved(ctx, cfg, &windowsDriver{phonebook: filepath.Join(appData, "Microsoft", "Network", "Connections", "Pbk", "rasphone.pbk")}, observe)
 }
 
 func (d *windowsDriver) entry(cfg Config) (rasEntry, error) {

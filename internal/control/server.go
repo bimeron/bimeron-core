@@ -17,6 +17,7 @@ import (
 
 	core "bimeron/core"
 	"bimeron/internal/sshtunnel"
+	"bimeron/internal/systemvpn"
 	"bimeron/internal/telemetry"
 )
 
@@ -24,13 +25,17 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
-	ID          string   `json:"id,omitempty"`
-	Version     int      `json:"version"`
-	Command     string   `json:"command"`
-	Config      string   `json:"config,omitempty"`
-	After       uint64   `json:"after,omitempty"`
-	ChallengeID string   `json:"challenge_id,omitempty"`
-	Answers     []string `json:"answers,omitempty"`
+	AcceptRevision string   `json:"accept_revision,omitempty"`
+	PlanToken      string   `json:"plan_token,omitempty"`
+	Instance       string   `json:"instance,omitempty"`
+	Session        string   `json:"session,omitempty"`
+	ID             string   `json:"id,omitempty"`
+	Version        int      `json:"version"`
+	Command        string   `json:"command"`
+	Config         string   `json:"config,omitempty"`
+	After          uint64   `json:"after,omitempty"`
+	ChallengeID    string   `json:"challenge_id,omitempty"`
+	Answers        []string `json:"answers,omitempty"`
 }
 type AuthChallenge struct {
 	ID string `json:"id"`
@@ -41,15 +46,20 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	Core     *core.BuildDetails `json:"core,omitempty"`
-	ID       string             `json:"id,omitempty"`
-	Instance string             `json:"instance"`
-	Version  int                `json:"version"`
-	Status   core.Status        `json:"status"`
-	Error    string             `json:"error,omitempty"`
-	Events   []LoggedEvent      `json:"events,omitempty"`
-	Cursor   uint64             `json:"cursor,omitempty"`
-	Dropped  bool               `json:"dropped,omitempty"`
+	SourceDrops uint64                 `json:"source_drops,omitempty"`
+	Owner       *ProcessIdentity       `json:"owner,omitempty"`
+	Endpoint    string                 `json:"endpoint,omitempty"`
+	Profile     *systemvpn.ProfilePlan `json:"profile,omitempty"`
+	Operation   string                 `json:"operation,omitempty"`
+	Core        *core.BuildDetails     `json:"core,omitempty"`
+	ID          string                 `json:"id,omitempty"`
+	Instance    string                 `json:"instance"`
+	Version     int                    `json:"version"`
+	Status      core.Status            `json:"status"`
+	Error       string                 `json:"error,omitempty"`
+	Events      []LoggedEvent          `json:"events,omitempty"`
+	Cursor      uint64                 `json:"cursor,omitempty"`
+	Dropped     bool                   `json:"dropped,omitempty"`
 
 	Stats        *telemetry.Snapshot `json:"stats,omitempty"`
 	Capabilities *core.Capabilities  `json:"capabilities,omitempty"`
@@ -63,17 +73,23 @@ type Engine interface {
 	Stats() telemetry.Snapshot
 }
 type Server struct {
-	instance string
-	engine   Engine
-	command  sync.Mutex
-	mu       sync.Mutex
-	history  []LoggedEvent
-	sequence uint64
-	load     func(string) (core.SessionConfig, error)
-	shutdown context.CancelFunc
-	closing  bool // protected by command
-	authMu   sync.Mutex
-	pending  *pendingAuth
+	build              func() core.BuildDetails
+	foreground         bool
+	owner              *ProcessIdentity
+	endpoint           string
+	authorize          func(net.Conn) (func(), error)
+	foregroundDispatch func(context.Context, Request) Response
+	instance           string
+	engine             Engine
+	command            sync.Mutex
+	mu                 sync.Mutex
+	history            []LoggedEvent
+	sequence           uint64
+	load               func(string) (core.SessionConfig, error)
+	shutdown           context.CancelFunc
+	closing            bool // protected by command
+	authMu             sync.Mutex
+	pending            *pendingAuth
 }
 type pendingAuth struct {
 	challenge AuthChallenge
@@ -125,7 +141,7 @@ func NewServer(e Engine) *Server {
 	if _, err := rand.Read(id[:]); err != nil {
 		panic("cannot create control instance")
 	}
-	return &Server{instance: fmt.Sprintf("%x", id), engine: e, load: core.LoadConfig}
+	return &Server{build: core.GetBuildInfo, instance: fmt.Sprintf("%x", id), engine: e, load: core.LoadConfig}
 }
 
 // Serve owns listener and all clients. On daemon shutdown it waits for core
@@ -196,6 +212,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	if r.Version != Version {
 		answer.Error = "unsupported_protocol"
+	} else if !s.foreground && (r.Instance != "" || r.Session != "" || r.PlanToken != "" || r.AcceptRevision != "") {
+		answer.Error = "invalid_request"
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
 	} else {
@@ -207,7 +225,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			}
 			c := core.PlatformCapabilities()
 			answer.Capabilities = &c
-			build := core.GetBuildInfo()
+			build := s.build()
 			answer.Core = &build
 		case "status":
 			if r.Config != "" || r.After != 0 {
@@ -331,12 +349,22 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 }
 func (s *Server) handle(ctx context.Context, c net.Conn) {
 	defer c.Close()
+	if s.authorize != nil {
+		release, err := s.authorize(c)
+		if err != nil {
+			return
+		}
+		defer release()
+	}
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReader(io.LimitReader(c, maxRequest+1))
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > maxRequest {
+		return
+	}
+	if s.foreground && !strictForegroundJSON(line) {
 		return
 	}
 	var r Request
@@ -349,10 +377,22 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	if decoder.Decode(&extra) != io.EOF {
 		return
 	}
-	answer := s.dispatch(ctx, r)
+	var answer Response
+	if s.foregroundDispatch != nil {
+		answer = s.foregroundDispatch(ctx, r)
+	} else {
+		answer = s.dispatch(ctx, r)
+	}
 	_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_ = json.NewEncoder(c).Encode(answer)
-	if r.Command == "shutdown" && answer.Error == "" && s.shutdown != nil {
+	answer.Owner = s.owner
+	answer.Endpoint = s.endpoint
+	encoded, encodeErr := json.Marshal(answer)
+	if encodeErr != nil || len(encoded)+1 > 256*1024 {
+		answer = Response{ID: r.ID, Version: Version, Instance: s.instance, Owner: s.owner, Endpoint: s.endpoint, Error: "response_too_large"}
+		encoded, _ = json.Marshal(answer)
+	}
+	_, _ = c.Write(append(encoded, '\n'))
+	if (r.Command == "shutdown" || (s.foreground && r.Command == "close_owner")) && answer.Error == "" && s.shutdown != nil {
 		s.shutdown()
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 // ProfilePlan describes public settings only. Preparation never authenticates.
 type ProfilePlan struct {
+	StateToken     string   `json:"state_token,omitempty"`
 	Action         string   `json:"action"`
 	WindowsProfile string   `json:"windows_profile"`
 	ServerName     string   `json:"server_name"`
@@ -19,6 +20,16 @@ type ProfilePlan struct {
 	IPv6Routes     []string `json:"ipv6_routes"`
 	Credentials    string   `json:"credentials"`
 	Trust          string   `json:"trust"`
+}
+
+func profileStateToken(cfg Config, snapshot string, record *profileRecord) string {
+	encoded, _ := json.Marshal(struct {
+		Config   Config
+		Snapshot string
+		Record   *profileRecord
+	}{cfg, snapshot, record})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 type profileRecord struct {

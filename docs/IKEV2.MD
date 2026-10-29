@@ -1,5 +1,10 @@
 # Experimental Windows IKEv2/IPsec
 
+The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FOREGROUND_CONTROL.MD)
+is available in development source. It does not change daemon start, the beta.1
+baseline, published assets or Desktop compatibility approval.
+
+
 Bimeron controls a pre-provisioned current-user Windows VPN profile through
 native RAS APIs. Windows owns IPsec, credentials, certificates, routes and DNS.
 This backend bypasses Wintun and the Go packet stack. An initial

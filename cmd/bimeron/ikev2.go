@@ -10,6 +10,12 @@ import (
 )
 
 func ikev2Command(args []string) error {
+	if len(args) > 0 && args[0] == "profile-control" {
+		return profileControlCommand(args[1:])
+	}
+	if len(args) > 0 && args[0] == "foreground" {
+		return foregroundCommand(args[1:])
+	}
 	if len(args) == 0 || args[0] != "profile" {
 		return fmt.Errorf("usage: bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove]")
 	}
