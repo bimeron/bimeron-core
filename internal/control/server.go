@@ -25,6 +25,7 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
+	Installation   string   `json:"installation,omitempty"`
 	AcceptRevision string   `json:"accept_revision,omitempty"`
 	PlanToken      string   `json:"plan_token,omitempty"`
 	Instance       string   `json:"instance,omitempty"`
@@ -46,20 +47,21 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	SourceDrops uint64                 `json:"source_drops,omitempty"`
-	Owner       *ProcessIdentity       `json:"owner,omitempty"`
-	Endpoint    string                 `json:"endpoint,omitempty"`
-	Profile     *systemvpn.ProfilePlan `json:"profile,omitempty"`
-	Operation   string                 `json:"operation,omitempty"`
-	Core        *core.BuildDetails     `json:"core,omitempty"`
-	ID          string                 `json:"id,omitempty"`
-	Instance    string                 `json:"instance"`
-	Version     int                    `json:"version"`
-	Status      core.Status            `json:"status"`
-	Error       string                 `json:"error,omitempty"`
-	Events      []LoggedEvent          `json:"events,omitempty"`
-	Cursor      uint64                 `json:"cursor,omitempty"`
-	Dropped     bool                   `json:"dropped,omitempty"`
+	Installation string                 `json:"installation,omitempty"`
+	SourceDrops  uint64                 `json:"source_drops,omitempty"`
+	Owner        *ProcessIdentity       `json:"owner,omitempty"`
+	Endpoint     string                 `json:"endpoint,omitempty"`
+	Profile      *systemvpn.ProfilePlan `json:"profile,omitempty"`
+	Operation    string                 `json:"operation,omitempty"`
+	Core         *core.BuildDetails     `json:"core,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Instance     string                 `json:"instance"`
+	Version      int                    `json:"version"`
+	Status       core.Status            `json:"status"`
+	Error        string                 `json:"error,omitempty"`
+	Events       []LoggedEvent          `json:"events,omitempty"`
+	Cursor       uint64                 `json:"cursor,omitempty"`
+	Dropped      bool                   `json:"dropped,omitempty"`
 
 	Stats        *telemetry.Snapshot `json:"stats,omitempty"`
 	Capabilities *core.Capabilities  `json:"capabilities,omitempty"`
@@ -73,6 +75,7 @@ type Engine interface {
 	Stats() telemetry.Snapshot
 }
 type Server struct {
+	installation       string
 	build              func() core.BuildDetails
 	foreground         bool
 	owner              *ProcessIdentity
@@ -212,7 +215,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	if r.Version != Version {
 		answer.Error = "unsupported_protocol"
-	} else if !s.foreground && (r.Instance != "" || r.Session != "" || r.PlanToken != "" || r.AcceptRevision != "") {
+	} else if !s.foreground && (r.Installation != "" || r.Instance != "" || r.Session != "" || r.PlanToken != "" || r.AcceptRevision != "") {
 		answer.Error = "invalid_request"
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
@@ -385,10 +388,11 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	}
 	_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	answer.Owner = s.owner
+	answer.Installation = s.installation
 	answer.Endpoint = s.endpoint
 	encoded, encodeErr := json.Marshal(answer)
 	if encodeErr != nil || len(encoded)+1 > 256*1024 {
-		answer = Response{ID: r.ID, Version: Version, Instance: s.instance, Owner: s.owner, Endpoint: s.endpoint, Error: "response_too_large"}
+		answer = Response{Installation: s.installation, ID: r.ID, Version: Version, Instance: s.instance, Owner: s.owner, Endpoint: s.endpoint, Error: "response_too_large"}
 		encoded, _ = json.Marshal(answer)
 	}
 	_, _ = c.Write(append(encoded, '\n'))

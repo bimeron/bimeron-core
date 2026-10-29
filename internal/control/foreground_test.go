@@ -81,6 +81,19 @@ func TestForegroundLaunchOnceAndClientLossDoesNotCancelOwner(t *testing.T) {
 	}
 }
 
+func TestForegroundActivationRequiresReviewedUnmodifiedRevision(t *testing.T) {
+	for _, build := range []core.BuildDetails{{Revision: strings.Repeat("a", 40), Modified: true}, {Revision: ""}, {Revision: strings.Repeat("b", 40)}} {
+		e := &countedForegroundEngine{}
+		s := NewServer(e)
+		s.build = func() core.BuildDetails { return build }
+		s.bindForegroundSession(context.Background(), core.SessionConfig{})
+		a := s.foregroundDispatch(context.Background(), Request{Version: 1, ID: "activate", Command: "hello", Instance: s.instance, AcceptRevision: strings.Repeat("a", 40)})
+		if a.Error != "core_identity_mismatch" || e.starts.Load() != 0 {
+			t.Fatal("unreviewed revision mutated session")
+		}
+	}
+}
+
 type waitingForegroundEngine struct{ fakeEngine }
 
 func (e *waitingForegroundEngine) Stop(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
@@ -149,7 +162,7 @@ func BenchmarkForegroundStatus(b *testing.B) {
 }
 
 func TestForegroundRejectsAmbiguousJSON(t *testing.T) {
-	for _, raw := range []string{`{"id":"a","id":"b"}`, `{"command":"hello"} {}`, `[]`, "{\"id\":\"\xff\"}", `{"id":`} {
+	for _, raw := range []string{`{"id":"a","id":"b"}`, `{"command":"hello","Command":"stop"}`, `{"command":"hello"} {}`, `[]`, "{\"id\":\"\xff\"}", `{"id":`} {
 		if strictForegroundJSON([]byte(raw)) {
 			t.Fatalf("accepted %q", raw)
 		}

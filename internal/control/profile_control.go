@@ -19,6 +19,10 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 		mu.Lock()
 		defer mu.Unlock()
 		a := Response{ID: r.ID, Version: Version, Instance: s.instance, Status: s.engine.Status()}
+		if r.Installation != s.installation {
+			a.Error = "installation_mismatch"
+			return a
+		}
 		finish := func() Response { a.Operation = operation; a.Profile = plan; return a }
 		if r.Version != Version {
 			a.Error = "unsupported_protocol"

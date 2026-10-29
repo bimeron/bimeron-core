@@ -5,17 +5,13 @@ package systemvpn
 import (
 	"bimeron/internal/windowsnet"
 	"bytes"
+	"context"
 	_ "embed"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -26,19 +22,11 @@ var profileScript string
 
 func profileOperation(action string, cfg Config, expected string) (string, error) {
 	payload, _ := json.Marshal(map[string]string{"action": action, "name": cfg.WindowsProfile, "server": cfg.ServerName, "expected": expected})
-	units := utf16.Encode([]rune(profileScript))
-	encoded := make([]byte, 2*len(units))
-	for i, u := range units {
-		binary.LittleEndian.PutUint16(encoded[2*i:], u)
-	}
-	root, err := windows.GetWindowsDirectory()
+	// Mutations remain synchronous: cancellation cannot interrupt rollback.
+	cmd, err := windowsnet.PowerShellCommand(context.Background(), profileScript)
 	if err != nil {
-		return "", errors.New("ikev2_windows_directory_unavailable")
+		return "", errors.New("ikev2_profile_windows_operation_failed")
 	}
-	// Mutations are intentionally synchronous: cancellation must not kill the
-	// child halfway through rollback. A crash leaves the pending journal intact.
-	cmd := exec.Command(filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Stdin = bytes.NewReader(payload)
 	out, err := cmd.Output()
 	if err != nil {

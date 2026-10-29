@@ -7,19 +7,14 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -58,17 +53,10 @@ func executeScript(ctx context.Context, c Config, body string) ([]byte, error) {
 	payload, _ := json.Marshal(c)
 	// Payload contains validated network metadata only, never access keys.
 	source := "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; trap { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }; $taskConfig = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + base64.StdEncoding.EncodeToString(payload) + "')) | ConvertFrom-Json\n" + body
-	units := utf16.Encode([]rune(source))
-	bytes := make([]byte, 2*len(units))
-	for i, u := range units {
-		binary.LittleEndian.PutUint16(bytes[i*2:], u)
+	cmd, err := PowerShellCommand(ctx, source)
+	if err != nil {
+		return nil, err
 	}
-	root := os.Getenv("SystemRoot")
-	if root == "" {
-		return nil, fmt.Errorf("SystemRoot missing")
-	}
-	cmd := exec.CommandContext(ctx, filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(bytes))
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	var stderr bytespkg.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

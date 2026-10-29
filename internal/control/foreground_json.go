@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -22,7 +23,7 @@ func strictForegroundJSON(line []byte) bool {
 			return false
 		}
 		name, ok := key.(string)
-		if !ok || seen[name] {
+		if !ok || name != strings.ToLower(name) || seen[name] {
 			return false
 		}
 		seen[name] = true

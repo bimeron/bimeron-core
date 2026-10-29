@@ -109,3 +109,28 @@ func TestForegroundSafeProfileDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestForegroundConfigPinsAncestorsAndRejectsRemoteDeviceStreams(t *testing.T) {
+	for _, path := range []string{`\\untrusted.invalid\share\native.conf`, `\\.\pipe\untrusted`, `C:\native.conf:stream`, "relative.conf"} {
+		if _, release, err := lockForegroundConfig(path); err == nil {
+			release()
+			t.Fatal("unsafe config path accepted")
+		}
+	}
+	parent := t.TempDir()
+	path := filepath.Join(parent, "native.conf")
+	if err := os.WriteFile(path, []byte("reviewed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, release, err := lockForegroundConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if os.Rename(parent, parent+"-substitution") == nil {
+		t.Fatal("pinned config parent replaced")
+	}
+	if os.WriteFile(path, []byte("changed"), 0600) == nil {
+		t.Fatal("pinned config bytes changed")
+	}
+}
