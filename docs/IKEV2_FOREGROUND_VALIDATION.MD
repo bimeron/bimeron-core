@@ -74,6 +74,31 @@ force-kill, automatic restart, redial or automatic recovery.
 
 ## Final VM state
 
+### Supervised UAC follow-up
+
+On the same final-source executable, the user exercised real ShellExecute
+`runas` prompts inside the VM. Cancellation returned Win32 error 1223 and no Core
+owner appeared; the waiting test client timed out as expected. Consent under the
+original account completed authenticated read-only discovery and owner closure
+with both client and owner exiting zero (1.80 s client run). No session activation
+was requested in these UI checks.
+
+A separately authorized temporary local administrator was then used with native
+`runas` password entry followed by a real elevation prompt. The elevated Core
+exited 1 while the original user's approved requester was alive; no authenticated
+endpoint appeared. The cross-account launcher receipt recorded the distinct SID
+and requester PID. The unavailable-client test failure is expected negative-test
+evidence, not a successful connection. No password was collected by the harness
+or stored in repository artifacts. Test-launch quoting and public receipt ACL
+mistakes were corrected before these final observations; they are not product
+failures. This validates the Core CLI boundary, not a finished Desktop UAC UI.
+Afterward the temporary account was disabled, removed from Administrators and
+deleted; all UAC fixture tasks were removed. Windows still reported its user
+profile loaded with no remaining account processes, so that profile directory
+was left for removal after a VM restart rather than force-deleted while loaded.
+The temporary public-receipt read ACL was removed. Repeated network inspection
+again matched the original routes/DNS and found no NRPT/WFP or active RAS state.
+
 Final inspection found routes and DNS server settings equal to the recorded
 pre-test baseline; zero NRPT rules, absent Bimeron WFP filters, zero active RAS
 connections, zero provisioning ownership records, and zero remaining lab tasks
@@ -88,9 +113,9 @@ deployment must update participating managed Core hosts as documented.
 
 ## Remaining gates and limits
 
-- Real ShellExecute/UAC consent, cancellation, and interactive elevation under a
-  different account still require a supervised manual VM run. Same-user
-  medium/high task execution and identity/ACL tests do not replace that evidence.
+- Real ShellExecute/UAC consent, cancellation and different-account refusal were
+  exercised as recorded above. The eventual Desktop launch/error UI still needs
+  its own integration validation against the agreed Core SHA.
 - Windows 11, RRAS, physical mobility, Windows ARM64 runtime and public IPv6
   remain unvalidated. Windows 10/controlled-server results do not close issue #66.
 - No published assets, signed manifests, installer integration, remote CI result
