@@ -49,12 +49,57 @@ Inherited executable/module overrides cannot redirect these operations. Existing
 DNS deadlines and synchronous provisioning rollback remain unchanged. See
 [Microsoft's module documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_modules?view=powershell-5.1).
 
+## Installer transaction exclusion
+
+An elevated MSI custom action must acquire `Global\BimeronCoreConnect` and,
+while owning it, open/check `Global\BimeronCoreForegroundOwner`. Only
+`ERROR_FILE_NOT_FOUND` means that the marker is absent. A marker handle, access
+denial, unknown object type/security or other error refuses replacement. Pipe
+absence, process enumeration and a terminal status are never substitutes. The
+marker proves exclusion only, never authentication or successful network cleanup.
+
+The connect mutex security contract is owner SYSTEM or Builtin Administrators,
+a present DACL, and no allow ACE granting any other SID more than READ_CONTROL
+or SYNCHRONIZE. Unknown ACE types are refused. Updated Core creates both named
+objects with `O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;BU)`.
+For existing connect objects, inspect OWNER/DACL via `GetSecurityInfo` with
+`SE_KERNEL_OBJECT`; CreateMutex security attributes do not replace existing
+security. Wrong-type, unsafe, unreadable or precreated marker objects fail closed;
+never seize, delete or change their ACLs. This can deny availability.
+
+Use a zero-timeout wait: only `WAIT_OBJECT_0` admits an installer transaction.
+`WAIT_ABANDONED` grants OS ownership but must be released and reported for manual
+review; never retry automatically or infer a completed rollback. The installer
+must separately journal its transaction and refuse an incomplete journal, since
+mutex abandonment is not durable after handles close or the machine reboots.
+Retain the handle and ownership on the **same OS thread** through every file and
+policy replacement, rollback or commit. Separate MSI actions/processes cannot
+pass mutex ownership between threads. Release once, after the transaction has
+fully settled. `windowsnet.BeginInstallationTransaction` is Core's internal
+reference implementation of this native contract, not an Engine/session API.
+
+Updated foreground/provisioning startup creates its lifetime marker under that
+same connect mutex **before** image/policy inspection and retains it until pinned
+handles are released. Thus either startup wins and installer admission fails, or
+the installer wins and startup fails before reading policy. The Windows loader
+may still map a concurrently launched executable before Core admission; sharing
+failures must fail/roll back the installer transaction, never schedule an unsafe
+partial replacement or silently retry outside the guard. Installer success needs
+separate live MSI integration evidence.
+
+The same connect mutex preserves exclusion against updated packet/recovery hosts.
+Older binaries do not implement this complete contract, and a packet proxy has
+no system network-owner lock. Desktop must separately establish authoritative
+service/Development inactivity and update participating managed hosts; this guard
+does not stop/kill/close/recover any process or prove retained policy is clear.
+
 ## Launch and discovery
 
 The GUI reads/validates the native configuration without mutation, records its
 SHA256 and its own process PID and creation FILETIME, and obtains the selected
-Core digest/revision from its approved installation metadata. It launches that
-exact absolute executable using `ShellExecuteExW` with verb `runas`, explicit
+Core digest/revision embedded in the approved GUI build. The protected manifest
+binds the exact GUI hash and unique installation ID; its schema remains unchanged.
+It launches that exact absolute executable using `ShellExecuteExW` with verb `runas`, explicit
 arguments and `SEE_MASK_NOCLOSEPROCESS`. Never use a shell, PATH lookup, environment
 secrets or another executable on failure. UAC cancellation ends this attempt.
 Keep the returned process handle while resolving launch outcome.
@@ -179,6 +224,16 @@ stop, never Start/kill/recover. Cleanup order is owned RAS handle invalidation,
 owned DNS cleanup/cache flush, WFP release. Partial failure retains/marks unknown
 protection; disconnected/process exit alone does not prove cleanup success.
 
+A valid stop before activation permanently cancels activation for this owner;
+subsequent revision-confirming hello returns `activation_cancelled` without Start.
+Malformed, stale or wrong-installation requests cannot cancel or close the owner.
+Activation and close acceptance serialize: an activation admitted first makes
+close fail while active; a terminal/inactive close admitted first permanently
+closes admission. Refused close leaves the owner usable. Once accepted, requests
+return `owner_closing` and shutdown follows the close response write attempt,
+including write failure or a `response_too_large` fallback. Neither error permits
+a new launch before authoritative owner exit and cleanup review.
+
 GUI/IPC loss never cancels the owner. Terminal owners remain available until
 close_owner. Even fatal listener failure keeps the foreground owner/Engine alive
 for explicit owner cancellation, with the network-owner marker held; it neither
@@ -193,7 +248,8 @@ RAS tunnels in Windows. Foreign RAS handles/policy are never adopted or removed.
 
 Safe errors include existing IPC codes plus installation_mismatch,
 foreground_installation_policy_rejected, stale_instance, cleanup_pending,
-session_not_terminal, foreground_identity_rejected, foreground_owner_unavailable,
+session_not_terminal, owner_closing, activation_cancelled,
+foreground_identity_rejected, foreground_owner_unavailable,
 foreground_configuration_rejected/changed. Display a generic localized message
 for unknown codes; never display arbitrary elevated stdout/stderr/native errors.
 
@@ -217,7 +273,10 @@ lock. A changed profile/journal requires a new preview owner; no adoption/repair
 is attempted. Confirmation schedules one synchronous native transaction; status
 remains responsive and GUI loss does not cancel rollback. Lost confirmation
 responses are resolved through status, not duplicate apply. close_owner refuses
-an in-progress operation. Existing CLI preview/apply/remove remain compatible.
+an in-progress operation. Accepted close atomically prevents another preview,
+apply or remove, even while its response write is pending; shutdown drains all
+admitted tasks outside the admission mutex. Refusal leaves status/confirmation
+usable. Existing CLI preview/apply/remove remain compatible.
 
 Provisioning does not install certificates, obtain passwords, seed EAP identity
 or touch WFP/NRPT. Incomplete journals require manual administrative review;

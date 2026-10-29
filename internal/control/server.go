@@ -47,6 +47,8 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
+	closeAccepted bool // internal admission result; never serialized
+
 	Installation string                 `json:"installation,omitempty"`
 	SourceDrops  uint64                 `json:"source_drops,omitempty"`
 	Owner        *ProcessIdentity       `json:"owner,omitempty"`
@@ -395,6 +397,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	} else {
 		answer = s.dispatch(ctx, r)
 	}
+	closeAccepted := answer.closeAccepted
 	_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	answer.Owner = s.owner
 	answer.Installation = s.installation
@@ -405,7 +408,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		encoded, _ = json.Marshal(answer)
 	}
 	_, _ = c.Write(append(encoded, '\n'))
-	if (r.Command == "shutdown" || (s.foreground && r.Command == "close_owner")) && answer.Error == "" && s.shutdown != nil {
+	if ((r.Command == "shutdown" && answer.Error == "") || closeAccepted) && s.shutdown != nil {
 		s.shutdown()
 	}
 }

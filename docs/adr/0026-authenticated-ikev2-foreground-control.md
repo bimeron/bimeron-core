@@ -110,3 +110,23 @@ benchmarks only with evidence of a relevant regression.
 Desktop remains blocked until the complete wire/launch contract, focused tests,
 sanitized live evidence and a new immutable Core SHA are explicitly reviewed.
 Do not assign new capabilities to the unchanged beta.1 tag.
+
+## Lifecycle correction and installer exclusion (issue #70)
+
+The accepted [lifecycle plan](../FOREGROUND_OWNER_LIFECYCLE_PLAN.MD) reuses the
+session launch mutex and provisioning admission mutex. Accepted close is an
+irreversible admission result, independent of response encoding/writing; a valid
+preactivation stop permanently cancels activation. Stop/task draining waits stay
+outside admission locks. Reusing these locks avoids a new owner/Engine framework.
+
+The existing connect mutex plus lifetime marker suffice for installer exclusion
+only with protected connect-object security, existing-object validation, explicit
+abandonment refusal for installers, and marker admission before policy reads.
+Default mutex security and loading policy before the marker were insufficient.
+The [native installer contract](../IKEV2_FOREGROUND_CONTROL.MD#installer-transaction-exclusion)
+keeps ownership on one OS thread through rollback/commit and requires a separate
+durable installer journal. It preserves packet-owner exclusion and the existing
+policy schema; it does not authenticate the marker or manage older hosts/proxies.
+A separate installer service, Engine helper, policy-schema extension and automatic
+process/network recovery are unnecessary for this scope. Desktop/MSI live
+integration remains a separate gate.

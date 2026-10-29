@@ -48,13 +48,17 @@ func mocked(t *testing.T, c Config, extra string) map[string]any {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	b, err := executeScript(ctx, c, mockCmdlets+extra)
+	cmd, err := PowerShellCommand(ctx, fixtureSource(c, mockCmdlets+extra))
 	if err != nil {
 		t.Fatal(err)
 	}
+	b, err, diagnostic := runFixture(ctx, cmd, nil)
+	if err != nil {
+		t.Fatalf("mocked PowerShell fixture failed: %s", diagnostic)
+	}
 	var result map[string]any
 	if err := json.Unmarshal(b, &result); err != nil {
-		t.Fatalf("bad mock result: %s", b)
+		t.Fatalf("bad mock JSON result: %s", diagnostic)
 	}
 	return result
 }
