@@ -214,3 +214,49 @@ compatibility gate remain open. The protected installation schema is unchanged:
 exact GUI hash plus unique installation ID, with approved Core digest/revision
 embedded in the GUI. No automatic kill, close, recovery or policy migration was
 added.
+
+## Windows fixture diagnostic follow-up (PR #71)
+
+The test-only follow-up follows acceptance commit `b6d3d02` and is identified by
+the exact commit recorded in PR #71. Production PowerShell execution,
+cancellation and deadlines are unchanged. Mocked fixtures retain their
+15-second budget, DNS ownership/conflict assertions and in-memory network
+cmdlets. Native64 discovery still resolves only Get-NetRoute metadata and checks
+the poisoned user-module marker; it never executes a networking command.
+
+Failure reports include elapsed time, context status, sanitized process exit
+code/error type and fixed phase records: script entry, JSON conversion start/end,
+fixture entry and completion. Child bitness and recognized PSHOME/module bases
+are reported as allowlisted paths relative to SystemRoot. Arbitrary environment,
+configuration, stdout, stderr and exception messages are excluded. Stderr capture
+is capped at 4096 bytes and records are deduplicated; controlled cancellation
+and oversized secret-bearing failure output regressions check useful bounded
+diagnostics. The test wrapper reconstructs configuration conversion around the
+existing trusted PowerShellCommand; production executeScript is not instrumented.
+
+On October 30, 2026, Windows amd64 / Go 1.26.9 checks passed:
+
+- Uncached `go test ./...`, `go vet ./...` and focused uncached race tests for
+  windowsnet, control, core, systemvpn and killswitch.
+- GOARCH=386 / CGO_ENABLED=0 uncached tests and vet for systemvpn, killswitch and
+  windowsnet.
+- An isolated temporary harness copied the current trusted launcher, diagnostics,
+  native DNS script/fixtures and mock helper. Four concurrent workers (two per
+  architecture), each repeating three times with a 90-second process test budget,
+  passed. Every fixture invocation starts a fresh PowerShell child. AMD64 DNS
+  tests took 0.21-0.48 seconds and metadata smoke 0.34-0.37 seconds; 386 DNS tests
+  took 0.53-1.77 seconds. Controlled cancellation reported 64-bit/System32 and
+  32-bit/SysWOW64 children respectively. The native64-only smoke skipped on 386
+  as designed. No fixture network cmdlet escaped its in-memory mock.
+
+These repetitions do not reproduce or explain the hosted CI stall. At source
+`d5a5b5e`, run 40972922473 exhausted the 15-second native64 discovery budget;
+its retried Windows job 123796412769 exhausted two 386 DNS fixture budgets.
+Parallel run 40972954734 passed, with 386 windowsnet taking 11.999 seconds.
+WOW64 redirection is expected, not a demonstrated defect. Load, scanning and
+module initialization remain hypotheses only. No retries or deadline inflation
+were added. Markers cannot identify stalls before script entry, distinguish all
+internal module-loading stages, or recover records beyond the capture cap;
+unrecognized paths and arbitrary process error details are intentionally omitted.
+Hosted exact-head CI, independent review and merge remain with the coordinating
+parent. No manual CI run, VM credentials or host network mutation was used.
