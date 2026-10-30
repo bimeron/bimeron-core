@@ -1,0 +1,33 @@
+# Native enrollment acceptance and implementer brief
+
+This acceptance is written BEFORE CODE. Implement only [the bounded specification](NATIVE_ENROLLMENT_SPEC.MD); [ADR 0029](adr/0029-disabled-native-enrollment-primitives.md) explains the scope. No implementation or new runtime test evidence exists in this documentation commit.
+
+## Required deterministic offline tests
+
+Write these fixtures before production-source edits; show the failing missing behavior before adding the model. No host registry access, elevation, sockets, network policy, VM, SCM, PowerShell networking or installed-file changes. Use in-memory bytes and explicit observations.
+
+1. Codec: exact valid clean/pending golden bytes and round trips; length 0/63/65, bad magic/schema/phase, each reserved region, generation 0/max, zero identity, clean with operation, pending without operation. Encoding invalid Records must fail too. Repeated deterministic inputs produce identical outputs. Max generation may decode but cannot imply increment/wrap capability.
+2. Non-enrolled compatibility: protected exact native-view absence returns packet LegacyUnchanged and native Unavailable. Default/unknown observations, access-denied disguised as absence, wrong/unknown view and insecure ancestors never return notEnrolled. No packet admission hook, registry initialization or updater change is permitted. Distinguish this model regression from actual integrated packet regression coverage.
+3. Pending/crash: pending refuses both protected packet and native admission regardless of caller role. For each hostLost/reboot/localCommitCallback/localRollbackCallback/childRemoval/rollbackDisabled/localFinalize/updaterLost event, assert byte-identical pending state and refusal. Chain all events; it must never become clean. Clean input and unknown event to AfterPendingEvent error. Include mutex-handle disappearance as a narrative fixture; it supplies no settlement authority.
+4. Security: table fixtures represent protected owner and DACL, untrusted owner, absent/null DACL, effective inherited mutation, generic rights, create-link/delete/WRITE_DAC/WRITE_OWNER, unknown effective ACE and failed descriptor reads. The model must distinguish unsafe/unknown from protected, and never interpret either as absence. This subset does not parse native security descriptors; test explicit security classifications, not pretend real ACL enforcement. Actual registry-right decoding is deferred with the reader.
+5. Views/generations: native versus redirected/unknown view; two matching clean snapshots yield EligibleModelOnly; changed bytes/generation/installation/phase/security/view deny; stale expected binding denies; optional binding absent is explicit, not generation zero. Valid codec bytes under unsafe evidence still deny. Test that matching samples cannot detect an unobserved ABA; do not label them transactional proof.
+6. No completion shortcut: no command, callback, completion boolean, foreground flag or event can return a runtime permit, write/delete a record or convert pending to clean. Codec support for hypothetical clean fixtures must be documented as such.
+7. Packet/updater regression: preserve all existing source outside the new package/docs. Run existing fake-file updater tests for activation failure, restored running/stopped state, failed rollback/backup preservation and staged verification; use their existing local temporary-file fixtures only. Retain existing foreground/owner tests under normal offline harness restrictions. Report unchanged baseline failures separately; never rewrite assertions to make the subset pass.
+
+## Verification and CI
+
+Run `go test ./internal/nativeenrollment`, `go vet ./internal/nativeenrollment` and repeat focused tests with the race detector on a supported local toolchain. The package must build on Windows amd64/arm64, Linux amd64/arm64, and remain free of OS side effects. Inspect imports/callers: no production package outside it may import it in this subset. Use existing `.github/workflows/go.yml` coverage and add the small package to explicit lists only if necessary; do not narrow CI. Parent owns hosted CI, independent review and merge. Full existing tests/builds follow repository CI where available; report precise environment limits rather than running forbidden live tests. Benchmarks/profiling are not required for a disconnected 64-byte codec/model.
+
+Protected Windows tests are deferred, not a prerequisite to this pure package. A later reader proposal may use only unique disposable temporary fixtures and in-memory security descriptors, never the real HKLM enrollment path, installed ACLs or elevation on this host. If testing trusted production ownership needs privileges, keep positive security tests at descriptor level and explicitly defer live adapter proof. A user-owned temporary fixture cannot prove trusted registry admission. Never weaken production validation to pass a fixture.
+
+## Execution handoff
+
+- Starting point: design docs commit on `docs/native-enrollment-safe-primitives` in `C:/Users/PC/.t3/worktrees/bimeron-core/design-native-enrollment`. Parent must supply its immutable docs SHA to a separate implementation checkout; uncommitted work is not a handoff.
+- Actual base is `83683e4b5c1a673f0d29d667c09b116f5805027b`, tree-equivalent to `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`; do not rewrite provenance as ancestry.
+- Separate low/Standard execution can implement the isolated pure package and required tests. No subagents, upgrades, registry reader, production wiring or installer/updater changes are authorized by this brief. Stop and update the spec before broadening scope.
+- Track implementation in the issue linked by ADR 0029. Use a separate branch and Conventional Commit. A later PR title/body must say offline primitives, enrollment disabled, no installer completion proof. Discuss with the parent before opening; parent owns review, CI and merge. No push in this design task.
+- Return exact head, paths, tests run, failures and the remaining transaction/updater blockers. Do not call this an implementation-ready native installer or claim all protected admissions are covered.
+
+## Design-task validation
+
+Documentation-only checks: verify exact base/tree equivalence, review Markdown links, `git diff --check`, and ensure the commit contains only these three new Markdown documents. No new source, updater behavior, Desktop edit, registry operation, elevated execution, live network test, binary, tag or release is part of this task. CI was not run for this local documentation-only commit; parent can validate the exact committed head.
