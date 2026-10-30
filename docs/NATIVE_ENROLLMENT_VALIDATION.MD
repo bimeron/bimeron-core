@@ -2,6 +2,14 @@
 
 Tracking: [issue #73](https://github.com/bimeron/bimeron-core/issues/73).
 
+## Protected reader proof: documentation-only checkpoint
+
+The [frozen acceptance](NATIVE_ENROLLMENT_ACCEPTANCE.MD#protected-reader-proof-frozen-next-implementation-contract) records the parent-accepted next step before any implementation. Workspace `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-reader-acceptance`, branch `docs/73-protected-reader-acceptance`, starts directly at fetched origin/master `0dab6310f38613765fb8fb2bff1f2e5b9d6a6780`. HEAD matched that exact base before documentation edits; `git merge-base --is-ancestor 83683e4b5c1a673f0d29d667c09b116f5805027b HEAD` returned 1. No old squash ancestry was introduced.
+
+This checkpoint changes only acceptance and validation Markdown. Source inspection covered the actual reader, descriptor/security checks, model, tests, specification and ADR; no source or test behavior changed. Documentation verification comprises the two-file diff, local link/anchor checks and git diff --check. No Go test/build/vet/race, tagged executable, fixture provisioning or native protected-positive execution is claimed for this docs commit. Historical results below retain their original heads and do not validate the future refactor.
+
+The next implementer owes the two-file implementation, offline check results, frozen executable/golden hashes and parent provisioning brief. Every tagged native case remains UNEXECUTED pending independent review and parent-only VM provisioning/execution. In-memory descriptor evidence is not a native protected-file positive; cross-compilation is not ARM64 runtime evidence. Clean remains storage/model evidence, enrollment remains DISABLED, and atomic admission, unobserved ABA/replay, privileged whole-subtree deletion, authenticated runtime identity, compatible-host enforcement and terminal settlement remain open. No VM, elevation, SCM, updater, registry, Desktop, credentials, production integration, publication, CI rerun/watch or merge occurred here.
+
 ## Scope and provenance
 
 The implementation branch starts at actual base `83683e4b5c1a673f0d29d667c09b116f5805027b`. A local `git diff --quiet` confirmed tree equivalence with reviewed `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`; this is not an ancestry claim. Immutable design commit `4330af30f505ffff1091b96e2e6dcfcef97036df` was cherry-picked as `d7dcf7f` before tests or source edits. All three design documents were read fully.
