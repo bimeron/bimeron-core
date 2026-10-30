@@ -2,6 +2,68 @@
 
 Tracking: [issue #73](https://github.com/bimeron/bimeron-core/issues/73).
 
+## Volume-root contract and failed native evidence
+
+Documentation-only checkpoint, 2026-10-30. After fetching origin master, the fresh clean branch `docs/73-volume-root-contract` in `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-volume-root-contract` started at exact `6af5d72bd7e1e98461e78f437509a1994f395fab` (also fetched origin/master). The ancestry check for full old `83683e4b5c1a673f0d29d667c09b116f5805027b` returned 1. Only specification, acceptance, this validation and ADR 0029 change; no source edits or runtime tests occur in this checkpoint. Local verification is documentation diff/links/anchors and `git diff --check` only.
+
+Parent-supplied evidence: native `clean` FAILED; ONE read-only repeat also returned UnsafeRead. The other 17 cases are UNEXECUTED. The captured root ACE for AU grants LC (`FILE_ADD_SUBDIRECTORY`, `0x4`), which the current parser refuses for outsiders. Nine actual-parser in-memory counterfactuals supplied by the parent establish that this ACE is a sufficient descriptor blocker under the old policy. They are NOT instrumented runtime attribution: the native reader has other refusal points and other failures remain possible. No new native or parser execution, exact raw SDDL capture, artifact hash verification or independent reproduction is claimed by this docs commit. The implementer must obtain the original captured SDDL/evidence from the parent before asserting exact-descriptor fail-old coverage.
+
+The [accepted amendment](NATIVE_ENROLLMENT_SPEC.MD#volume-root-only-descriptor-amendment-2026-10-30) permits only root `0x4` with all remaining safeguards intact; it does not authorize changing a VM root ACL. The [LOW brief](NATIVE_ENROLLMENT_ACCEPTANCE.MD#volume-root-only-low-correction-contract) requires initial and repeated root-only policy selection, strict Program Files/descendant regressions, offline checks and a newly frozen source-bound proof executable. Historical frozen `3cf`-prefixed evidence below cannot validate a new source head. For the new binary all native cases remain UNEXECUTED until parent review, CI assessment and a new VM run. In-memory parser acceptance cannot stand in for native protected-file success.
+
+Source inspection found the shared reader's initial root check and held-files recheck index 0, strict descendant checks, and no production import/caller outside nativeenrollment (the external updater import is test-only). No production integration is authorized. Enrollment stays DISABLED; atomic admission, unobserved ABA/replay, privileged whole-subtree deletion, authenticated runtime identity, compatible-host enforcement and terminal settlement remain unproved. Historical results below keep their original provenance.
+
+## Integrated volume-root correction (2026-10-30)
+
+Accepted contract commit `c791f18ab16e5994d1a655df06f44ab55805b487` preceded source. Source `483c8b451864a206aff67a59eb9337b3f47c04a5` was cherry-picked cleanly as `a3fb14c6` into `docs/73-volume-root-contract`, workspace `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-volume-root-contract`. Fresh `git fetch origin master` and `git merge-base origin/master HEAD` both establish base `6af5d72bd7e1e98461e78f437509a1994f395fab`; no newer master was folded in. Old `83683e4b5c1a673f0d29d667c09b116f5805027b` ancestry is absent. Actual three-dot scope is exactly the four central documents and descriptor/reader plus their two tests.
+
+Inspection and regressions confirm only initial root and repeated held index 0 select the private root policy. Outsider `0x4` alone or with read/execute is accepted there; the same captured root descriptor is refused by strict Program Files/downstream policy. Strict fileDescriptor remains the default. Effective inherited rights, generic expansion, other mutation refusals, exact trusted ownership, non-null DACL, unknown-effective ACE refusal, inherit-only handling, protected container/leaf requirements and all identity/case/type/reparse/sharing/Expected checks remain. Caller/import/init inspection found only the existing updater test imports externally and no production integration.
+
+The source handoff records fail-old `go test ./internal/nativeenrollment -run '^TestCapturedVolumeRootDescriptor$' -count=1` returning exit 1, captured root rejected, before production edits. This integration did not rerun or relabel that historical fail-old. The exact root and Program Files SDDL constants match parent metadata `C:/Users/PC/.t3/worktrees/bimeron-desktop/plan-stage-8-ikev2/build/vm-lab-evidence-20261030/core-reader-clean-metadata.json`, whose independently checked SHA-256 is `bee63055dd5eb6f9663ba8cf290a5b1858f7a353634e641b13b3017a1fc98b42`. In-memory parser acceptance establishes removal of a sufficient descriptor blocker, NOT native success or exact runtime attribution.
+
+### New offline integration checks
+
+Windows amd64, Go `go1.26.9`; all commands below passed with GOPROXY=off. Logs are local ignored `.tmp/root-policy-integration/*.log`. No baseline failure was observed. Focused verbose checks had no skips, including disposable reparse rejection. Full default suites retain existing external/live gates; they establish no new opt-in coverage.
+
+```powershell
+$env:GOPROXY='off'
+go test -count=1 ./internal/nativeenrollment ./cmd/bimeron
+go vet ./internal/nativeenrollment ./cmd/bimeron
+$env:CGO_ENABLED='1'; $env:CC='C:/msys64/ucrt64/bin/gcc.exe'
+go test -race -count=5 ./internal/nativeenrollment ./cmd/bimeron
+go test ./...
+go vet ./...
+go test -count=1 -v ./internal/nativeenrollment -run 'Test(CapturedVolumeRootDescriptor|VolumeRootDescriptorPolicy|NativeRootPolicySelection|NativeReparseRejection|CodecGolden)$'
+$env:CGO_ENABLED='0'
+foreach ($target in @('windows/amd64','windows/arm64','linux/amd64','linux/arm64','windows/386')) {
+    $env:GOOS,$env:GOARCH=$target.Split('/')
+    go build ./...
+    go vet ./...
+}
+$env:GOOS='windows'
+foreach ($arch in @('amd64','arm64','386')) {
+    $env:GOARCH=$arch
+    go test -c -tags core_reader_proof -o .tmp/root-policy-integration/core-reader-proof-$arch.test.exe ./internal/nativeenrollment
+    go vet -tags core_reader_proof ./internal/nativeenrollment
+}
+git diff --check
+```
+
+Cross-target and tagged compilation/vet are not execution. Integration binaries do not replace the frozen source artifact. Existing wildcard CI covers the packages; fresh independent review and hosted CI assessment remain parent-owned. No manual CI rerun, watch or merge occurred.
+
+### New frozen artifact, unchanged goldens and limits
+
+Frozen source workspace is `C:/Users/PC/.t3/worktrees/bimeron-core/core-root-policy-c791`, source commit `483c8b451864a206aff67a59eb9337b3f47c04a5`. Manifest `.tmp/root-policy/manifest.json` SHA-256 is `7256f876be36fd6daafd43badd09bada55698d4c95906743895b07f15fa2aae6`; exact source commands/failures/limits are `.tmp/root-policy/commands-and-limits.txt` there. All executable hashes were independently verified. `git diff --exit-code 483c8b -- internal/nativeenrollment` and all ten manifest Git blob comparisons passed. A raw source-file hash comparison initially differed because this integration checkout uses CRLF while the four edited source-workspace files use LF; this is Git source equivalence, not identical working-byte or build provenance.
+
+Frozen build: Go 1.26.9, GOPROXY=off, CGO_ENABLED=0, GOOS=windows, compiler gc, tag core_reader_proof, amd64 GOAMD64=v1, empty GOFLAGS, no trimpath/ldflags. Build command from that workspace for each architecture: `go test -c -tags core_reader_proof -o .tmp/root-policy/core-reader-proof-$arch.test.exe ./internal/nativeenrollment`.
+
+- NEW amd64: `.tmp/root-policy/core-reader-proof-amd64.test.exe`, SHA-256 `171bf714d74b32669c0b92a772b9e787c08d058549f66244feeb753ec262ee0c`.
+- ARM64: `.tmp/root-policy/core-reader-proof-arm64.test.exe`, SHA-256 `77daf2a62629742c1a4a9cd15b52fd9bc8c5fc573710c454aa2945fb47ce8d3c`.
+- 386: `.tmp/root-policy/core-reader-proof-386.test.exe`, SHA-256 `3e4351f47ce8d3dd7a4f6c9a6f496b18acb80f1a9185c685c22b312bf952a731`.
+
+The manifest's exact 64-byte clean/pending hex matches unchanged TestCodecGolden and the historical hex below. SHA-256 remains clean `c94a8f5a50d77e7507d9627ced650c9eb0bb354dbbe60dc02aaf4bd8f6483b67`, pending `36455b4896921732c186f5058eef683cefd7b2ceefde8151052d868fc0d2b00b`.
+
+Historical `3cf` binary: clean FAILED, one read-only repeat UnsafeRead, other 17 cases UNEXECUTED. NEW binary: ALL 18 cases UNEXECUTED; no tagged executable invoked, even without opt-in. Parent owns fresh independent review, CI assessment and any later disposable-VM run. ARM64 runtime remains unproved; 386 reader remains unsupported. No VM, root ACL modification, elevation, registry, SCM, network-policy, credentials, Desktop, writer, enrollment, settlement, production caller or binary publication occurred. Enrollment stays DISABLED. Atomic admission, ABA/replay resistance, durable privileged-deletion detection, authenticated runtime identity, compatible-host enforcement and terminal settlement remain unproved. Historical evidence below retains its original provenance.
+
 ## Protected reader proof: documentation-only checkpoint
 
 The [frozen acceptance](NATIVE_ENROLLMENT_ACCEPTANCE.MD#protected-reader-proof-frozen-next-implementation-contract) records the parent-accepted next step before any implementation. Workspace `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-reader-acceptance`, branch `docs/73-protected-reader-acceptance`, starts directly at fetched origin/master `0dab6310f38613765fb8fb2bff1f2e5b9d6a6780`. HEAD matched that exact base before documentation edits; `git merge-base --is-ancestor 83683e4b5c1a673f0d29d667c09b116f5805027b HEAD` returned 1. No old squash ancestry was introduced.

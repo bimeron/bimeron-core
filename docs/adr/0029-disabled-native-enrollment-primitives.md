@@ -3,6 +3,12 @@
 Status: accepted user boundary; bounded implementation design, 2026-10-30.
 Tracking: [issue #73](https://github.com/bimeron/bimeron-core/issues/73).
 
+## Volume-root descriptor policy amendment (2026-10-30)
+
+Parent accepts the [minimal contract delta](../NATIVE_ENROLLMENT_SPEC.MD#volume-root-only-descriptor-amendment-2026-10-30) before code: permit outsider FILE_ADD_SUBDIRECTORY (`0x4`) only at the held volume GUID root, initially and on every index-0 recheck. Root child creation does not replace/delete existing Program Files while all other outsider mutation rights are refused and Program Files/downstream ACL and identity pins remain strict. Trusted ownership, present non-null DACL, unknown-effective-ACE refusal and inherited-effective validation remain required.
+
+Alternative: keep the blanket prohibition and retain the observed descriptor blocker. Selected tradeoff: a narrowly explicit private root policy permits unrelated child creation while retaining every protected-path check. Reject changing the VM root ACL, general traversal exceptions, boolean ignore/trust bypasses and broader descendant rights. The [central evidence checkpoint](../NATIVE_ENROLLMENT_VALIDATION.MD#volume-root-contract-and-failed-native-evidence) records failed native clean/repeat and separates sufficient parser evidence from unproved runtime attribution. No runtime success or enrollment authority follows; parent review, fresh binary/CI/native evidence and all existing enrollment gates remain outstanding.
+
 ## Context
 
 Explicit separate native IKEv2 enrollment is accepted; packet-only installation and signed service update health checks/rollback must remain unchanged. Core base `83683e4b5c1a673f0d29d667c09b116f5805027b` is tree-equivalent to reviewed master `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`, not asserted to descend from it. Desktop's standalone prototype is fail-only and demonstrates mechanics, not safe MSI completion.

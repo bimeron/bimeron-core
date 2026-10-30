@@ -82,3 +82,91 @@ func TestFileDescriptor(t *testing.T) {
 		t.Fatal("unknown effective ACE accepted")
 	}
 }
+
+// Exact parent-supplied core-reader-clean-metadata.json descriptors, not captured here.
+const capturedVolumeRootSDDL = `O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464G:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;;LC;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)`
+const capturedProgramFilesSDDL = `O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464G:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;OICIIO;GA;;;CO)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;SY)(A;OICIIO;GA;;;BA)(A;;0x1301bf;;;BA)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;BU)(A;CIIO;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;;0x1200a9;;;AC)(A;OICIIO;GXGR;;;AC)(A;;0x1200a9;;;S-1-15-2-2)(A;OICIIO;GXGR;;;S-1-15-2-2)`
+
+func TestCapturedVolumeRootDescriptor(t *testing.T) {
+	sd, err := windows.SecurityDescriptorFromString(capturedVolumeRootSDDL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fileDescriptorPolicy(sd, false, volumeRootPolicy); err != nil {
+		t.Fatalf("captured root rejected: %v", err)
+	}
+	if fileDescriptor(sd, false) == nil || fileDescriptor(sd, true) == nil {
+		t.Fatal("captured root accepted by strict Program Files/descendant policy")
+	}
+	pf, err := windows.SecurityDescriptorFromString(capturedProgramFilesSDDL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileDescriptor(pf, false) != nil || fileDescriptor(pf, true) != nil {
+		t.Fatal("actual Program Files descriptor rejected by strict policy")
+	}
+}
+
+func TestVolumeRootDescriptorPolicy(t *testing.T) {
+	for _, flags := range []string{"", "ID"} {
+		for _, mask := range []uint32{4, 4 | windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE} {
+			sd, err := windows.SecurityDescriptorFromString(fmt.Sprintf("O:BAD:(A;%s;0x%x;;;AU)", flags, mask))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fileDescriptorPolicy(sd, false, volumeRootPolicy) != nil {
+				t.Fatalf("safe root flags=%s mask=%x", flags, mask)
+			}
+			if fileDescriptor(sd, false) == nil {
+				t.Fatal("root allowance leaked to ordinary descriptor")
+			}
+		}
+	}
+	for _, right := range []uint32{windows.FILE_WRITE_DATA, windows.FILE_WRITE_EA, windows.FILE_WRITE_ATTRIBUTES, 0x40, windows.DELETE, windows.WRITE_DAC, windows.WRITE_OWNER, windows.GENERIC_WRITE, windows.GENERIC_ALL, 0x200} {
+		for _, flags := range []string{"", "ID"} {
+			for _, mask := range []uint32{right, right | 4} {
+				sd, err := windows.SecurityDescriptorFromString(fmt.Sprintf("O:BAD:P(D;;FA;;;AU)(A;%s;0x%x;;;AU)", flags, mask))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fileDescriptorPolicy(sd, false, volumeRootPolicy) == nil {
+					t.Fatalf("root mutation accepted flags=%s mask=%x", flags, mask)
+				}
+			}
+		}
+	}
+	for _, s := range []string{"O:BUD:P(A;;LC;;;AU)", "O:BA", "O:BAD:NO_ACCESS_CONTROL"} {
+		sd, err := windows.SecurityDescriptorFromString(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fileDescriptorPolicy(sd, false, volumeRootPolicy) == nil {
+			t.Fatalf("unsafe root descriptor accepted: %s", s)
+		}
+	}
+	if fileDescriptorPolicy(nil, false, volumeRootPolicy) == nil {
+		t.Fatal("nil root accepted")
+	}
+	sd, err := windows.SecurityDescriptorFromString("O:BAD:(A;IO;GA;;;AU)(A;;LC;;;AU)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileDescriptorPolicy(sd, false, volumeRootPolicy) != nil {
+		t.Fatal("inherit-only treatment changed")
+	}
+	if fileDescriptorPolicy(sd, true, volumeRootPolicy) == nil {
+		t.Fatal("protected DACL requirement lost")
+	}
+	acl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(acl, 1, &ace); err != nil {
+		t.Fatal(err)
+	}
+	ace.Header.AceType = 9
+	if fileDescriptorPolicy(sd, false, volumeRootPolicy) == nil {
+		t.Fatal("unknown effective root ACE accepted")
+	}
+}
