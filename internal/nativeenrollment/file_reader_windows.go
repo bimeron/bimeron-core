@@ -90,7 +90,7 @@ func readNativeFolderPrefix(folder string, prefix []string, expected *Binding) (
 	}
 	files = append(files, f)
 	rootID, e := nativeIdentity(f, true)
-	if e != nil || fileObjectSecurity(windows.Handle(f.Fd()), false) != nil {
+	if e != nil || fileObjectSecurityPolicy(windows.Handle(f.Fd()), false, nativeFilePolicy(0)) != nil {
 		return
 	}
 	final, e := nativeFinalPath(f)
@@ -135,7 +135,7 @@ func readNativeFolderPrefix(folder string, prefix []string, expected *Binding) (
 		for i, f := range files {
 			directory := missing >= 0 || i < len(files)-1
 			id, err := nativeIdentity(f, directory)
-			if err != nil || id != ids[i] || fileObjectSecurity(windows.Handle(f.Fd()), i >= base+2) != nil {
+			if err != nil || id != ids[i] || fileObjectSecurityPolicy(windows.Handle(f.Fd()), i >= base+2, nativeFilePolicy(i)) != nil {
 				return errNativeFile
 			}
 			if i > 0 {
@@ -197,6 +197,14 @@ func readNativeFolderPrefix(folder string, prefix []string, expected *Binding) (
 	result.First = Snapshot{View: NativeView, Security: Protected, Bytes: first}
 	result.Second = Snapshot{View: NativeView, Security: Protected, Bytes: second}
 	return
+}
+
+// Held index zero is the validated local volume GUID root, never Program Files.
+func nativeFilePolicy(index int) fileSecurityPolicy {
+	if index == 0 {
+		return volumeRootPolicy
+	}
+	return ordinaryFilePolicy
 }
 
 func nativeComponent(s string) bool {
