@@ -47,7 +47,13 @@ func nativeReaderArchitecture(arch string, processMachine, nativeMachine uint16)
 
 // The private path seam permits disposable rejection fixtures only; all native
 // identity, ancestry and descriptor checks still run without overrides.
-func readNativeFolder(folder string, expected *Binding) (result Observation) {
+func readNativeFolder(folder string, expected *Binding) Observation {
+	return readNativeFolderPrefix(folder, nil, expected)
+}
+
+// Prefix components are private, test-only descendants of the real anchor.
+// Production uses an empty prefix; known-folder identity remains at its depth.
+func readNativeFolderPrefix(folder string, prefix []string, expected *Binding) (result Observation) {
 	result = Observation{Result: UnsafeRead, Expected: expected}
 	if _, err := nativeProgramFiles(); err != nil {
 		return
@@ -92,7 +98,8 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 		return
 	}
 	ids := []nativeFileID{rootID}
-	names := append(append([]string{}, parts...), "Bimeron Core", "NativeEnrollment", "record.bin")
+	base := len(parts) + len(prefix)
+	names := append(append(append([]string{}, parts...), prefix...), "Bimeron Core", "NativeEnrollment", "record.bin")
 	missing := -1
 	for i, name := range names {
 		directory := i < len(names)-1
@@ -100,7 +107,7 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 		if err != nil {
 			// Only exact missing child at a fixed bootstrap directory qualifies;
 			// the nearest held ancestor has already passed all security checks.
-			if i >= len(parts) && bootstrapMissing(i-len(parts), err) {
+			if i >= base && bootstrapMissing(i-base, err) {
 				missing = i
 				break
 			}
@@ -108,7 +115,7 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 		}
 		files = append(files, child)
 		id, err := nativeIdentity(child, directory)
-		if err != nil || id.Volume != rootID.Volume || fileObjectSecurity(windows.Handle(child.Fd()), i >= len(parts)+1) != nil {
+		if err != nil || id.Volume != rootID.Volume || fileObjectSecurity(windows.Handle(child.Fd()), i >= base+1) != nil {
 			return
 		}
 		ids = append(ids, id)
@@ -128,7 +135,7 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 		for i, f := range files {
 			directory := missing >= 0 || i < len(files)-1
 			id, err := nativeIdentity(f, directory)
-			if err != nil || id != ids[i] || fileObjectSecurity(windows.Handle(f.Fd()), i >= len(parts)+2) != nil {
+			if err != nil || id != ids[i] || fileObjectSecurity(windows.Handle(f.Fd()), i >= base+2) != nil {
 				return errNativeFile
 			}
 			if i > 0 {
@@ -170,7 +177,7 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 			again.Close()
 			return
 		}
-		if !bootstrapMissing(missing-len(parts), err) || recheck() != nil {
+		if !bootstrapMissing(missing-base, err) || recheck() != nil {
 			return
 		}
 		result.Result = ProtectedAbsence

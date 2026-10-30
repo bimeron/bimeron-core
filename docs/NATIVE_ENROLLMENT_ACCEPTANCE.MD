@@ -1,5 +1,43 @@
 # Native enrollment acceptance and implementer brief
 
+## Protected reader proof: frozen next implementation contract
+
+Issue #73; accepted parent plan, documentation BEFORE implementation. This section governs only the next bounded reader proof and supersedes conflicting historical execution briefs below. Fresh isolated base is fetched master `0dab6310f38613765fb8fb2bff1f2e5b9d6a6780`; `83683e4b5c1a673f0d29d667c09b116f5805027b` is not an ancestor. Start implementation from this committed documentation head, not an old branch. One LOW/Standard implementer, no subagents or effort upgrade. Documentation remains coordinator-owned.
+
+### Exclusive two-file scope and anchor contract
+
+Own only `internal/nativeenrollment/file_reader_windows.go` (one private shared traversal worker) and new `internal/nativeenrollment/file_fixture_windows_test.go` with `//go:build windows && core_reader_proof`. No model, descriptor, existing test, dependency, CI, updater or other source edits. Read AGENTS.md, ponytail, the full reader/descriptor/model and their tests, this acceptance, specification, ADR 0029 and validation before edits; inspect callers. Stop and report a contract conflict rather than widen ownership.
+
+Production passes an empty prefix and retains identical fixed-location behavior and public API. The private worker inserts lab components BELOW the real native Program Files anchor, never in place of it. Retain the actual nativeProgramFiles resolver, independent known-folder identity comparison at the original Program Files depth, and identical resolver/identity rechecks. No resolver/trust injection, relaxed descriptor checks, exported fixture API or public arbitrary path. Passing the lab directory to the existing readNativeFolder seam fails its known-folder recheck and is not the solution.
+
+Freeze the lab suffix to `BimeronCoreReaderProof/<run-guid>/<case>/Bimeron Core/NativeEnrollment/record.bin`. GUID is canonical lowercase `8-4-4-4-12` hexadecimal, nonzero, without braces. The wrapper constructs exactly three prefix components from the fixed lab name, validated GUID and closed case ID; it accepts no path input. All prefix ancestors must already exist and pass real security/identity checks. Missing ANY lab prefix component returns UnsafeRead, never ProtectedAbsence.
+
+Let P be the count of real Program Files components and L the prefix count (production 0, lab 3), and B=P+L. Traversal names are Program Files parts, prefix, then the fixed three-component production suffix. Bootstrap classification uses only suffix offsets `i-B`: exact FILE_NOT_FOUND at 0 (Bimeron Core) or 1 (NativeEnrollment) may qualify; offset 2 (record.bin) never qualifies. Prefix indices below B never qualify. Container/leaf protected-DACL threshold is traversal index `i >= B+1`, and held-files recheck index `i >= B+2` because the volume root occupies files[0]. Known-folder identity stays at ids[P], never ids[B]. Preserve exact not-found re-probe, all error/close handling, identity/ACL/case/reparse/type/multilink checks, held parents and read-only sharing, both 65-byte samples, and every recheck. No changed bootstrap behavior for empty prefix.
+
+### Tagged wrapper and closed cases
+
+Use one test entry point `TestCoreReaderProof`, excluded from ordinary builds. Invocation additionally requires `CORE_READER_PROOF_ENABLE=1`, `CORE_READER_PROOF_RUN=<run-guid>` and `CORE_READER_PROOF_CASE=<case>`. Missing opt-in skips before any lab traversal; malformed GUID or unknown case fails before traversal. No globbing, discovery, automatic case loop, provisioning, writes, cleanup or alternate path. The wrapper reads one preprovisioned case through the shared worker, retains Expected exactly, and asserts the full Observation and Evaluate decision. No untagged invocation or initializer may reach the lab worker path.
+
+Closed case IDs and required results:
+
+- `clean`, `clean-match`: Present, both protected NativeView snapshots equal the exact existing Clean golden; nil or exact matching Expected respectively; LegacyUnchanged/EligibleModelOnly/cleanModelOnly.
+- `clean-stale`: same actual snapshots, stale generation Expected retained; RefuseProtectedAdmission/Refuse/bindingMismatch.
+- `pending`, `pending-match`: Present, both snapshots equal the exact existing Pending golden; nil or matching Expected; RefuseProtectedAdmission/Refuse/pending.
+- `pending-stale`: same actual snapshots, stale generation Expected retained; RefuseProtectedAdmission/Refuse/bindingMismatch.
+- `absent-core`, `absent-container`: protected empty snapshots, ProtectedAbsence; nil Expected yields LegacyUnchanged/Unavailable/notEnrolled.
+- `absent-core-bound`, `absent-container-bound`: same absence with prior nonzero Expected retained; RefuseProtectedAdmission/Refuse/bindingMismatch.
+- `missing-prefix`, `missing-leaf`, `unsafe-owner`, `unsafe-dacl`, `case-sensitive`, `reparse`, `multilink`, `sharing`: UnsafeRead with no manufactured protected snapshots; RefuseProtectedAdmission/Refuse/unsafeEvidence. Parent specifies the exact offending object and its native-query evidence before provisioning; case-sensitive/reparse cases target a directory, multilink targets the leaf, sharing conflicts with a held leaf writer. Unsupported setup is an unexecuted case, never a passing refusal.
+
+Use the unchanged Core 64-byte BIMNENR1 goldens from TestCodecGolden: generation 1, Installation `[16]byte{1}`, Clean Operation zero, Pending Operation `[16]byte{2}`. Matching bindings use that installation/generation; stale bindings use generation 2. Preserve all existing security, codec, bounded-sample and close-error regressions including explicit 48-byte LPF rejection; no Desktop interoperability. Descriptor-parser positives and native protected-file positives must remain separately labelled.
+
+### Offline checks and parent-only native handoff
+
+Use GOPROXY=off. Run default offline tests/vet, focused nativeenrollment race checks on a supported local compiler, and CGO-disabled builds for Windows amd64/arm64 and Linux amd64/arm64. Compile tagged Windows amd64, ARM64 and 386 test executables with `go test -c -tags core_reader_proof`; compile/vet the tagged wrapper, but DO NOT execute it here, even with opt-in absent. Report commands, skips, environment limits and failures. Inspect imports/callers/initializers for zero outside production integration; review the empty-prefix diff against base. Existing wildcard CI is unchanged; no CI rerun/watch/merge.
+
+Return exact source commit, workspace/branch, two-file diff, toolchain/build settings, frozen amd64 test executable path and SHA-256, ARM64/386 compile evidence, exact golden hex and SHA-256 for each 64-byte record, and a parent provisioning brief mapping each case to its required tree, owner/DACL, native attributes, bytes, Expected and expected result. Keep binaries/manifests outside tracked source. No frozen executable or fixture hash exists at this docs stage. Parent independently reviews source, binary/fixture manifest and exact record bytes before any native execution.
+
+Native cases remain UNEXECUTED. Parent alone may later provision and execute reviewed cases using existing PSDirect in a disposable VM, with an isolated run GUID, exact source/binary/fixture manifest and targeted cleanup of that run only, preserving all Desktop lab states. This handoff authorizes no child VM/provisioning, elevation, registry, credentials, SCM, updater, writer, settlement, production call, enrollment, Desktop work, publication or release. Parent owns later independent review and CI assessment; no push or PR now. Clean is storage/model evidence only; no atomic admission, ABA/replay resistance, durable deletion detection, runtime permission or settlement proof. ARM64 runtime remains unknown and enrollment remains DISABLED.
+
 This acceptance is written BEFORE CODE. Implement only [the bounded specification](NATIVE_ENROLLMENT_SPEC.MD); [ADR 0029](adr/0029-disabled-native-enrollment-primitives.md) explains the scope. No implementation or new runtime test evidence exists in this documentation commit.
 
 ## Required deterministic offline tests

@@ -2,6 +2,101 @@
 
 Tracking: [issue #73](https://github.com/bimeron/bimeron-core/issues/73).
 
+## Protected reader proof: documentation-only checkpoint
+
+The [frozen acceptance](NATIVE_ENROLLMENT_ACCEPTANCE.MD#protected-reader-proof-frozen-next-implementation-contract) records the parent-accepted next step before any implementation. Workspace `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-reader-acceptance`, branch `docs/73-protected-reader-acceptance`, starts directly at fetched origin/master `0dab6310f38613765fb8fb2bff1f2e5b9d6a6780`. HEAD matched that exact base before documentation edits; `git merge-base --is-ancestor 83683e4b5c1a673f0d29d667c09b116f5805027b HEAD` returned 1. No old squash ancestry was introduced.
+
+This checkpoint changes only acceptance and validation Markdown. Source inspection covered the actual reader, descriptor/security checks, model, tests, specification and ADR; no source or test behavior changed. Documentation verification comprises the two-file diff, local link/anchor checks and git diff --check. No Go test/build/vet/race, tagged executable, fixture provisioning or native protected-positive execution is claimed for this docs commit. Historical results below retain their original heads and do not validate the future refactor.
+
+The next implementer owes the two-file implementation, offline check results, frozen executable/golden hashes and parent provisioning brief. Every tagged native case remains UNEXECUTED pending independent review and parent-only VM provisioning/execution. In-memory descriptor evidence is not a native protected-file positive; cross-compilation is not ARM64 runtime evidence. Clean remains storage/model evidence, enrollment remains DISABLED, and atomic admission, unobserved ABA/replay, privileged whole-subtree deletion, authenticated runtime identity, compatible-host enforcement and terminal settlement remain open. No VM, elevation, SCM, updater, registry, Desktop, credentials, production integration, publication, CI rerun/watch or merge occurred here.
+
+## Integrated protected reader harness (2026-10-30)
+
+This section supersedes the documentation-only checkpoint for this delta. Acceptance `c21db02cf2626b6f2f88c0978a6cd609a7a8f5c4` directly follows `0dab6310f38613765fb8fb2bff1f2e5b9d6a6780`. Source `0facb42c7ff2cdcb890e930eab7ac36226e4fd28` was cherry-picked without conflict as `19273da9` in `C:/Users/PC/.t3/worktrees/bimeron-core/docs-73-reader-acceptance`, branch `docs/73-protected-reader-acceptance`. Fetched origin/master still equals that exact base; old `83683e4b` ancestry is absent. The three-dot diff contains only this validation, acceptance, and the two approved reader/harness files. The final documentation commit differs from the frozen build source; `git diff --exit-code 0facb42 -- internal/nativeenrollment` passed, establishing identical package source/test content, not identical build provenance.
+
+Inspection confirms production passes nil prefix; B=P preserves all previous offsets. For the lab B=P+3, missing prefix indices never qualify as bootstrap absence, suffix offsets 0/1 alone may qualify, initial protected-DACL threshold is B+1 and held-file threshold B+2. Known-folder identity stays ids[P]. Actual native resolution/rechecks, held identities, security checks, read sharing, both bounded samples and reverse-close/error behavior remain unchanged. The tagged wrapper validates lowercase nonzero GUID and one of 18 closed IDs before traversal, uses the real anchor and asserts full Observation, Expected pointer and Evaluate result. There is no public arbitrary path, trust/resolver injection, writer, runtime permit or outside production integration. Repository searches found only the existing updater test imports externally; only the tagged test passes nonempty prefix.
+
+### Offline integration checks
+
+Windows amd64, Go 1.26.9, GOPROXY=off. All commands passed; no baseline failures observed:
+
+```powershell
+go test -count=1 ./internal/nativeenrollment ./cmd/bimeron
+go vet ./internal/nativeenrollment ./cmd/bimeron
+$env:CGO_ENABLED='1'; $env:CC='C:/msys64/ucrt64/bin/gcc.exe'
+go test -race -count=5 ./internal/nativeenrollment ./cmd/bimeron
+go test ./...
+go vet ./...
+$env:CGO_ENABLED='0'
+foreach ($target in @('windows/amd64','windows/arm64','linux/amd64','linux/arm64')) {
+    $env:GOOS,$env:GOARCH=$target.Split('/')
+    go build ./...
+    go vet ./...
+}
+$env:GOOS='windows'
+foreach ($arch in @('amd64','arm64','386')) {
+    $env:GOARCH=$arch
+    go test -c -tags core_reader_proof -o .tmp/reader-proof-integration/core-reader-proof-$arch.test.exe ./internal/nativeenrollment
+    go vet -tags core_reader_proof ./internal/nativeenrollment
+}
+git diff --check
+```
+
+Default suites retain their existing live/external-reference gates; no new live opt-in was enabled. Integration executables were compiled only and do not replace the frozen artifacts below. No tagged executable was invoked, even without opt-in. Skip-before-traversal is inspected/compiled, not a recorded runtime skip. Existing wildcard CI is unchanged; parent owns fresh hosted CI assessment and independent review. No manual rerun, watch or merge.
+
+### Frozen source artifact and fixture manifest
+
+All following paths are under `C:/Users/PC/.t3/worktrees/bimeron-core/t3-398f83ad/.tmp/reader-proof/`, ignored and untracked. Hashes were independently read during integration. Build source is exactly `0facb42c7ff2cdcb890e930eab7ac36226e4fd28`; Go 1.26.9, windows target, CGO_ENABLED=0, compiler gc, amd64 GOAMD64=v1, tag core_reader_proof, no trimpath/ldflags/custom GOFLAGS. Handoff records `go test -c -tags core_reader_proof -o .tmp/reader-proof/core-reader-proof-<arch>.test.exe ./internal/nativeenrollment` from that source workspace for each architecture.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| core-reader-proof-amd64.test.exe | 3cf34ad70030742e57d2cfc8b40d89f7b00318f392957708abe251340885c264 |
+| core-reader-proof-arm64.test.exe | 4c85edf01290732da6da3dfc09d9febd78a0a0342fe9b0a0e50b631c00e42eea |
+| core-reader-proof-386.test.exe | f787a2220482e6dad1b7f58fbdb7ea6def4d090deaf59d7ce1b350dd315cada0 |
+| clean.bin (64 bytes) | c94a8f5a50d77e7507d9627ced650c9eb0bb354dbbe60dc02aaf4bd8f6483b67 |
+| pending.bin (64 bytes) | 36455b4896921732c186f5058eef683cefd7b2ceefde8151052d868fc0d2b00b |
+| handoff.txt | ccd47c190355013872226c9b9879a951ecd683bd7eacc991f3775db17bf83f9c |
+
+Exact goldens match TestCodecGolden (generation 1, installation `[16]byte{1}`, clean zero operation, pending operation `[16]byte{2}`):
+
+```text
+clean:   42494d4e454e52310100010000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000
+pending: 42494d4e454e52310100020000000000010000000000000001000000000000000000000000000000020000000000000000000000000000000000000000000000
+```
+
+### Parent-only provisioning brief: UNEXECUTED
+
+The exact detailed brief is local `handoff.txt` above, including descriptors, evidence requirements, invocation and cleanup. Proposed run GUID `73b1c9d0-4ed2-4e54-bba7-49e4bda9f682` must first be independently verified unused. PF is the actual nativeProgramFiles zero-flags result on the disposable native VM. R is PF/BimeronCoreReaderProof/run-guid; each case has its own R/case/Bimeron Core/NativeEnrollment/record.bin. No guessed/environment anchor or production tree is permitted.
+
+Baseline proposed for newly provisioned objects: BA owner; directories `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)`, leaf `D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)`. Existing ancestors must independently pass without ACL repair. All are disk objects on the same fixed GUID volume, stable nonzero IDs, no reparse, directory case flags zero, leaf one link. Parent must record actual owner/DACL/control/effective ACEs, attributes, case flags, IDs/links, precise missing-child/sharing errors and binary/source/fixture hashes before each execution; all other ancestors must pass, so an unrelated refusal cannot validate the named fault.
+
+C means Present with both protected NativeView clean snapshots and LegacyUnchanged/EligibleModelOnly/cleanModelOnly. P means Present with pending snapshots and RefuseProtectedAdmission/Refuse/pending. A means ProtectedAbsence with both protected empty NativeView snapshots and LegacyUnchanged/Unavailable/notEnrolled. U means UnsafeRead with zero snapshots and RefuseProtectedAdmission/Refuse/unsafeEvidence. M is matching installation/generation 1; S is same installation/generation 2. Expected must be retained exactly.
+
+| Closed case | Required deviation from full clean baseline | Expected | Required result |
+| --- | --- | --- | --- |
+| clean | none | nil | C |
+| clean-match | none | M | C |
+| clean-stale | none | S | C snapshots; bindingMismatch/refusal |
+| pending | pending.bin | nil | P |
+| pending-match | pending.bin | M | P |
+| pending-stale | pending.bin | S | P snapshots; bindingMismatch/refusal |
+| absent-core | case directory exists; exact Bimeron Core absent | nil | A |
+| absent-container | Bimeron Core exists; exact NativeEnrollment absent | nil | A |
+| absent-core-bound | own absent-core tree | M | A snapshots; bindingMismatch/refusal |
+| absent-container-bound | own absent-container tree | M | A snapshots; bindingMismatch/refusal |
+| missing-prefix | R exists; exact case directory absent | nil | U, never absence |
+| missing-leaf | full directories; record.bin absent | nil | U |
+| unsafe-owner | leaf owner BU | nil | U |
+| unsafe-dacl | leaf DACL additionally allows BU GW | nil | U |
+| case-sensitive | case's Bimeron Core directory case flags nonzero | nil | U |
+| reparse | case's Bimeron Core directory is reparse | nil | U |
+| multilink | leaf link count >1 | nil | U |
+| sharing | parent holds existing leaf FILE_WRITE_DATA writer | nil | U |
+
+Reparse tag/target and second hard-link location require parent approval within this isolated run before provisioning; no arbitrary alias/target is approved here. Parent closes its sharing handle on every outcome. Only after independent source/manifest review may parent use existing PSDirect, set ENABLE=1, RUN and one exact CASE, and invoke the frozen executable with `-test.run=^TestCoreReaderProof$ -test.v -test.count=1`. Preserve evidence before cleanup of only the independently verified exact run/approved same-run aliases, without following reparses or removing common parents. No provisioning or cleanup script is supplied.
+
+All 18 protected native cases remain **UNEXECUTED**, not passed or runtime-skipped. Native ARM64 runtime remains unknown; 386/emulation is unsupported. In-memory descriptor positives remain parser evidence only. Enrollment remains **DISABLED**. No atomic admission, ABA/replay resistance, durable privileged-deletion detection, compatible-host enforcement or terminal settlement is proven. This integration performed no VM/provisioning, elevation, registry, SCM, updater mutation, network-policy, credentials, Desktop, signing, binary publication, enrollment or production hooks.
+
 ## Scope and provenance
 
 The implementation branch starts at actual base `83683e4b5c1a673f0d29d667c09b116f5805027b`. A local `git diff --quiet` confirmed tree equivalence with reviewed `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`; this is not an ancestry claim. Immutable design commit `4330af30f505ffff1091b96e2e6dcfcef97036df` was cherry-picked as `d7dcf7f` before tests or source edits. All three design documents were read fully.
