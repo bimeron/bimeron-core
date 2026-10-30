@@ -223,3 +223,24 @@ func TestValidationOrderAndInvalidEncoding(t *testing.T) {
 	o.Second.View = View(255)
 	reason(t, o, WrongView)
 }
+
+func TestProtectedAbsencePriorBinding(t *testing.T) {
+	for _, b := range []Binding{{Installation: [16]byte{1}, Generation: 1}, {Installation: [16]byte{9}, Generation: 42}, {}, {Installation: [16]byte{1}}, {Generation: 1}} {
+		o := Observation{Result: ProtectedAbsence, First: Snapshot{View: NativeView, Security: Protected}, Second: Snapshot{View: NativeView, Security: Protected}, Expected: &b}
+		reason(t, o, BindingMismatch)
+		if o.Expected != &b {
+			t.Fatal("binding discarded")
+		}
+		o.First.Bytes = []byte{1}
+		reason(t, o, UnsafeEvidence)
+		o.First.Bytes = nil
+		o.First.View = OtherView
+		reason(t, o, WrongView)
+		o.First.Security = UnsafeSecurity
+		reason(t, o, UnsafeEvidence)
+	}
+	o := Observation{Result: ProtectedAbsence, First: Snapshot{View: NativeView, Security: Protected}, Second: Snapshot{View: NativeView, Security: Protected}}
+	if d := Evaluate(o); d != (Decision{LegacyUnchanged, Unavailable, NotEnrolled}) {
+		t.Fatal(d)
+	}
+}

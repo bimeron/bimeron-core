@@ -1,5 +1,6 @@
-// Package nativeenrollment models disabled enrollment offline. It performs no I/O,
-// grants no runtime permission, and is not connected to production admissions.
+// Package nativeenrollment models disabled enrollment offline and includes a
+// disconnected read-only Windows file observer. It grants no runtime permission
+// and is not connected to production admissions.
 package nativeenrollment
 
 import (
@@ -142,6 +143,9 @@ func Evaluate(o Observation) Decision {
 	if o.Result == ProtectedAbsence {
 		if len(o.First.Bytes) != 0 || len(o.Second.Bytes) != 0 {
 			return deny(UnsafeEvidence)
+		}
+		if o.Expected != nil {
+			return deny(BindingMismatch)
 		}
 		return Decision{LegacyUnchanged, Unavailable, NotEnrolled}
 	}
