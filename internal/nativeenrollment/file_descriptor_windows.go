@@ -17,18 +17,33 @@ func trustedNativeSID(s string) bool {
 	return s == "S-1-5-18" || s == "S-1-5-32-544" || s == "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 }
 
+type fileSecurityPolicy uint8
+
+const (
+	ordinaryFilePolicy fileSecurityPolicy = iota
+	volumeRootPolicy
+)
+
 func fileObjectSecurity(h windows.Handle, protected bool) error {
+	return fileObjectSecurityPolicy(h, protected, ordinaryFilePolicy)
+}
+
+func fileObjectSecurityPolicy(h windows.Handle, protected bool, policy fileSecurityPolicy) error {
 	sd, e := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
 		return errNativeFile
 	}
-	return fileDescriptor(sd, protected)
+	return fileDescriptorPolicy(sd, protected, policy)
 }
 
 // fileDescriptor does not use deny entries to excuse an unsafe allow. Ancestors
 // may inherit a safe DACL; the enrollment container and leaf must protect theirs.
 // Inputs are OS-owned descriptors or valid allocated in-memory descriptors.
 func fileDescriptor(sd *windows.SECURITY_DESCRIPTOR, protected bool) error {
+	return fileDescriptorPolicy(sd, protected, ordinaryFilePolicy)
+}
+
+func fileDescriptorPolicy(sd *windows.SECURITY_DESCRIPTOR, protected bool, policy fileSecurityPolicy) error {
 	if sd == nil || !sd.IsValid() {
 		return errNativeFile
 	}
@@ -100,9 +115,13 @@ func fileDescriptor(sd *windows.SECURITY_DESCRIPTOR, protected bool) error {
 			mask = mask&^uint32(windows.GENERIC_ALL) | 0x1f01ff
 		}
 		// File and directory generic mappings share these bits (list/read,
-		// traverse/execute). Everything beyond read/execute is refused for outsiders.
+		// traverse/execute). Only the held volume root permits child-directory creation.
 		const readOnly = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE
-		if mask&^uint32(readOnly) != 0 && !trustedNativeSID(sid.String()) {
+		allowed := uint32(readOnly)
+		if policy == volumeRootPolicy {
+			allowed |= 0x4 // FILE_ADD_SUBDIRECTORY; FILE_APPEND_DATA only for files.
+		}
+		if mask&^allowed != 0 && !trustedNativeSID(sid.String()) {
 			return errNativeFile
 		}
 	}
