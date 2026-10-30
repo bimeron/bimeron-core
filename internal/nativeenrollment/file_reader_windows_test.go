@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"debug/pe"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"golang.org/x/sys/windows"
 	"io"
 	"os"
@@ -278,5 +281,69 @@ func TestNativeResolverRuntime(t *testing.T) {
 	}
 	if resolveErr != nil || path != want || path == "" {
 		t.Fatalf("native folder %q %v; want %q", path, resolveErr, want)
+	}
+}
+
+// Inspect the real traversal wiring without creating a trusted native fixture.
+func TestNativeRootPolicySelection(t *testing.T) {
+	for _, index := range []int{0, 1, 2, 3, 8} {
+		want := ordinaryFilePolicy
+		if index == 0 {
+			want = volumeRootPolicy
+		}
+		if nativeFilePolicy(index) != want {
+			t.Fatalf("held index %d", index)
+		}
+	}
+	source, err := parser.ParseFile(token.NewFileSet(), "file_reader_windows.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, repeated, strict := 0, 0, 0
+	ast.Inspect(source, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if name.Name == "fileObjectSecurity" {
+			strict++
+			return true
+		}
+		if name.Name != "fileObjectSecurityPolicy" {
+			return true
+		}
+		if len(call.Args) != 3 {
+			t.Fatal("unexpected security arguments")
+		}
+		policy, ok := call.Args[2].(*ast.CallExpr)
+		if !ok || len(policy.Args) != 1 {
+			t.Fatal("root policy must select held index")
+		}
+		selector, ok := policy.Fun.(*ast.Ident)
+		if !ok || selector.Name != "nativeFilePolicy" {
+			t.Fatal("unexpected policy selector")
+		}
+		switch index := policy.Args[0].(type) {
+		case *ast.BasicLit:
+			if index.Value != "0" {
+				t.Fatal("initial root index changed")
+			}
+			initial++
+		case *ast.Ident:
+			if index.Name != "i" {
+				t.Fatal("recheck must select current held index")
+			}
+			repeated++
+		default:
+			t.Fatal("unexpected held index")
+		}
+		return true
+	})
+	if initial != 1 || repeated != 1 || strict != 1 {
+		t.Fatalf("initial=%d repeated=%d strict descendants=%d", initial, repeated, strict)
 	}
 }
