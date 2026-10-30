@@ -1,5 +1,13 @@
 # Native enrollment safe primitives: bounded specification
 
+## Volume-root-only descriptor amendment (2026-10-30)
+
+Parent-accepted minimal contract delta for [issue #73](https://github.com/bimeron/bimeron-core/issues/73), before implementation, based exactly on `6af5d72bd7e1e98461e78f437509a1994f395fab`. This supersedes the blanket outsider append/create-subdirectory prohibition below ONLY for the held local volume GUID root. At that root, permit outsider `FILE_ADD_SUBDIRECTORY` (`0x4`) in addition to existing read/execute rights. Apply this object-specific policy at the initial root descriptor check and every repeated check of held-files index 0. Never apply it to Program Files, any descendant, service or user-config objects. This is neither an ACL bypass nor a general traversal exception.
+
+Creating an unrelated root child cannot replace or delete the EXISTING Program Files object while outsider root DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER, generic write/all and all other mutation rights remain refused, and Program Files/downstream ownership, ACL and identity pins remain unchanged. Expand generic rights before evaluation; generic write still contains forbidden rights. Retain exact trusted root ownership, present non-null DACL, malformed/unknown-effective-ACE refusal, inherited-effective-right validation, and the existing deliberate inherit-only treatment. Deny entries cannot excuse unsafe allows. Preserve protected container/leaf DACL requirements, case/type/reparse checks, volume GUID/file IDs, held parent handles, known-folder identity, sharing, missing-object rules, Expected bindings and all rechecks. No root ACL modification is authorized, including in a VM.
+
+Use a minimal private explicit root policy, never a general ignore/trust boolean or exported policy API. The [LOW brief](NATIVE_ENROLLMENT_ACCEPTANCE.MD#volume-root-only-low-correction-contract) fixes ownership and verification. The [evidence checkpoint](NATIVE_ENROLLMENT_VALIDATION.MD#volume-root-contract-and-failed-native-evidence) distinguishes supplied native failures from parser counterfactuals. Enrollment remains DISABLED; this changes only the disconnected reader contract.
+
 Status: accepted product boundary; proposed offline implementation contract, 2026-10-30. Enrollment and protected-install support remain DISABLED. See [ADR 0029](adr/0029-disabled-native-enrollment-primitives.md) and [acceptance and implementer brief](NATIVE_ENROLLMENT_ACCEPTANCE.MD).
 
 ## Provenance and bounded review
