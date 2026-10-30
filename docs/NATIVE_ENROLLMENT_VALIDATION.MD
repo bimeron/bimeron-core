@@ -89,3 +89,58 @@ This partial scope proves no atomic admission, ABA/replay resistance, privileged
 ## P1/P2 correction validation disclaimer
 
 The reader review at `94154c1abd8493e637f599fa829704d4e21c1b0b` found that protected absence bypasses supplied Expected binding, and WOW64 handling compares process ProgramFiles against ProgramFilesX64 instead of resolving the native folder directly. Earlier passing checks above did not cover those contracts. The new specification/acceptance correction is documentation only; no new runtime validation is claimed here. After implementation, model.go will contain a disconnected production-logic change and the earlier COMMENT ONLY scope statement will no longer describe the PR. The parent must record the exact fix head, fail-old regressions, read-only 386 unsupported-resolution execution, native resolver checks, cross-builds, independent review and CI evidence. Native ARM64 execution and protected native positive coverage remain unproved; 386-on-64 native-folder resolution is explicitly unsupported under the bounded documented API strategy. Enrollment remains disabled and there are no outside production callers.
+
+## Executed P1/P2 correction (2026-10-30)
+
+Implementation starts exactly at accepted specification `c13b134a47c5ac01c795e8535078d9669afade12`, on `feat/native-offline-reader-updateproof`, for PR #76. This section supersedes the earlier COMMENT ONLY model scope and documentation-only correction disclaimer: model.go now changes disconnected production logic. No outside production caller or initializer exists; enrollment remains disabled.
+
+P1 review response: Evaluate retains evidence/security, view and nonempty-absence precedence, then refuses every supplied Expected binding on protected absence with bindingMismatch. Expected is never cleared. Nil-bound empty trusted absence retains LegacyUnchanged/Unavailable/notEnrolled. Before the logic edit, the following command failed BOTH new tests with `{Packet:1 Native:1 Reason:notEnrolled}`, wanted bindingMismatch:
+
+```powershell
+go test ./internal/nativeenrollment -run 'Test(ProtectedAbsencePriorBinding|NativeBootstrapAbsencePriorBinding)' -count=1
+```
+
+Model cases cover multiple valid bindings and invalid supplied bindings. The test-only readerEvidenceBootstrapAbsence seam covers first missing Bimeron Core, missing NativeEnrollment, prior bound-record disappearance and unsafe missing record inside an existing container. These are synthetic classification evidence, not protected native positives or privileged deletion execution.
+
+P2 review response: a single private resolver uses real IsWow64Process2 plus the compiled process architecture. Only native amd64-on-amd64 and arm64-on-arm64 select FOLDERID_ProgramFiles with flags zero; initial selection and identity rechecks reuse it. 386, emulation, unknown/unproven pairs and query/resolver failure refuse. No ProgramFilesX64, environment, registry, guessed path or processor-feature fallback remains. Known-folder object identity, zero case-sensitivity, descriptor checks, held parents and volume GUID pins remain required. This deliberately sacrifices reader availability on 386, including 386-on-64; it is not bitness-independent resolution.
+
+Commands below passed on Windows amd64 Go 1.26.9 with GOPROXY=off. The full suite uses the existing default offline harness; no live opt-in was enabled. Native disposable reparse coverage passed without a skip.
+
+```powershell
+$env:GOPROXY='off'
+go test ./internal/nativeenrollment -count=1 -v
+go vet ./internal/nativeenrollment
+$selection = 'Test(FileDescriptor|Native|BoundedNative|Codec|Evidence|ProtectedAbsence|Pending|ValidationOrder|Health|Update|InvalidOperation|ServiceExecutable|FailedStop|MissingStaged|FailedIPC|StoppedService|LegacyWindows|WindowsSource)'
+go test -count=1 -v ./internal/nativeenrollment ./cmd/bimeron -run $selection
+go vet ./internal/nativeenrollment ./cmd/bimeron
+$env:CGO_ENABLED='1'; $env:CC='C:/msys64/ucrt64/bin/gcc.exe'
+go test -race -count=5 ./internal/nativeenrollment ./cmd/bimeron -run $selection
+go test ./...
+go vet ./...
+go test ./internal/control ./core ./internal/systemvpn -run 'Test(Foreground|ProfileControl|ObservedFailedStartup|NativeCleanupSnapshot|NativeStatusIsCopied|ReviewedProfileToken|Owner)' -count=1
+$env:CGO_ENABLED='0'
+foreach ($target in @('windows/amd64','windows/arm64','linux/amd64','linux/arm64')) {
+    $env:GOOS,$env:GOARCH=$target.Split('/')
+    go build ./...
+    go vet ./...
+}
+$env:GOOS='windows'; $env:GOARCH='386'
+go test -c -o $env:TEMP/nativeenrollment-p1p2-386.test.exe ./internal/nativeenrollment
+& $env:TEMP/nativeenrollment-p1p2-386.test.exe '-test.run=^TestNativeResolverRuntime$' '-test.v'
+git diff --check
+```
+
+Real native amd64 resolver output: GOARCH=amd64, process=0x0, native=0x8664, query success, path `C:\Program Files`, resolver success, equal to the direct zero-flags known-folder query. Actual read-only 386 executable output: GOARCH=386, process=0x14c, native=0x8664, query success, empty path, resolver error; public observation asserted UnsafeRead and identical Expected pointer. An initial PowerShell invocation with unquoted dotted test flags was rejected by the test argument parser; the quoted command above executed and passed. ARM64 was cross-built/vetted only, never executed. No protected positive fixture was manufactured.
+
+B carry-forward: `git diff --exit-code 94154c1abd8493e637f599fa829704d4e21c1b0b --` with the following four paths returned zero. Their Git blob IDs remain unchanged, preserving the independently reviewed B content:
+
+| Path | Git blob |
+| --- | --- |
+| cmd/bimeron/service_update_files_test.go | 9e17ab8c562e485d028167a73f9201315ce7c62a |
+| internal/nativeenrollment/update_health.go | 3f404ab89b916f71eeac0283785ed07d3c51782e |
+| internal/nativeenrollment/update_health_test.go | 37969fff8621f8bcc064b9115597293aae481e98 |
+| internal/nativeenrollment/update_proof_test.go | f57dba6ac3369e774e670978f93a97cd5f317b46 |
+
+Go-source caller/import/init searches again found no outside production import/caller or package initializer; the only external import is the existing updater test. The implementation delta is the four owned model/reader files plus this centralized validation document. No other production logic changed. PR #76 scope is corrected to acknowledge the model logic change and native-only release constraint. Historical old-head CI (including its 14 successful checks) does not validate this fix. Fresh independent reader review and hosted CI assessment at the pushed head remain parent-owned; no manual rerun, watch or merge was performed.
+
+Limits remain: no ARM64 runtime or trusted protected-file positive, atomic admission, unobserved ABA/replay resistance, durable privileged-deletion detection, authenticated runtime SCM/process identity, compatible-host enforcement or terminal settlement. No MSI/SCM operation, protected writes, registry, elevation, VM, credentials, network policy, Desktop, writer, enrollment, startup hook or runtime admission permit was introduced or exercised.

@@ -4,11 +4,13 @@ package nativeenrollment
 
 import (
 	"bytes"
+	"debug/pe"
 	"errors"
 	"golang.org/x/sys/windows"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -200,5 +202,81 @@ func TestNativeReparseRejection(t *testing.T) {
 		if _, e = nativeIdentity(child, true); e == nil {
 			t.Fatal("relative reparse accepted")
 		}
+	}
+}
+
+// Classification evidence only: no protected filesystem positive is manufactured.
+func readerEvidenceBootstrapAbsence(index int, expected *Binding) Observation {
+	o := Observation{Result: UnsafeRead, Expected: expected}
+	if bootstrapMissing(index, windows.ERROR_FILE_NOT_FOUND) {
+		o.Result = ProtectedAbsence
+		o.First = Snapshot{View: NativeView, Security: Protected}
+		o.Second = o.First
+	}
+	return o
+}
+
+func TestNativeBootstrapAbsencePriorBinding(t *testing.T) {
+	b := Binding{Installation: [16]byte{1}, Generation: 7}
+	for _, index := range []int{0, 1} {
+		o := readerEvidenceBootstrapAbsence(index, &b)
+		if o.Expected != &b {
+			t.Fatal("binding discarded")
+		}
+		reason(t, o, BindingMismatch)
+		// A prior bound record disappears along with either bootstrap ancestor.
+		prior := present(fixture(Clean))
+		prior.Expected = &b
+		prior.First = sample(Record{Phase: Clean, Installation: b.Installation, Generation: b.Generation})
+		prior.Second = prior.First
+		reason(t, prior, CleanModelOnly)
+		reason(t, o, BindingMismatch)
+		if d := Evaluate(readerEvidenceBootstrapAbsence(index, nil)); d != (Decision{LegacyUnchanged, Unavailable, NotEnrolled}) {
+			t.Fatal(d)
+		}
+	}
+	reason(t, readerEvidenceBootstrapAbsence(2, &b), UnsafeEvidence)
+}
+
+func TestNativeReaderArchitecture(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64", "386", "unknown"} {
+		for _, process := range []uint16{pe.IMAGE_FILE_MACHINE_UNKNOWN, pe.IMAGE_FILE_MACHINE_I386, pe.IMAGE_FILE_MACHINE_AMD64, pe.IMAGE_FILE_MACHINE_ARM64} {
+			for _, native := range []uint16{pe.IMAGE_FILE_MACHINE_UNKNOWN, pe.IMAGE_FILE_MACHINE_I386, pe.IMAGE_FILE_MACHINE_AMD64, pe.IMAGE_FILE_MACHINE_ARM64} {
+				want := process == 0 && ((arch == "amd64" && native == pe.IMAGE_FILE_MACHINE_AMD64) || (arch == "arm64" && native == pe.IMAGE_FILE_MACHINE_ARM64))
+				if got := nativeReaderArchitecture(arch, process, native); got != want {
+					t.Fatalf("%s %x %x: %v", arch, process, native, got)
+				}
+			}
+		}
+	}
+}
+
+// Read-only runtime proof: no protected paths are created or changed.
+func TestNativeResolverRuntime(t *testing.T) {
+	var process, native uint16
+	err := windows.IsWow64Process2(windows.CurrentProcess(), &process, &native)
+	path, resolveErr := nativeProgramFiles()
+	t.Logf("GOARCH=%s process=%#x native=%#x query=%v path=%q resolver=%v", runtime.GOARCH, process, native, err, path, resolveErr)
+	if err != nil || !nativeReaderArchitecture(runtime.GOARCH, process, native) {
+		if path != "" || resolveErr == nil {
+			t.Fatal("unsupported architecture resolved a path")
+		}
+		b := Binding{Installation: [16]byte{1}, Generation: 1}
+		o := ReadNativeFile(&b)
+		if o.Result != UnsafeRead || o.Expected != &b {
+			t.Fatalf("unsupported read: %+v", o)
+		}
+		reason(t, o, UnsafeEvidence)
+		return
+	}
+	want, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		if path != "" || resolveErr == nil {
+			t.Fatal("resolver failure hidden")
+		}
+		return
+	}
+	if resolveErr != nil || path != want || path == "" {
+		t.Fatalf("native folder %q %v; want %q", path, resolveErr, want)
 	}
 }

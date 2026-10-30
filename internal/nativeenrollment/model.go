@@ -144,6 +144,9 @@ func Evaluate(o Observation) Decision {
 		if len(o.First.Bytes) != 0 || len(o.Second.Bytes) != 0 {
 			return deny(UnsafeEvidence)
 		}
+		if o.Expected != nil {
+			return deny(BindingMismatch)
+		}
 		return Decision{LegacyUnchanged, Unavailable, NotEnrolled}
 	}
 	r, e := Decode(o.First.Bytes)

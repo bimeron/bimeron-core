@@ -3,9 +3,11 @@
 package nativeenrollment
 
 import (
+	"debug/pe"
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"unsafe"
 
@@ -16,43 +18,39 @@ import (
 // state nor grants admission. Enrollment remains disabled. Matching snapshots
 // cannot establish atomic admission, detect ABA, or detect privileged deletion.
 func ReadNativeFile(expected *Binding) Observation {
-	folder, e := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	folder, e := nativeProgramFiles()
 	if e != nil {
 		return Observation{Result: UnsafeRead, Expected: expected}
 	}
 	return readNativeFolder(folder, expected)
 }
 
+// Only documented native 64-bit process/OS pairs support zero-flags resolution.
+// IsWow64Process2 reports UNKNOWN for a native process; the compiled architecture
+// must also match the reported OS, so emulation cannot select a native folder.
+func nativeProgramFiles() (string, error) {
+	var processMachine, nativeMachine uint16
+	if err := windows.IsWow64Process2(windows.CurrentProcess(), &processMachine, &nativeMachine); err != nil {
+		return "", err
+	}
+	if !nativeReaderArchitecture(runtime.GOARCH, processMachine, nativeMachine) {
+		return "", errNativeFile
+	}
+	return windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+}
+
+func nativeReaderArchitecture(arch string, processMachine, nativeMachine uint16) bool {
+	return processMachine == pe.IMAGE_FILE_MACHINE_UNKNOWN &&
+		((arch == "amd64" && nativeMachine == pe.IMAGE_FILE_MACHINE_AMD64) ||
+			(arch == "arm64" && nativeMachine == pe.IMAGE_FILE_MACHINE_ARM64))
+}
+
 // The private path seam permits disposable rejection fixtures only; all native
 // identity, ancestry and descriptor checks still run without overrides.
 func readNativeFolder(folder string, expected *Binding) (result Observation) {
 	result = Observation{Result: UnsafeRead, Expected: expected}
-	// A WOW64 ProgramFiles result may identify Program Files (x86). Refuse it
-	// rather than label a redirected known-folder object as the native location.
-	var processMachine, nativeMachine uint16
-	if windows.IsWow64Process2(windows.CurrentProcess(), &processMachine, &nativeMachine) != nil {
+	if _, err := nativeProgramFiles(); err != nil {
 		return
-	}
-	if processMachine != 0 {
-		nativeFolder, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFilesX64, 0)
-		if err != nil {
-			return
-		}
-		a, err := openNativePath(folder, true)
-		if err != nil {
-			return
-		}
-		b, err := openNativePath(nativeFolder, true)
-		if err != nil {
-			a.Close()
-			return
-		}
-		ai, ae := nativeIdentity(a, true)
-		bi, be := nativeIdentity(b, true)
-		ac, bc := a.Close(), b.Close()
-		if ae != nil || be != nil || ac != nil || bc != nil || ai != bi {
-			return
-		}
 	}
 	drive, parts, e := nativeFolderParts(folder)
 	if e != nil {
@@ -146,7 +144,7 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 			}
 		}
 		// A change to the known-folder mapping or drive resolution also denies.
-		current, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+		current, err := nativeProgramFiles()
 		if err != nil {
 			return errNativeFile
 		}
@@ -158,21 +156,6 @@ func readNativeFolder(folder string, expected *Binding) (result Observation) {
 		ce := again.Close()
 		if err != nil || ce != nil || id != knownID {
 			return errNativeFile
-		}
-		if processMachine != 0 {
-			path, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFilesX64, 0)
-			if err != nil {
-				return errNativeFile
-			}
-			native, err := openNativePath(path, true)
-			if err != nil {
-				return errNativeFile
-			}
-			id, err := nativeIdentity(native, true)
-			ce := native.Close()
-			if err != nil || ce != nil || id != knownID {
-				return errNativeFile
-			}
 		}
 		return nil
 	}
