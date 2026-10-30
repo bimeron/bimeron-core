@@ -1,5 +1,6 @@
-// Package nativeenrollment models disabled enrollment offline. It performs no I/O,
-// grants no runtime permission, and is not connected to production admissions.
+// Package nativeenrollment models disabled enrollment offline and includes a
+// disconnected read-only Windows file observer. It grants no runtime permission
+// and is not connected to production admissions.
 package nativeenrollment
 
 import (

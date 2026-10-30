@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"bimeron/core"
@@ -234,6 +235,31 @@ func TestPendingLedgerAroundActualUpdate(t *testing.T) {
 			}()
 			if pending != original {
 				t.Fatal("pending changed")
+			}
+			wantEvents := []string{"pending", "staged-verified", "old-stopped", "swapped"}
+			if running && scenario != "crash-activation" {
+				wantEvents = append(wantEvents, "candidate-start")
+				if scenario != "activation" {
+					wantEvents = append(wantEvents, "candidate-IPC")
+				}
+			}
+			if scenario != "success-running" && scenario != "success-stopped" && scenario != "crash-after-swap" && scenario != "crash-activation" {
+				wantEvents = append(wantEvents, "candidate-stop")
+			}
+			if scenario != "crash-activation" {
+				wantEvents = append(wantEvents, "replace-return")
+			}
+			if running && slices.Contains([]string{"activation", "health", "restart-failure", "crash-after-restore"}, scenario) {
+				wantEvents = append(wantEvents, "restore-start")
+				if scenario != "restart-failure" {
+					wantEvents = append(wantEvents, "restored-SCM-running")
+				}
+			}
+			if slices.Contains([]string{"crash-activation", "crash-after-swap", "crash-after-restore"}, scenario) {
+				wantEvents = append(wantEvents, "updater-lost")
+			}
+			if !slices.Equal(events, wantEvents) {
+				t.Fatalf("events %v, want %v", events, wantEvents)
 			}
 			if scenario == "success-running" || scenario == "success-stopped" || scenario == "crash-after-swap" {
 				read(target, "new")
