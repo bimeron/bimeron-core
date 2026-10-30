@@ -49,6 +49,17 @@ Inherited executable/module overrides cannot redirect these operations. Existing
 DNS deadlines and synchronous provisioning rollback remain unchanged. See
 [Microsoft's module documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_modules?view=powershell-5.1).
 
+## Native MSI invocation procedure
+
+The [selected enrollment procedure](NATIVE_ENROLLMENT_SPEC.MD#selected-trusted-invocation-procedure)
+reconciles Desktop's trusted already-fully-elevated, same-user interactive MSI
+invocation with independent effective-context and exact protected preload/package
+checks. It cannot attest the original initiating process; `verifyInitiatingClient`
+remains Unknown. Missing required authenticated interactive binding or preload
+proof refuses; production Session 0 invocation is unsupported. Enrollment remains
+DISABLED. This procedural trust revision does not change GUI/Core image or OS
+peer authentication, the wire contract, or the exclusion requirements below.
+
 ## Installer transaction exclusion
 
 An elevated MSI custom action must acquire `Global\BimeronCoreConnect` and,
