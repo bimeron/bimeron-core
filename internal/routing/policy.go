@@ -15,18 +15,23 @@ const (
 )
 
 type Rule struct {
-	CIDR   string `json:"cidr,omitempty"`
-	Domain string `json:"domain,omitempty"`
-	Action Action `json:"action"`
+	CIDR    string `json:"cidr,omitempty"`
+	Domain  string `json:"domain,omitempty"`
+	GeoIP   string `json:"geoip,omitempty"`
+	GeoSite string `json:"geosite,omitempty"`
+	Action  Action `json:"action"`
 }
 type Config struct {
 	Default Action `json:"default"`
 	Rules   []Rule `json:"rules"`
 }
 type compiledRule struct {
-	prefix netip.Prefix
-	domain string
-	action Action
+	prefix         netip.Prefix
+	domain         string
+	action         Action
+	geoIP, geoSite string
+	ips            []*ipGroup
+	sites          []*domainGroup
 }
 type Policy struct {
 	fallback Action
@@ -40,7 +45,7 @@ func (p *Policy) Config() Config {
 	}
 	c := Config{Default: p.fallback}
 	for _, r := range p.rules {
-		rule := Rule{Domain: r.domain, Action: r.action}
+		rule := Rule{Domain: r.domain, GeoIP: r.geoIP, GeoSite: r.geoSite, Action: r.action}
 		if r.prefix.IsValid() {
 			rule.CIDR = r.prefix.String()
 		}
@@ -60,7 +65,7 @@ func (p *Policy) DirectPrefixes() []netip.Prefix {
 		if r.prefix.IsValid() && r.action == Direct {
 			safe := true
 			for _, earlier := range p.rules[:i] {
-				if earlier.action != Direct && (earlier.domain != "" || earlier.prefix.IsValid() && earlier.prefix.Overlaps(r.prefix)) {
+				if earlier.action != Direct && (earlier.domain != "" || len(earlier.ips) > 0 || len(earlier.sites) > 0 || earlier.prefix.IsValid() && earlier.prefix.Overlaps(r.prefix)) {
 					safe = false
 					break
 				}
@@ -78,17 +83,57 @@ func normalize(s string) string { return strings.ToLower(strings.TrimSuffix(s, "
 func matchesDomain(domain, rule string) bool {
 	return domain == rule || strings.HasSuffix(domain, "."+rule)
 }
-func Compile(c Config) (*Policy, error) {
+func Compile(c Config) (*Policy, error) { return CompileWithGeoData(c, nil) }
+
+// CompileWithGeoData compiles ordered rules against an immutable dataset snapshot.
+func CompileWithGeoData(c Config, data *GeoData) (*Policy, error) {
 	if !valid(c.Default) {
 		return nil, fmt.Errorf("invalid default action")
 	}
 	p := &Policy{fallback: c.Default}
 	for i, r := range c.Rules {
-		if !valid(r.Action) || (r.CIDR == "") == (r.Domain == "") {
+		count := 0
+		for _, v := range []string{r.CIDR, r.Domain, r.GeoIP, r.GeoSite} {
+			if v != "" {
+				count++
+			}
+		}
+		if !valid(r.Action) || count != 1 {
 			return nil, fmt.Errorf("invalid rule %d", i+1)
 		}
 		cr := compiledRule{action: r.Action}
-		if r.CIDR != "" {
+		if r.GeoIP != "" || r.GeoSite != "" {
+			value := r.GeoIP
+			kind := "GeoIP"
+			if value == "" {
+				value = r.GeoSite
+				kind = "GeoSite"
+			}
+			if data == nil || kind == "GeoIP" && len(data.ips) == 0 || kind == "GeoSite" && len(data.sites) == 0 {
+				return nil, &GeoDataError{Code: "geodata_required", Kind: strings.ToLower(kind), Rule: i + 1, Err: fmt.Errorf("dataset is unavailable")}
+			}
+			for _, raw := range strings.Split(value, ",") {
+				id, err := groupID(strings.TrimSpace(raw))
+				if err != nil {
+					return nil, geoError(kind, "", i+1, err)
+				}
+				if kind == "GeoIP" {
+					g, ok := data.ips[id]
+					if !ok {
+						return nil, &GeoDataError{Code: "geodata_group_unknown", Kind: strings.ToLower(kind), Group: id, Rule: i + 1, Err: fmt.Errorf("unknown group")}
+					}
+					cr.ips = append(cr.ips, g)
+				} else {
+					g, ok := data.sites[id]
+					if !ok {
+						return nil, &GeoDataError{Code: "geodata_group_unknown", Kind: strings.ToLower(kind), Group: id, Rule: i + 1, Err: fmt.Errorf("unknown group")}
+					}
+					cr.sites = append(cr.sites, g)
+				}
+			}
+			cr.geoIP = r.GeoIP
+			cr.geoSite = r.GeoSite
+		} else if r.CIDR != "" {
 			for _, value := range strings.Split(r.CIDR, ",") {
 				prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 				if err != nil {
@@ -112,7 +157,7 @@ func Compile(c Config) (*Policy, error) {
 func (p *Policy) DomainRelevant(domain string) bool {
 	domain = normalize(domain)
 	for _, r := range p.rules {
-		if r.domain != "" && matchesDomain(domain, r.domain) {
+		if r.matchesDomain(domain) {
 			return true
 		}
 	}
@@ -124,12 +169,12 @@ func (p *Policy) DomainRelevant(domain string) bool {
 func (p *Policy) DecideDomains(ip netip.Addr, domains []string) Action {
 	ip = ip.Unmap()
 	for _, r := range p.rules {
-		if r.prefix.IsValid() && r.prefix.Contains(ip) {
+		if r.matchesIP(ip) {
 			return r.action
 		}
-		if r.domain != "" {
+		if r.domain != "" || len(r.sites) > 0 {
 			for _, domain := range domains {
-				if matchesDomain(normalize(domain), r.domain) {
+				if r.matchesDomain(normalize(domain)) {
 					return r.action
 				}
 			}
@@ -144,4 +189,27 @@ func (p *Policy) Decide(ip netip.Addr, domain string) Action {
 		return p.DecideDomains(ip, nil)
 	}
 	return p.DecideDomains(ip, []string{domain})
+}
+
+func (r compiledRule) matchesDomain(domain string) bool {
+	if r.domain != "" && matchesDomain(domain, r.domain) {
+		return true
+	}
+	for _, g := range r.sites {
+		if g.matches(domain) {
+			return true
+		}
+	}
+	return false
+}
+func (r compiledRule) matchesIP(ip netip.Addr) bool {
+	if r.prefix.IsValid() && r.prefix.Contains(ip) {
+		return true
+	}
+	for _, g := range r.ips {
+		if g.matches(ip) {
+			return true
+		}
+	}
+	return false
 }

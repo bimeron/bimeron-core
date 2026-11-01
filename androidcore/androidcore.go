@@ -41,15 +41,20 @@ type Session struct {
 // NewSession copies and validates an inline profile. No network is configured
 // until the host calls SetNetwork and Start.
 func NewSession(profile []byte, protector SocketProtector) (*Session, error) {
+	return NewSessionWithGeoData(profile, nil, nil, protector)
+}
+
+// NewSessionWithGeoData validates explicit dataset bytes without filesystem access.
+func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProtector) (*Session, error) {
 	if protector == nil {
 		return nil, errors.New("socket protector required")
 	}
-	c, err := core.LoadConfigData(profile)
+	c, err := core.LoadConfigDataWithGeoData(profile, geoIP, geoSite)
 	if err != nil {
 		return nil, err
 	}
-	if c.Mode != "vpn" || c.KillSwitch {
-		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch")
+	if c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
+		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
 	}
 	s := &Session{config: c, protector: protector}
 	s.engine, s.port, err = core.NewPacketEngine(core.Options{}, core.PacketOptions{MTU: c.MTU, Outbound: s.outbound})
@@ -185,6 +190,43 @@ func Version() string {
 // Capabilities describes this embedded Android packet backend, not the
 // unsupported standalone Android platform backend reported by core.New.
 func Capabilities() string {
-	b, _ := json.Marshal(core.Capabilities{Platform: "android", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true})
+	c := core.PlatformCapabilities()
+	c = core.Capabilities{Platform: "android", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema}
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
+// GeoDataGroups returns JSON with groups (an array) and error (null or a string).
+func GeoDataGroups(kind string, data []byte) string {
+	groups, err := core.GeoDataGroups(kind, data)
+	if groups == nil {
+		groups = []string{}
+	}
+	return geoDataJSON(groups, err)
+}
+
+// ValidateConfigWithGeoData returns JSON with error null on success.
+// It also enforces this embedded host's mode and kill-switch restrictions.
+func ValidateConfigWithGeoData(profile, geoIP, geoSite []byte) string {
+	c, err := core.LoadConfigDataWithGeoData(profile, geoIP, geoSite)
+	if err == nil && (c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil) {
+		err = errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
+	}
+	return geoDataJSON(nil, err)
+}
+
+func geoDataJSON(groups []string, err error) string {
+	var message *string
+	if err != nil {
+		value := err.Error()
+		message = &value
+	}
+	var details *core.GeoDataError
+	errors.As(err, &details)
+	b, _ := json.Marshal(struct {
+		Groups  []string           `json:"groups"`
+		Error   *string            `json:"error"`
+		Details *core.GeoDataError `json:"details,omitempty"`
+	}{groups, message, details})
 	return string(b)
 }

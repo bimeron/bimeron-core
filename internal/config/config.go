@@ -31,12 +31,19 @@ type File struct {
 	Access           Access
 	Tunnel           Tunnel
 	Routing          routing.Config
+	GeoData          GeoData
+	geoData          *routing.GeoData
 	IKEv2            *systemvpn.Config
 	interfaceOptions bool
 	key              string
 	profile          *accesskey.Profile
 	ShadowTLS        *accesskey.ShadowTLS
 }
+type GeoData struct {
+	GeoIPFile   string
+	GeoSiteFile string
+}
+
 type Access struct {
 	SS                string
 	SSConf            string
@@ -123,7 +130,7 @@ func parse(b []byte) (*File, error) {
 			}
 			section = strings.TrimSpace(text[1 : len(text)-1])
 			switch section {
-			case "Profile", "AccessKey", "Interface", "Routing", "IKEv2", "ShadowTLS":
+			case "Profile", "AccessKey", "Interface", "Routing", "IKEv2", "ShadowTLS", "GeoData":
 				if sections[section] {
 					return nil, fmt.Errorf("duplicate section at line %d", line)
 				}
@@ -373,6 +380,15 @@ func parse(b []byte) (*File, error) {
 					recognized = false
 				}
 			}
+		case "GeoData":
+			switch key {
+			case "GeoIPFile":
+				c.GeoData.GeoIPFile = value
+			case "GeoSiteFile":
+				c.GeoData.GeoSiteFile = value
+			default:
+				recognized = false
+			}
 		case "Routing":
 			if key == "Default" {
 				c.Routing.Default = routing.Action(value)
@@ -386,6 +402,10 @@ func parse(b []byte) (*File, error) {
 				r.CIDR = value
 			case "Domain":
 				r.Domain = value
+			case "GeoIP":
+				r.GeoIP = value
+			case "GeoSite":
+				r.GeoSite = value
 			case "Action":
 				r.Action = routing.Action(value)
 			default:
@@ -409,7 +429,7 @@ func Load(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return loadBytes(b, path)
+	return loadBytes(b, path, nil, nil)
 }
 
 // ParseData loads an in-memory configuration for sandboxed embedding. File
@@ -418,10 +438,18 @@ func ParseData(b []byte) (*File, error) {
 	if len(b) > maxSize {
 		return nil, fmt.Errorf("configuration exceeds size limit")
 	}
-	return loadBytes(b, "")
+	return loadBytes(b, "", nil, nil)
 }
-func loadBytes(b []byte, path string) (*File, error) {
-	c, err := loadBaseBytes(b, path)
+
+// ParseDataWithGeoData accepts explicit resource bytes and never reads files.
+func ParseDataWithGeoData(b, geoIP, geoSite []byte) (*File, error) {
+	if len(b) > maxSize {
+		return nil, fmt.Errorf("configuration exceeds size limit")
+	}
+	return loadBytes(b, "", geoIP, geoSite)
+}
+func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
+	c, err := loadBaseBytes(b, path, geoIP, geoSite)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +468,7 @@ func loadBytes(b []byte, path string) (*File, error) {
 	return c, nil
 }
 
-func loadBaseBytes(b []byte, path string) (*File, error) {
+func loadBaseBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 	c, err := parse(b)
 	if err != nil {
 		return nil, err
@@ -490,7 +518,37 @@ func loadBaseBytes(b []byte, path string) (*File, error) {
 	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {
 		return nil, fmt.Errorf("[Interface] Listen must be a loopback IP and port")
 	}
-	if _, err := routing.Compile(c.Routing); err != nil {
+	if c.Tunnel.KillSwitch {
+		for i, r := range c.Routing.Rules {
+			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
+				return nil, fmt.Errorf("rule %d: kill switch supports CIDR rules only", i+1)
+			}
+		}
+	}
+	if path != "" {
+		needIP, needSite := false, false
+		for _, r := range c.Routing.Rules {
+			needIP = needIP || r.GeoIP != ""
+			needSite = needSite || r.GeoSite != ""
+		}
+		if needIP {
+			geoIP, err = readGeoData(path, c.GeoData.GeoIPFile, "geoip")
+			if err != nil {
+				return nil, err
+			}
+		}
+		if needSite {
+			geoSite, err = readGeoData(path, c.GeoData.GeoSiteFile, "geosite")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	c.geoData, err = routing.DecodeGeoData(geoIP, geoSite)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.RoutingPolicy(); err != nil {
 		return nil, err
 	}
 	if c.Tunnel.Mode == "vpn" {
@@ -958,5 +1016,32 @@ func (c *File) withShadowTLS(p accesskey.Profile, err error) (accesskey.Profile,
 	return p, nil
 }
 func (c *File) VPNPolicy() (*routing.Policy, error) {
-	return routing.Compile(c.Routing)
+	return c.RoutingPolicy()
+}
+
+// RoutingPolicy compiles against the immutable dataset snapshot loaded with this profile.
+func (c *File) RoutingPolicy() (*routing.Policy, error) {
+	return routing.CompileWithGeoData(c.Routing, c.geoData)
+}
+
+func readGeoData(profile, resource, kind string) ([]byte, error) {
+	if resource == "" {
+		return nil, &routing.GeoDataError{Code: "geodata_required", Kind: kind, Err: fmt.Errorf("dataset file required")}
+	}
+	if !filepath.IsAbs(resource) {
+		resource = filepath.Join(filepath.Dir(profile), resource)
+	}
+	f, err := os.Open(resource)
+	if err != nil {
+		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 64*1024*1024+1))
+	if err != nil {
+		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
+	}
+	if len(b) > 64*1024*1024 {
+		return nil, &routing.GeoDataError{Code: "geodata_limit", Kind: kind, Err: fmt.Errorf("dataset exceeds size limit")}
+	}
+	return b, nil
 }
