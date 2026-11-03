@@ -1,9 +1,9 @@
 package killswitch
 
 import (
+	"bimeron/internal/routing"
 	"fmt"
 	"net/netip"
-	"bimeron/internal/routing"
 )
 
 // EgressRule is ordered by Weight, not prefix length. It controls application
@@ -18,7 +18,7 @@ func Plan(p *routing.Policy, disableIPv6 bool) ([]EgressRule, error) {
 	c := p.Config()
 	var rules []EgressRule
 	for i, r := range c.Rules {
-		if r.Domain != "" {
+		if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
 			return nil, fmt.Errorf("kill switch supports CIDR rules only")
 		}
 		prefix, err := netip.ParsePrefix(r.CIDR)

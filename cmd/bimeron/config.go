@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bimeron/internal/accesskey"
+	"bimeron/internal/config"
 	"context"
 	"flag"
 	"fmt"
 	"os"
-	"bimeron/internal/accesskey"
-	"bimeron/internal/config"
 )
 
 func loadConfig(flags *flag.FlagSet, path, command string) (*config.File, error) {
@@ -48,6 +48,9 @@ func resolveInput(ctx context.Context, path string, c *config.File) (accesskey.P
 	return accesskey.NewResolver().Resolve(ctx, string(b))
 }
 func validateConfig(args []string) error {
+	if len(args) == 2 && args[0] == "--json" {
+		return validateJSONBridge(args[1], os.Stdout)
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("usage: bimeron validate <config-file>")
 	}

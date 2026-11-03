@@ -78,6 +78,11 @@ jobs:
         run: |
           BIMERON_HTTP_CADDY_BIN="$RUNNER_TEMP/naive-caddy" go test -race ./internal/proxy -run '^TestReferenceHTTPSConnect$' -count=1 -v
           go test ./internal/proxy -run '^$' -bench '^BenchmarkHTTPSConnect$' -benchtime=20x -count=1
+      - name: Check geodata host contracts and routing fuzz targets
+        run: |
+          go test ./androidcore ./core ./internal/config ./internal/routing -count=1
+          go test ./internal/routing -run '^$' -fuzz '^FuzzDecodeGeoData$' -fuzztime=5s
+          go test ./internal/routing -run '^$' -bench 'Geo' -benchtime=200ms -count=1
       - name: Check core and control races
         run: CGO_ENABLED=1 go test -race ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
       - name: VLESS and VMess transport interoperability with Xray
