@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bimeron/internal/geofile"
 	"bufio"
 	"context"
 	"fmt"
@@ -1031,7 +1032,7 @@ func readGeoData(profile, resource, kind string) ([]byte, error) {
 	if !filepath.IsAbs(resource) {
 		resource = filepath.Join(filepath.Dir(profile), resource)
 	}
-	f, err := os.Open(resource)
+	f, err := geofile.Open(resource)
 	if err != nil {
 		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
 	}

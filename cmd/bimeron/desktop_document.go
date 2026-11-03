@@ -3,12 +3,12 @@ package main
 import (
 	"bimeron/core"
 	"bimeron/internal/config"
+	"bimeron/internal/geofile"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"unicode/utf8"
 )
@@ -146,7 +146,7 @@ func geoDataBridge(args []string, out io.Writer) error {
 	if len(args) != 3 || args[0] != "groups" || (args[1] != "geoip" && args[1] != "geosite") || !filepath.IsAbs(args[2]) {
 		return writeBridge(out, r, fmt.Errorf("invalid arguments"))
 	}
-	f, err := os.Open(args[2])
+	f, err := geofile.Open(args[2])
 	if err != nil {
 		return writeBridge(out, r, &core.GeoDataError{Code: "geodata_unreadable", Kind: args[1]})
 	}

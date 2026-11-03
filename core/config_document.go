@@ -525,6 +525,24 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 		return fmt.Errorf("invalid section field")
 	}
 	original := string(d.Bytes())
+	// Refuse target fields beyond a disabled rule rather than creating duplicates.
+	activeSection, afterDisabled := "", false
+	for _, line := range documentLines(strings.TrimPrefix(original, d.prefix)) {
+		name, disabled := documentHeader(line)
+		if name != "" {
+			if disabled {
+				afterDisabled = true
+			} else {
+				activeSection = name
+				afterDisabled = false
+			}
+			continue
+		}
+		value := strings.TrimSpace(line)
+		if activeSection == section && afterDisabled && value != "" && !strings.HasPrefix(value, "#") && !strings.HasPrefix(value, ";") {
+			return fmt.Errorf("ambiguous section fields after disabled rule; use raw editing")
+		}
+	}
 	text := strings.TrimPrefix(original, d.prefix)
 	lines := documentLines(text)
 	start, end, field := -1, len(lines), -1
@@ -623,7 +641,6 @@ func (d *ConfigDocument) FieldsJSON() (string, error) {
 		name, disabled := documentHeader(line)
 		if name != "" {
 			if disabled {
-				section = "Rule"
 				continue
 			}
 			section = name

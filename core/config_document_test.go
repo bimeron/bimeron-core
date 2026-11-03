@@ -494,3 +494,15 @@ func TestDocumentEditedBoundariesOnly(t *testing.T) {
 		t.Fatal("no-op changed bytes")
 	}
 }
+
+func TestFieldsAfterDisabledRule(t *testing.T) {
+	source := "[Routing]\n# [Rule]\n# Domain=a\n# Action=block\nDefault=direct\n"
+	d := ParseConfigDocument([]byte(source))
+	fields, err := d.FieldsJSON()
+	if err != nil || !strings.Contains(fields, `"Routing/Default":"direct"`) {
+		t.Fatalf("%s %v", fields, err)
+	}
+	if d.SetSectionField("Routing", "Default", "proxy") == nil || string(d.Bytes()) != source {
+		t.Fatal("ambiguous edit must fail unchanged")
+	}
+}
