@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var geoDataDocumentID = regexp.MustCompile(`\A[A-Za-z0-9_!-]{1,256}\z`)
 
 // ConfigDocument is an in-memory, byte-preserving configuration draft. It never
 // reads files or validates runnable policy, capabilities, or dataset membership.
@@ -232,12 +235,13 @@ func (d *ConfigDocument) SetRule(index int, matcher, value, action string) error
 	}
 	p.raw = strings.Join(lines, "")
 	p.alternate = ""
+	d.separateRule(i, documentEOL(string(d.Bytes())))
 	return nil
 }
 
 // MoveRule moves the complete block to a final zero-based row index. Text
 // outside rule blocks stays in its relative position. A missing final newline
-// stays missing; a necessary line separator travels to the new block boundary.
+// stays missing; changed adjacency boundaries gain a missing blank separator.
 func (d *ConfigDocument) MoveRule(from, to int) error {
 	a, err := d.part(from)
 	if err != nil {
@@ -268,6 +272,20 @@ func (d *ConfigDocument) MoveRule(from, to int) error {
 			d.parts[i].alternate = ""
 		}
 	}
+	seams := []int{a - 1, b - 1, b}
+	if a > b {
+		seams = []int{b - 1, b, a}
+	}
+	for _, i := range seams {
+		if i < 0 || i+1 >= len(d.parts) {
+			continue
+		}
+		gap := documentGap(d.parts[i].raw, d.parts[i+1].raw, eol)
+		d.parts[i].raw += gap
+		if d.parts[i].alternate != "" {
+			d.parts[i].alternate += gap
+		}
+	}
 	if !strings.HasSuffix(original, "\n") && len(d.parts) > 0 {
 		p := &d.parts[len(d.parts)-1]
 		if p.rule && strings.HasSuffix(p.raw, "\n") {
@@ -276,6 +294,61 @@ func (d *ConfigDocument) MoveRule(from, to int) error {
 		}
 	}
 	return nil
+}
+
+// documentGap adds only the missing blank separator; existing whitespace survives.
+func documentGap(left, right, eol string) string {
+	if left == "" || right == "" {
+		return ""
+	}
+	if strings.TrimSpace(documentLines(right)[0]) == "" {
+		if !strings.HasSuffix(left, "\n") {
+			return eol
+		}
+		return ""
+	}
+	lines := documentLines(left)
+	last := lines[len(lines)-1]
+	if strings.TrimSpace(last) == "" {
+		if strings.HasSuffix(left, "\n") {
+			return ""
+		}
+		return eol
+	}
+	if strings.HasSuffix(left, "\n") {
+		return eol
+	}
+	return eol + eol
+}
+
+func (d *ConfigDocument) separateRule(i int, eol string) {
+	if i > 0 {
+		p := &d.parts[i-1]
+		gap := documentGap(p.raw, d.parts[i].raw, eol)
+		if gap != "" {
+			p.raw += gap
+			if p.alternate != "" {
+				p.alternate += gap
+			}
+		}
+	}
+	if i+1 < len(d.parts) {
+		p := &d.parts[i]
+		gap := documentGap(p.raw, d.parts[i+1].raw, eol)
+		if gap != "" {
+			p.raw += gap
+			if p.alternate != "" {
+				p.alternate += gap
+			}
+		}
+	}
+}
+
+func documentEOL(text string) string {
+	if strings.Contains(text, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
 }
 
 func documentLines(s string) []string {
@@ -394,7 +467,7 @@ func documentValidate(matcher, value, action string) error {
 	case "GeoIP", "GeoSite":
 		for _, v := range strings.Split(value, ",") {
 			v = strings.TrimSpace(v)
-			if v == "" || strings.ContainsAny(v, " \t\r\n#;=[]") {
+			if !geoDataDocumentID.MatchString(v) {
 				return fmt.Errorf("invalid geodata identifier")
 			}
 		}
@@ -402,4 +475,188 @@ func documentValidate(matcher, value, action string) error {
 		return fmt.Errorf("invalid matcher")
 	}
 	return nil
+}
+
+// InsertRule inserts a new block before index, or appends at RuleCount().
+func (d *ConfigDocument) InsertRule(index int, matcher, value, action string, enabled bool) error {
+	if index < 0 || index > d.RuleCount() {
+		return fmt.Errorf("rule index out of range")
+	}
+	candidate := ParseConfigDocument([]byte("[Rule]\nDomain=example.com\nAction=direct\n"))
+	if err := candidate.SetRule(0, matcher, value, action); err != nil {
+		return err
+	}
+	if err := candidate.SetRuleEnabled(0, enabled); err != nil {
+		return err
+	}
+	eol := "\n"
+	if strings.Contains(string(d.Bytes()), "\r\n") {
+		eol = "\r\n"
+	}
+	raw := strings.ReplaceAll(string(candidate.Bytes()), "\n", eol)
+	at := len(d.parts)
+	if index < d.RuleCount() {
+		at, _ = d.part(index)
+	}
+	d.parts = append(d.parts, configDocumentPart{})
+	copy(d.parts[at+1:], d.parts[at:])
+	d.parts[at] = configDocumentPart{raw: raw, rule: true, disabled: !enabled}
+	d.separateRule(at, eol)
+	return nil
+}
+
+// DeleteRule removes the whole block, including comments owned by that block.
+func (d *ConfigDocument) DeleteRule(index int) error {
+	i, err := d.part(index)
+	if err != nil {
+		return err
+	}
+	d.parts = append(d.parts[:i], d.parts[i+1:]...)
+	return nil
+}
+
+// SetSectionField patches a single non-Rule section without runtime validation.
+// Duplicate sections or keys in the target section are ambiguous and refused.
+func (d *ConfigDocument) SetSectionField(section, key, value string) error {
+	validName := func(s string) bool {
+		return s != "" && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "[]#;=\r\n\x00")
+	}
+	if !validName(section) || section == "Rule" || !validName(key) || strings.ContainsAny(value, "\r\n\x00") {
+		return fmt.Errorf("invalid section field")
+	}
+	original := string(d.Bytes())
+	text := strings.TrimPrefix(original, d.prefix)
+	lines := documentLines(text)
+	start, end, field := -1, len(lines), -1
+	seen := map[string]bool{}
+	inside := false
+	for i, line := range lines {
+		name, disabled := documentHeader(line)
+		if name != "" {
+			if inside {
+				end = i
+			}
+			inside = name == section && !disabled
+			if inside {
+				if start >= 0 {
+					return fmt.Errorf("duplicate section")
+				}
+				start = i
+			}
+			continue
+		}
+		if !inside {
+			continue
+		}
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, ";") {
+			continue
+		}
+		k, _, ok := strings.Cut(s, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" || seen[k] {
+			return fmt.Errorf("malformed or duplicate section field")
+		}
+		seen[k] = true
+		if k == key {
+			field = i
+		}
+	}
+	// Quote every edited value so leading/trailing whitespace and delimiters round-trip.
+	replacement := strconv.Quote(value)
+	eol := "\n"
+	if strings.Contains(original, "\r\n") {
+		eol = "\r\n"
+	}
+	if field >= 0 {
+		line := lines[field]
+		eq := strings.IndexByte(line, '=')
+		right := line[eq+1:]
+		ws := right[:len(right)-len(strings.TrimLeft(right, " \t"))]
+		tail := right[len(strings.TrimRight(right, " \t\r\n")):]
+		lines[field] = line[:eq+1] + ws + replacement + tail
+	} else {
+		addition := key + "=" + replacement + eol
+		if start < 0 {
+			end = len(lines)
+			addition = "[" + section + "]" + eol + addition
+		}
+		if end > 0 && !strings.HasSuffix(lines[end-1], "\n") {
+			addition = eol + addition
+		}
+		lines = append(lines, "")
+		copy(lines[end+1:], lines[end:])
+		lines[end] = addition
+	}
+	// Locate only the edited section after insertion, including disabled boundaries.
+	text = strings.Join(lines, "")
+	lines = documentLines(text)
+	start, end = -1, len(lines)
+	for i, line := range lines {
+		name, disabled := documentHeader(line)
+		if name == "" {
+			continue
+		}
+		if start >= 0 {
+			end = i
+			break
+		}
+		if name == section && !disabled {
+			start = i
+		}
+	}
+	before := strings.Join(lines[:start], "")
+	block := strings.Join(lines[start:end], "")
+	after := strings.Join(lines[end:], "")
+	next := ParseConfigDocument([]byte(d.prefix + before + documentGap(before, block, eol) + block + documentGap(block, after, eol) + after))
+	*d = *next
+	return nil
+}
+
+// FieldsJSON returns decoded non-rule values for visual controls. It does not
+// validate runtime settings. Ambiguous fields refuse visual interpretation.
+func (d *ConfigDocument) FieldsJSON() (string, error) {
+	fields := map[string]string{}
+	sections := map[string]bool{}
+	section := ""
+	for _, line := range documentLines(strings.TrimPrefix(string(d.Bytes()), d.prefix)) {
+		name, disabled := documentHeader(line)
+		if name != "" {
+			if disabled {
+				section = "Rule"
+				continue
+			}
+			section = name
+			if name != "Rule" {
+				if sections[name] {
+					return "", fmt.Errorf("duplicate section")
+				}
+				sections[name] = true
+			}
+			continue
+		}
+		s := strings.TrimSpace(line)
+		if section == "Rule" || s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, ";") {
+			continue
+		}
+		key, value, ok := strings.Cut(s, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || section == "" || key == "" {
+			return "", fmt.Errorf("malformed section field")
+		}
+		id := section + "/" + key
+		if _, exists := fields[id]; exists {
+			return "", fmt.Errorf("duplicate section field")
+		}
+		if strings.HasPrefix(value, `"`) {
+			decoded, err := strconv.Unquote(value)
+			if err != nil {
+				return "", fmt.Errorf("invalid quoted section field")
+			}
+			value = decoded
+		}
+		fields[id] = value
+	}
+	b, err := json.Marshal(fields)
+	return string(b), err
 }

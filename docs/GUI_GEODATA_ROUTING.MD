@@ -132,3 +132,17 @@ and MoveRule changes order. These APIs never access files or validate dataset
 membership; validate the resulting runnable profile before Apply/Start. Unknown
 fields block unsafe edits/enabling. Quoted values are decoded; edits may normalize
 their quote formatting. GUI JSON row enabled is editor state, not a .conf option.
+
+Desktop CLI consumers can use the non-networking document and local catalog
+commands in [DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD). This extends
+ConfigDocument with InsertRule, DeleteRule and SetSectionField; no new RPC exists.
+
+Identifier compatibility (2026-11-02): group IDs contain 1–256 ASCII letters,
+digits, `_`, `-` or `!`; normalize ASCII case for lookup/enumeration. A bang is
+a literal stable identifier character, never policy negation. Preserve it in
+selection and serialization (for example `category-games-!cn`). Attribute
+selectors (`@`), controls, non-ASCII and empty IDs remain invalid. The V2Ray
+schema stores country_code as a string independently of Domain attributes;
+Loyalsoldier uses bang-bearing category names. Expand only this alphabet,
+without filtering IDs or changing matcher semantics. ConfigDocument enforces
+the same syntax before editing; dataset membership remains runtime validation.

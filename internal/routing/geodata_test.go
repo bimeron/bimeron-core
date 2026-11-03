@@ -394,3 +394,29 @@ func TestGeoErrorJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestGeoDataLiteralBangIdentifier(t *testing.T) {
+	d, err := DecodeGeoData(nil, geoGroup("CATEGORY-GAMES-!CN", geoDomain(2, "games.example")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := d.Groups("geosite")
+	if err != nil || !reflect.DeepEqual(names, []string{"category-games-!cn"}) {
+		t.Fatal(names, err)
+	}
+	p, err := CompileWithGeoData(Config{Default: Direct, Rules: []Rule{{GeoSite: "CATEGORY-GAMES-!CN", Action: Proxy}}}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Decide(netip.Addr{}, "games.example") != Proxy || p.Decide(netip.Addr{}, "other.example") != Direct {
+		t.Fatal("bang changed literal matching")
+	}
+	for _, id := range []string{"", "sites@cn", "a\x01b", "é", "K", strings.Repeat("a", 257)} {
+		if _, err := DecodeGeoData(nil, geoGroup(id, geoDomain(2, "games.example"))); err == nil {
+			t.Fatalf("decoded %q", id)
+		}
+		if _, err := CompileWithGeoData(Config{Default: Direct, Rules: []Rule{{GeoSite: id, Action: Proxy}}}, d); err == nil {
+			t.Fatalf("compiled %q", id)
+		}
+	}
+}

@@ -19,6 +19,7 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("bimeron version [-daemon]")
+		fmt.Println("bimeron document (versioned JSON on stdin/stdout)\nbimeron geodata groups <geoip|geosite> <absolute-file>\nbimeron validate --json <absolute-profile-path>")
 		fmt.Println("bimeron doctor [-output report.json] (read-only diagnostics)")
 		fmt.Println("bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove] (Windows; preview by default)")
 		fmt.Println("bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
@@ -27,6 +28,13 @@ func run(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "document":
+		if len(args) != 1 {
+			return writeBridge(os.Stdout, bridgeResponse{}, fmt.Errorf("invalid arguments"))
+		}
+		return documentBridge(os.Stdin, os.Stdout)
+	case "geodata":
+		return geoDataBridge(args[1:], os.Stdout)
 	case "ikev2":
 		return ikev2Command(args[1:])
 	case "version":

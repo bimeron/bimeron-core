@@ -54,3 +54,13 @@ a new session after dataset replacement. Relative paths in the file API remain
 profile-relative. DNS visibility limitations, IPv6 restrictions and unsupported
 IKEv2 split routing remain visible to callers. CI exercises host JSON contracts,
 Apple ABI symbols, routing fuzzing/benchmarks and existing platform builds.
+
+Identifier compatibility (2026-11-02): group IDs contain 1–256 ASCII letters,
+digits, `_`, `-` or `!`; normalize ASCII case for lookup/enumeration. A bang is
+a literal stable identifier character, never policy negation. Preserve it in
+selection and serialization (for example `category-games-!cn`). Attribute
+selectors (`@`), controls, non-ASCII and empty IDs remain invalid. The V2Ray
+schema stores country_code as a string independently of Domain attributes;
+Loyalsoldier uses bang-bearing category names. Expand only this alphabet,
+without filtering IDs or changing matcher semantics. ConfigDocument enforces
+the same syntax before editing; dataset membership remains runtime validation.

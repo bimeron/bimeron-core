@@ -61,7 +61,10 @@ func TestConfigDocumentCandidates(t *testing.T) {
 		{"CIDR = 10.0.0.0/8, ::/0\nAction = proxy", true},
 		{"Domain = example.org\nAction = direct", true},
 		{"GeoIP = not-installed\nAction = block", true},
-		{"GeoSite = unknown@attribute, another\nAction = block", true},
+		{"GeoSite = unknown@attribute, another\nAction = block", false},
+		{"GeoSite = CATEGORY-GAMES-!CN\nAction = block", true},
+		{"GeoSite = " + strings.Repeat("a", 257) + "\nAction = block", false},
+		{"GeoSite = café\nAction = block", false},
 		{"GeoIP = ru,,by\nAction = direct", false},
 		{"CIDR = nope\nAction = direct", false},
 		{"Domain = a\nGeoIP = ru\nAction = direct", false},
@@ -149,13 +152,13 @@ func TestConfigDocumentMove(t *testing.T) {
 	if err := d.MoveRule(0, 2); err != nil {
 		t.Fatal(err)
 	}
-	if string(d.Bytes()) != "[Routing]\nDefault = direct\n"+b+c+a {
+	if string(d.Bytes()) != "[Routing]\nDefault = direct\n\n"+b+c+"\n"+a {
 		t.Fatal(string(d.Bytes()))
 	}
 	if err := d.MoveRule(2, 0); err != nil {
 		t.Fatal(err)
 	}
-	if string(d.Bytes()) != "[Routing]\nDefault = direct\n"+a+b+c {
+	if string(d.Bytes()) != "[Routing]\nDefault = direct\n\n"+a+"\n"+b+c+"\n" {
 		t.Fatal("move back changed bytes")
 	}
 	if d.MoveRule(-1, 0) == nil || d.MoveRule(0, 3) == nil {
@@ -165,7 +168,7 @@ func TestConfigDocumentMove(t *testing.T) {
 	if err := d.MoveRule(1, 0); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(d.Bytes()); got != b+strings.TrimSuffix(a, "\n") {
+	if got := string(d.Bytes()); got != b+"\n"+strings.TrimSuffix(a, "\n") {
 		t.Fatalf("newline seam: %q", got)
 	}
 	r, _ := d.Rule(0)
@@ -234,13 +237,13 @@ func TestConfigDocumentMoveUnknown(t *testing.T) {
 	if err := d.MoveRule(0, 1); err != nil {
 		t.Fatal(err)
 	}
-	if string(d.Bytes()) != middle+b+a {
+	if string(d.Bytes()) != middle+b+"\n"+a {
 		t.Fatal(string(d.Bytes()))
 	}
 	if err := d.MoveRule(1, 0); err != nil {
 		t.Fatal(err)
 	}
-	if string(d.Bytes()) != middle+a+b {
+	if string(d.Bytes()) != middle+"\n"+a+"\n"+b+"\n" {
 		t.Fatal(string(d.Bytes()))
 	}
 	r, _ := d.Rule(0)
@@ -333,9 +336,161 @@ func TestConfigDocumentMovePreservesUnknownEOF(t *testing.T) {
 			if err := d.MoveRule(0, 1); err != nil {
 				t.Fatal(err)
 			}
-			if got := string(d.Bytes()); got != b+a+tail {
-				t.Fatalf("unknown EOF changed: got %q want %q", got, b+a+tail)
+			if got := string(d.Bytes()); got != b+eol+a+eol+tail {
+				t.Fatalf("unknown EOF changed: got %q want %q", got, b+eol+a+eol+tail)
 			}
 		}
+	}
+}
+
+func TestDocumentSectionMutations(t *testing.T) {
+	for _, source := range []string{"[Routing]\nDefault=direct\n[Routing]\nDefault=proxy\n", "[Routing]\nDefault=direct\nDefault=proxy\n"} {
+		d := ParseConfigDocument([]byte(source))
+		if d.SetSectionField("Routing", "Default", "block") == nil || string(d.Bytes()) != source {
+			t.Fatal("ambiguous edit accepted")
+		}
+	}
+	source := "\ufeff[Unknown]\r\nThing=keep\r\n[Routing]\r\n Default = direct\r\n# keep\r\n[Other]\r\nX=1"
+	d := ParseConfigDocument([]byte(source))
+	if err := d.SetSectionField("Routing", "Default", "block"); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(source, "Default = direct", "Default = \"block\"", 1)
+	want = strings.ReplaceAll(strings.ReplaceAll(want, "\r\n[Routing]", "\r\n\r\n[Routing]"), "\r\n[Other]", "\r\n\r\n[Other]")
+	if string(d.Bytes()) != want {
+		t.Fatalf("got %q want %q", d.Bytes(), want)
+	}
+	if err := d.SetSectionField("GeoData", "GeoIPFile", "a b.dat"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(d.Bytes()), "X=1\r\n\r\n[GeoData]\r\nGeoIPFile=\"a b.dat\"\r\n") {
+		t.Fatal(string(d.Bytes()))
+	}
+	d = ParseConfigDocument([]byte("[Rule]\nDomain=a.test\nAction=direct"))
+	if err := d.InsertRule(1, "GeoSite", "github", "proxy", true); err != nil {
+		t.Fatal(err)
+	}
+	r, err := d.Rule(1)
+	if err != nil || !r.Editable {
+		t.Fatalf("inserted row: %+v %v", r, err)
+	}
+}
+func TestConfigDocumentFieldsJSON(t *testing.T) {
+	d := ParseConfigDocument([]byte("\ufeff[AccessKey]\r\nPassword=\"sec\\x72et\"\r\nPort=\"443\"\r\n[GeoData]\r\nGeoIPFile=\"C:\\\\data\\\\geoip.dat\"\r\n[Rule]\r\nGeoIP=ru\r\nAction=direct\r\n"))
+	values, err := d.FieldsJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]string
+	if err := json.Unmarshal([]byte(values), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["AccessKey/Password"] != "secret" || fields["AccessKey/Port"] != "443" || fields["GeoData/GeoIPFile"] != `C:\data\geoip.dat` {
+		t.Fatalf("wrong fields: %v", fields)
+	}
+	if _, exists := fields["Rule/GeoIP"]; exists {
+		t.Fatal("rule leaked into section fields")
+	}
+	for _, text := range []string{"[Profile]\nName=one\nName=two\n", "[Profile]\nName=one\n[Profile]\nName=two\n", "[Profile]\nName=\"broken\n"} {
+		if _, err := ParseConfigDocument([]byte(text)).FieldsJSON(); err == nil {
+			t.Fatal("accepted ambiguous fields")
+		}
+	}
+}
+
+func TestConfigDocumentLiteralBang(t *testing.T) {
+	d := ParseConfigDocument([]byte("[Rule]\nGeoSite=category-games-!cn\nAction=proxy\n"))
+	if err := d.SetRule(0, "GeoSite", "CATEGORY-GAMES-!CN", "block"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(d.Bytes()), "GeoSite=CATEGORY-GAMES-!CN") {
+		t.Fatal(string(d.Bytes()))
+	}
+	for _, id := range []string{"", "sites@cn", "a\x01b", "é", "K", strings.Repeat("a", 257), "a,,b"} {
+		if err := d.SetRule(0, "GeoSite", id, "proxy"); err == nil {
+			t.Fatalf("accepted %q", id)
+		}
+	}
+}
+
+func TestDocumentGeneratedBlockSeparators(t *testing.T) {
+	for _, eol := range []string{"\n", "\r\n"} {
+		for _, ending := range []string{"", eol, eol + " \t", eol + " \t" + eol + eol} {
+			prior := "\ufeff[Future]" + eol + "Unknown = untouched" + eol + "# [Rule]" + eol + "# Domain=old.test" + eol + "# # comment" + eol + "# Action=direct" + ending
+			d := ParseConfigDocument([]byte(prior))
+			if string(d.Bytes()) != prior {
+				t.Fatal("parse changed bytes")
+			}
+			if err := d.SetSectionField("GeoData", "GeoIPFile", "geoip.dat"); err != nil {
+				t.Fatal(err)
+			}
+			gap := eol
+			if ending == "" {
+				gap += eol
+			} else if ending != eol && ending != eol+" \t" {
+				gap = ""
+			}
+			want := prior + gap + "[GeoData]" + eol + "GeoIPFile=\"geoip.dat\"" + eol
+			if string(d.Bytes()) != want {
+				t.Fatalf("section: got %q want %q", d.Bytes(), want)
+			}
+			if err := d.InsertRule(1, "GeoSite", "category-games-!cn", "proxy", true); err != nil {
+				t.Fatal(err)
+			}
+			want += eol + "[Rule]" + eol + "GeoSite=category-games-!cn" + eol + "Action=proxy" + eol
+			if string(d.Bytes()) != want {
+				t.Fatalf("rule: got %q want %q", d.Bytes(), want)
+			}
+			if err := d.SetRuleEnabled(1, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.SetRuleEnabled(1, true); err != nil {
+				t.Fatal(err)
+			}
+			if string(d.Bytes()) != want {
+				t.Fatal("toggle changed spacing")
+			}
+			r, _ := d.Rule(0)
+			if r.Enabled || r.Value != "old.test" {
+				t.Fatalf("prior disabled block changed: %+v", r)
+			}
+		}
+	}
+}
+
+func TestDocumentEditedBoundariesOnly(t *testing.T) {
+	source := "[First]\nX=opaque\n[Other]\nY=keep\n[GeoData]\nGeoIPFile=old\n# note\n# [Rule]\n# Domain=a.test\n# Action=direct\n[Rule]\nDomain=b.test\nAction=block"
+	d := ParseConfigDocument([]byte(source))
+	if err := d.SetSectionField("GeoData", "GeoSiteFile", "new"); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(source, "Y=keep\n[GeoData]", "Y=keep\n\n[GeoData]", 1)
+	want = strings.Replace(want, "# note\n# [Rule]", "# note\nGeoSiteFile=\"new\"\n\n# [Rule]", 1)
+	if string(d.Bytes()) != want {
+		t.Fatalf("got %q want %q", d.Bytes(), want)
+	}
+	if err := d.SetRule(0, "Domain", "edited.test", "proxy"); err != nil {
+		t.Fatal(err)
+	}
+	want = strings.Replace(want, "# Domain=a.test", "# Domain=edited.test", 1)
+	want = strings.Replace(want, "# Action=direct\n[Rule]", "# Action=proxy\n\n[Rule]", 1)
+	if string(d.Bytes()) != want {
+		t.Fatalf("got %q want %q", d.Bytes(), want)
+	}
+	if err := d.InsertRule(0, "Domain", "inserted.test", "direct", false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(d.Bytes()), "# Action=direct\n\n# [Rule]\n# Domain=edited.test") {
+		t.Fatalf("insert boundary: %q", d.Bytes())
+	}
+	before := string(d.Bytes())
+	if err := d.MoveRule(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetRuleEnabled(0, false); err != nil {
+		t.Fatal(err)
+	}
+	if string(d.Bytes()) != before {
+		t.Fatal("no-op changed bytes")
 	}
 }

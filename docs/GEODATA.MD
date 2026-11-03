@@ -39,7 +39,7 @@ must be corrected before startup. The shared decoder limits each dataset to
 64 MiB. Across the supplied resources it permits at most 100,000 groups and
 2,000,000 group/entry records, 4,096 bytes per string, 10,000 regular expressions
 and 1 MiB of total regex text. Group identifiers allow ASCII letters, digits,
-hyphens and underscores, up to 256 bytes. Empty or group-free resources mean
+hyphens, underscores and literal `!`, up to 256 bytes. Empty or group-free resources mean
 unavailable data. Unknown protobuf fields are skipped after framing validation;
 deprecated protobuf groups are rejected. No dataset downloads
 or updates occur here.
@@ -142,3 +142,13 @@ not trigger implicit local resolution for GeoIP; later rules or Default apply
 when the IP is unknown. GeoSite in packet VPN uses existing trusted, bounded
 DNS metadata and retains TTL, shared-IP and cache limitations. Bare IP traffic,
 application DoH/DoT and old DNS caches may have no usable domain metadata.
+
+Identifier compatibility (2026-11-02): group IDs contain 1–256 ASCII letters,
+digits, `_`, `-` or `!`; normalize ASCII case for lookup/enumeration. A bang is
+a literal stable identifier character, never policy negation. Preserve it in
+selection and serialization (for example `category-games-!cn`). Attribute
+selectors (`@`), controls, non-ASCII and empty IDs remain invalid. The V2Ray
+schema stores country_code as a string independently of Domain attributes;
+Loyalsoldier uses bang-bearing category names. Expand only this alphabet,
+without filtering IDs or changing matcher semantics. ConfigDocument enforces
+the same syntax before editing; dataset membership remains runtime validation.

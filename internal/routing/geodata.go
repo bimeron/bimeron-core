@@ -201,16 +201,15 @@ func geoString(b []byte) (string, error) {
 	return string(b), nil
 }
 func groupID(s string) (string, error) {
-	s = strings.ToLower(s)
 	if s == "" || len(s) > 256 {
 		return "", errGeoIdentifier
 	}
 	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '!') {
 			return "", errGeoIdentifier
 		}
 	}
-	return s, nil
+	return strings.ToLower(s), nil
 }
 
 // DecodeGeoData accepts standard V2Ray protobuf datasets. Empty bytes mean an
