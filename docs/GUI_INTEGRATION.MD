@@ -1,5 +1,9 @@
 # Bimeron Core: integration of individual GUI projects
 
+The [GeoIP/GeoSite routing editor contract](GUI_GEODATA_ROUTING.MD) defines
+configuration mapping, commented-out rules and GUI combination restrictions for
+issue #67. The implementation is in development source; it is not yet a released capability. See [GEODATA.MD](GEODATA.MD) for the concrete host APIs.
+
 The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FOREGROUND_CONTROL.MD)
 is available in development source. It does not change daemon start, the beta.1
 baseline, published assets or Desktop compatibility approval.

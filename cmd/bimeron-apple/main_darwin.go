@@ -12,6 +12,7 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -49,7 +50,11 @@ func configBytes(data unsafe.Pointer, size C.int) []byte {
 //export RLCreate
 func RLCreate(data unsafe.Pointer, size C.int) C.ulonglong {
 	c, err := core.LoadConfigData(configBytes(data, size))
-	if err != nil || c.Mode != "vpn" || c.KillSwitch {
+	return create(c, err)
+}
+
+func create(c core.SessionConfig, err error) C.ulonglong {
+	if err != nil || c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
 		return 0
 	}
 	i := &instance{config: c}
@@ -191,3 +196,82 @@ func RLStop(id C.ulonglong) C.int {
 //export RLFree
 func RLFree(ptr unsafe.Pointer) { C.free(ptr) }
 func main()                     {}
+
+// geoDataBytes checks bounds before crossing the C allocation boundary.
+func geoDataBytes(data unsafe.Pointer, size C.int) ([]byte, error) {
+	if size < 0 || size > 64*1024*1024 || (data == nil && size != 0) {
+		return nil, errors.New("invalid dataset pointer or size (maximum 64 MiB)")
+	}
+	if size == 0 {
+		return nil, nil
+	}
+	return C.GoBytes(data, size), nil
+}
+
+func loadGeoConfig(data unsafe.Pointer, size C.int, geoIP unsafe.Pointer, geoIPSize C.int, geoSite unsafe.Pointer, geoSiteSize C.int) (core.SessionConfig, error) {
+	ip, err := geoDataBytes(geoIP, geoIPSize)
+	if err != nil {
+		return core.SessionConfig{}, err
+	}
+	site, err := geoDataBytes(geoSite, geoSiteSize)
+	if err != nil {
+		return core.SessionConfig{}, err
+	}
+	profile := configBytes(data, size)
+	return core.LoadConfigDataWithGeoData(profile, ip, site)
+}
+
+//export RLCreateWithGeoData
+func RLCreateWithGeoData(data unsafe.Pointer, size C.int, geoIP unsafe.Pointer, geoIPSize C.int, geoSite unsafe.Pointer, geoSiteSize C.int) C.ulonglong {
+	c, err := loadGeoConfig(data, size, geoIP, geoIPSize, geoSite, geoSiteSize)
+	return create(c, err)
+}
+
+func geoDataJSON(groups []string, err error) *C.char {
+	var message *string
+	if err != nil {
+		value := err.Error()
+		message = &value
+	}
+	var details *core.GeoDataError
+	errors.As(err, &details)
+	b, _ := json.Marshal(struct {
+		Groups  []string           `json:"groups"`
+		Error   *string            `json:"error"`
+		Details *core.GeoDataError `json:"details,omitempty"`
+	}{groups, message, details})
+	return C.CString(string(b))
+}
+
+//export RLGeoDataGroups
+func RLGeoDataGroups(kind *C.char, data unsafe.Pointer, size C.int) *C.char {
+	groups := []string{}
+	bytes, err := geoDataBytes(data, size)
+	if err == nil && kind == nil {
+		err = errors.New("dataset kind required")
+	}
+	if err == nil {
+		groups, err = core.GeoDataGroups(C.GoString(kind), bytes)
+	}
+	if groups == nil {
+		groups = []string{}
+	}
+	return geoDataJSON(groups, err)
+}
+
+//export RLValidateConfigWithGeoData
+func RLValidateConfigWithGeoData(data unsafe.Pointer, size C.int, geoIP unsafe.Pointer, geoIPSize C.int, geoSite unsafe.Pointer, geoSiteSize C.int) *C.char {
+	c, err := loadGeoConfig(data, size, geoIP, geoIPSize, geoSite, geoSiteSize)
+	if err == nil && (c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil) {
+		err = errors.New("Apple packet VPN requires vpn mode without core kill switch or IKEv2")
+	}
+	return geoDataJSON(nil, err)
+}
+
+//export RLCapabilities
+func RLCapabilities() *C.char {
+	c := core.PlatformCapabilities()
+	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema}
+	b, _ := json.Marshal(c)
+	return C.CString(string(b))
+}

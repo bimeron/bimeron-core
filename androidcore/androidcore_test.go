@@ -1,7 +1,11 @@
 package androidcore
 
 import (
+	"bimeron/core"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -97,5 +101,134 @@ func TestAndroidSessionValidation(t *testing.T) {
 	}
 	if err := s.Start(); err == nil {
 		t.Fatal("stopped session restarted")
+	}
+}
+
+func TestGeoDataBindings(t *testing.T) {
+	var caps map[string]any
+	if err := json.Unmarshal([]byte(Capabilities()), &caps); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"geoip_split", "geosite_split"} {
+		if caps[key] != true {
+			t.Fatalf("missing capability %s: %v", key, caps)
+		}
+	}
+	if caps["geodata_schema"] == "" || caps["geodata_schema"] == nil {
+		t.Fatal(caps)
+	}
+	var result struct {
+		Groups []string `json:"groups"`
+		Error  *string  `json:"error"`
+	}
+	for _, input := range []struct {
+		profile string
+		valid   bool
+	}{
+		{testProfile, true},
+		{testProfile + "[Interface]\nKillSwitch = true\n", false},
+		{testProfile + "[Interface]\nMode = proxy\n", false},
+		{"invalid", false},
+	} {
+		if err := json.Unmarshal([]byte(ValidateConfigWithGeoData([]byte(input.profile), nil, nil)), &result); err != nil {
+			t.Fatal(err)
+		}
+		if (result.Error == nil) != input.valid {
+			t.Fatalf("validation: %+v", result)
+		}
+	}
+	if err := json.Unmarshal([]byte(GeoDataGroups("invalid", nil)), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error == nil || result.Groups == nil {
+		t.Fatalf("groups: %+v", result)
+	}
+	protector := &testProtector{allow: true}
+	s, err := NewSessionWithGeoData([]byte(testProfile), nil, nil, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSessionWithGeoData([]byte(testProfile+"[Interface]\nKillSwitch = true\n"), nil, nil, protector); err == nil {
+		t.Fatal("kill switch accepted")
+	}
+}
+
+func TestGeoDataGroupSuccess(t *testing.T) {
+	// GeoIPList containing one empty group named TEST.
+	data := []byte{10, 6, 10, 4, 'T', 'E', 'S', 'T'}
+	if got := GeoDataGroups("geoip", data); got != `{"groups":["test"],"error":null}` {
+		t.Fatal(got)
+	}
+	if got := GeoDataGroups("geoip", nil); got != `{"groups":[],"error":null}` {
+		t.Fatal(got)
+	}
+}
+
+func TestGeoDataErrorDetails(t *testing.T) {
+	var result struct {
+		Error   *string            `json:"error"`
+		Details *core.GeoDataError `json:"details"`
+	}
+	if err := json.Unmarshal([]byte(GeoDataGroups("geoip", []byte{255})), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error == nil || result.Details == nil || result.Details.Code != "geodata_invalid" || result.Details.Kind != "geoip" {
+		t.Fatalf("%+v", result)
+	}
+	wrapped := fmt.Errorf("wrapped: %w", &core.GeoDataError{Code: "geodata_group_unknown", Kind: "geoip", Group: "missing", Rule: 2, Err: errors.New("unknown group")})
+	if err := json.Unmarshal([]byte(geoDataJSON(nil, wrapped)), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Details == nil || result.Details.Rule != 2 || result.Details.Group != "missing" {
+		t.Fatalf("%+v", result)
+	}
+	if err := json.Unmarshal([]byte(geoDataJSON(nil, errors.New("generic"))), &result); err != nil {
+		t.Fatal(err)
+	}
+	// Unmarshal a fresh value to check omission rather than retaining prior fields.
+	var generic map[string]any
+	if err := json.Unmarshal([]byte(geoDataJSON(nil, errors.New("generic"))), &generic); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := generic["details"]; ok {
+		t.Fatal(generic)
+	}
+}
+
+func TestEmbeddedGeoDataRestrictions(t *testing.T) {
+	ip := []byte{10, 6, 10, 4, 'T', 'E', 'S', 'T'}
+	profile := testProfile + "[Rule]\nGeoIP = test\nAction = direct\n"
+	s, err := NewSessionWithGeoData([]byte(profile), ip, nil, &testProtector{allow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(ip)
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	ikev2 := "[Profile]\nVersion = 1\n[IKEv2]\nWindowsProfile = Corporate VPN\nServerName = vpn.example.com\n[Interface]\nMode = vpn\n"
+	if _, err := NewSessionWithGeoData([]byte(ikev2), nil, nil, &testProtector{allow: true}); err == nil {
+		t.Fatal("IKEv2 accepted")
+	}
+	var result struct {
+		Error   *string            `json:"error"`
+		Details *core.GeoDataError `json:"details"`
+	}
+	if err := json.Unmarshal([]byte(ValidateConfigWithGeoData([]byte(ikev2), nil, nil)), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error == nil {
+		t.Fatal("IKEv2 validation accepted")
+	}
+	ip = []byte{10, 6, 10, 4, 'T', 'E', 'S', 'T'}
+	profile = testProfile + "[Rule]\nCIDR = 192.0.2.0/24\nAction = direct\n[Rule]\nGeoIP = missing\nAction = direct\n"
+	if err := json.Unmarshal([]byte(ValidateConfigWithGeoData([]byte(profile), ip, nil)), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Details == nil || result.Details.Code != "geodata_group_unknown" || result.Details.Rule != 2 || result.Details.Group != "missing" {
+		t.Fatalf("%+v", result)
 	}
 }
