@@ -28,6 +28,8 @@ func run(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "repair-session":
+		return repairSessionCommand(args[1:])
 	case "document":
 		if len(args) != 1 {
 			return writeBridge(os.Stdout, bridgeResponse{}, fmt.Errorf("invalid arguments"))

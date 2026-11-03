@@ -331,13 +331,17 @@ func TestLegacyWindowsRestoreObservationSource(t *testing.T) {
 			}
 			switch f := c.Fun.(type) {
 			case *ast.Ident:
-				calls = append(calls, f.Name)
+				if f.Name != "rollbackContext" {
+					calls = append(calls, f.Name)
+				}
 			case *ast.SelectorExpr:
-				calls = append(calls, f.Sel.Name)
+				if f.Sel.Name != "Err" {
+					calls = append(calls, f.Sel.Name)
+				}
 			}
 			return true
 		})
-		if len(calls) != 2 || calls[0] != "Start" || calls[1] != "waitServiceState" {
+		if len(calls) != 2 || calls[0] != "Start" || calls[1] != "waitServiceStateContext" {
 			t.Fatalf("legacy restore observation changed: %v", calls)
 		}
 		return false
