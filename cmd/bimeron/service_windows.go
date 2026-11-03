@@ -140,7 +140,8 @@ func parseWindowsUpdateAction(args []string) (updateExpectation, bool, error) {
 	return updateExpectation{}, false, nil
 }
 
-func serviceCommand(args []string) error {
+func serviceCommand(args []string) error { return serviceCommandForOwner(args, "") }
+func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
 	}
@@ -212,6 +213,12 @@ func serviceCommand(args []string) error {
 			return e
 		}
 		_, sid, err := currentServiceOwner()
+		if authenticatedOwner != "" {
+			if _, parseErr := windows.StringToSid(authenticatedOwner); parseErr != nil {
+				return parseErr
+			}
+			sid = authenticatedOwner
+		}
 		if err != nil {
 			return err
 		}

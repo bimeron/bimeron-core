@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"debug/buildinfo"
 	"debug/elf"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -61,7 +63,18 @@ func linuxServiceOwner(explicit string) (uint32, error) {
 }
 
 func runSystemctl(args ...string) ([]byte, error) {
-	output, err := exec.Command("systemctl", args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return runSystemctlContext(ctx, args...)
+}
+func runSystemctlContext(ctx context.Context, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "/usr/bin/systemctl", args...)
+	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C", "SYSTEMD_PAGER=cat", "SYSTEMD_COLORS=0"}
+	command.WaitDelay = time.Second
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message != "" {
@@ -73,7 +86,12 @@ func runSystemctl(args ...string) ([]byte, error) {
 }
 
 func linuxServiceState() (string, error) {
-	output, err := runSystemctl("show", "--no-pager", "--property=LoadState", "--property=ActiveState", linuxServiceName)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return linuxServiceStateContext(ctx)
+}
+func linuxServiceStateContext(ctx context.Context) (string, error) {
+	output, err := runSystemctlContext(ctx, "show", "--no-pager", "--property=LoadState", "--property=ActiveState", linuxServiceName)
 	if err != nil {
 		return "", err
 	}
@@ -107,10 +125,15 @@ func linuxServiceStateCode(state string) string {
 }
 
 func startLinuxService() error {
-	if _, err := runSystemctl("start", linuxServiceName); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return startLinuxServiceContext(ctx)
+}
+func startLinuxServiceContext(ctx context.Context) error {
+	if _, err := runSystemctlContext(ctx, "start", linuxServiceName); err != nil {
 		return err
 	}
-	state, err := linuxServiceState()
+	state, err := linuxServiceStateContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -121,10 +144,15 @@ func startLinuxService() error {
 }
 
 func stopLinuxService() error {
-	if _, err := runSystemctl("stop", linuxServiceName); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return stopLinuxServiceContext(ctx)
+}
+func stopLinuxServiceContext(ctx context.Context) error {
+	if _, err := runSystemctlContext(ctx, "stop", linuxServiceName); err != nil {
 		return err
 	}
-	result, err := runSystemctl("show", "--no-pager", "--property=Result", "--value", linuxServiceName)
+	result, err := runSystemctlContext(ctx, "show", "--no-pager", "--property=Result", "--value", linuxServiceName)
 	if err != nil {
 		return err
 	}
@@ -247,6 +275,17 @@ func installLinuxService(owner uint32, automatic bool) error {
 }
 
 func updateLinuxService(expect updateExpectation) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	return updateLinuxServiceContext(ctx, expect)
+}
+func updateLinuxServiceContext(ctx context.Context, expect updateExpectation) error {
+	return updateLinuxServiceMode(ctx, expect, false)
+}
+func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, forceActivate bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ensureLinuxServiceDir(); err != nil {
 		return err
 	}
@@ -258,7 +297,7 @@ func updateLinuxService(expect updateExpectation) error {
 	if !ok || !installed.Mode().IsRegular() || owner.Uid != 0 || installed.Mode().Perm()&0022 != 0 {
 		return fmt.Errorf("unsafe installed service executable")
 	}
-	state, err := linuxServiceState()
+	state, err := linuxServiceStateContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -308,29 +347,28 @@ func updateLinuxService(expect updateExpectation) error {
 	}
 	wasRunning := state == "active"
 	if wasRunning {
-		if err = stopLinuxService(); err != nil {
+		if err = stopLinuxServiceContext(ctx); err != nil {
 			return fmt.Errorf("cannot update: %w", err)
 		}
 	}
+	rollbackContext, releaseRollback := updateRollbackContext(ctx)
+	defer releaseRollback()
 	err = replaceServiceExecutable(linuxServiceExecutable, staged, backup, func() error {
-		if !wasRunning {
-			return nil
-		}
-		if err := startLinuxService(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return waitUpdatedService(expect.version)
+		return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return startLinuxServiceContext(ctx) }, func() error { return waitUpdatedServiceContext(ctx, expect.version) })
 	}, func() error {
-		state, err := linuxServiceState()
+		state, err := linuxServiceStateContext(rollbackContext())
 		if err != nil {
 			return err
 		}
 		if state == "inactive" {
 			return nil
 		}
-		return stopLinuxService()
+		return stopLinuxServiceContext(rollbackContext())
 	})
-	err = restorePreviousService(err, wasRunning, startLinuxService)
+	err = restorePreviousService(err, wasRunning, func() error { return startLinuxServiceContext(rollbackContext()) })
 	if err != nil {
 		return err
 	}

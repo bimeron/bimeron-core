@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"debug/buildinfo"
 	"debug/pe"
 	"fmt"
@@ -19,8 +20,14 @@ import (
 const serviceDescription = "VPN core and local control"
 
 func waitServiceState(s *mgr.Service, want svc.State) error {
+	return waitServiceStateContext(context.Background(), s, want)
+}
+func waitServiceStateContext(ctx context.Context, s *mgr.Service, want svc.State) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		status, err := s.Query()
 		if err != nil {
 			return err
@@ -31,11 +38,21 @@ func waitServiceState(s *mgr.Service, want svc.State) error {
 		if want == svc.Running && status.State == svc.Stopped {
 			return fmt.Errorf("updated service failed to start")
 		}
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 	return fmt.Errorf("service state change timed out")
 }
 func stopUpdateService(s *mgr.Service) error {
+	return stopUpdateServiceContext(context.Background(), s)
+}
+func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	status, err := s.Query()
 	if err != nil {
 		return err
@@ -45,9 +62,30 @@ func stopUpdateService(s *mgr.Service) error {
 			return err
 		}
 	}
-	return waitServiceState(s, svc.Stopped)
+	if err := waitServiceStateContext(ctx, s, svc.Stopped); err != nil {
+		return err
+	}
+	status, err = s.Query()
+	if err != nil {
+		return err
+	}
+	if status.Win32ExitCode != 0 || status.ServiceSpecificExitCode != 0 || status.ProcessId != 0 {
+		return fmt.Errorf("service cleanup unconfirmed")
+	}
+	return nil
 }
 func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	return updateWindowsServiceContext(ctx, s, expect)
+}
+func updateWindowsServiceContext(ctx context.Context, s *mgr.Service, expect updateExpectation) error {
+	return updateWindowsServiceMode(ctx, s, expect, false)
+}
+func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Serialize installers without sharing the VPN session mutex.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -138,7 +176,7 @@ func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 		return fmt.Errorf("wait for stable service state before updating")
 	}
 	wasRunning := status.State == svc.Running
-	if err = stopUpdateService(s); err != nil {
+	if err = stopUpdateServiceContext(ctx, s); err != nil {
 		return err
 	}
 	stopped, err := s.Query()
@@ -148,23 +186,27 @@ func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 	if stopped.Win32ExitCode != 0 {
 		return fmt.Errorf("service cleanup failed; run doctor/recover before update")
 	}
+	rollbackContext, releaseRollback := updateRollbackContext(ctx)
+	defer releaseRollback()
 	err = replaceServiceExecutable(target, staged, backup, func() error {
-		if !wasRunning {
-			return nil
-		}
-		if err := s.Start(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := waitServiceState(s, svc.Running); err != nil {
-			return err
-		}
-		return waitUpdatedService(expect.version)
-	}, func() error { return stopUpdateService(s) })
+		return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return s.Start() }, func() error {
+			if err := waitServiceStateContext(ctx, s, svc.Running); err != nil {
+				return err
+			}
+			return waitUpdatedServiceContext(ctx, expect.version)
+		})
+	}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
 	err = restorePreviousService(err, wasRunning, func() error {
+		if err := rollbackContext().Err(); err != nil {
+			return err
+		}
 		if err := s.Start(); err != nil {
 			return err
 		}
-		return waitServiceState(s, svc.Running)
+		return waitServiceStateContext(rollbackContext(), s, svc.Running)
 	})
 	if err != nil {
 		return err
