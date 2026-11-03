@@ -26,6 +26,9 @@ type Endpoint = accesskey.Endpoint
 type ShadowTLS = accesskey.ShadowTLS
 type Policy = routing.Policy
 
+// GeoDataError provides stable dataset codes and optional group/rule location.
+type GeoDataError = routing.GeoDataError
+
 // IKEv2Config selects an OS-managed tunnel using a pre-provisioned Windows
 // profile. Start from SessionConfig{Mode: "vpn", IKEv2: ...}; DefaultConfig
 // contains packet-backend options that are deliberately rejected here.
@@ -83,6 +86,44 @@ func LoadConfigData(data []byte) (SessionConfig, error) {
 	return FromConfig(c)
 }
 
+// LoadConfigDataWithGeoData loads sandbox-owned resources without filesystem access.
+// Dataset names in [GeoData] are metadata; explicit bytes supply their contents.
+func LoadConfigDataWithGeoData(data, geoIP, geoSite []byte) (SessionConfig, error) {
+	c, err := config.ParseDataWithGeoData(data, geoIP, geoSite)
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	return FromConfig(c)
+}
+
+// ValidateConfigDataWithGeoData validates a runnable profile without starting networking.
+func ValidateConfigDataWithGeoData(data, geoIP, geoSite []byte) error {
+	c, err := LoadConfigDataWithGeoData(data, geoIP, geoSite)
+	if err != nil {
+		return err
+	}
+	return c.validate()
+}
+
+// GeoDataGroups validates one dataset and returns sorted stable group identifiers.
+// kind must be "geoip" or "geosite". No files or network are accessed.
+func GeoDataGroups(kind string, data []byte) ([]string, error) {
+	var ip, site []byte
+	switch kind {
+	case "geoip":
+		ip = data
+	case "geosite":
+		site = data
+	default:
+		return nil, fmt.Errorf("unknown geodata kind")
+	}
+	g, err := routing.DecodeGeoData(ip, site)
+	if err != nil {
+		return nil, err
+	}
+	return g.Groups(kind)
+}
+
 // ProfileIdentity identifies a path without publishing it or the key contents.
 func ProfileIdentity(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
@@ -116,7 +157,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 		settings := *c.ShadowTLS
 		copy.ShadowTLS = &settings
 	}
-	p, err := routing.Compile(copy.Routing)
+	p, err := copy.RoutingPolicy()
 	if err != nil {
 		return SessionConfig{}, err
 	}
@@ -164,6 +205,13 @@ func (c SessionConfig) validate() error {
 			return fmt.Errorf("ikev2_unsupported_session_options")
 		}
 		return nil
+	}
+	if c.KillSwitch {
+		for i, r := range c.Policy.Config().Rules {
+			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
+				return fmt.Errorf("rule %d: kill switch supports CIDR rules only", i+1)
+			}
+		}
 	}
 	if c.Resolve == nil {
 		return fmt.Errorf("missing access key resolver")
