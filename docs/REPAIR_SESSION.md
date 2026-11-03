@@ -306,3 +306,24 @@ existing package Wintun license. Service-pipe OS PID and matching hello/status
 instances were verified; VPN stays disconnected. This result does not complete
 alternate-credential, real UAC-count or disposable-VM matrix acceptance. No release
 or package pins were changed and no publication or commit was made.
+
+## CLI distribution portability acceptance
+
+The generic repair command must compile on every existing CLI distribution
+platform. Windows and Linux retain their repair backends; other platforms must
+return an explicit unsupported error without creating a backend or transport.
+The cli-dist CI job includes Darwin amd64 and arm64 even though Desktop packages
+support only Windows/Linux. Validate all six CLI distribution builds and the
+existing distribution checker; compile unsupported-platform rejection tests for
+both Darwin architectures. Do not add macOS service repair or change release
+formats, workflow targets, dependencies or signing policy.
+
+Portability correction validation: cli-dist failed on Darwin with undefined
+newRepairBackend because only Windows/Linux factories were implemented. The
+unsupported-platform adapter now rejects backend construction explicitly, matching
+its existing unsupported transport. The exact CI commands go run
+scripts/build-dist.go and go run scripts/check-dist.go passed with an isolated
+BIMERON_DIST_DIR=build/ci-cli-dist. All six CLI platform/architecture payloads
+were built and checked. Darwin amd64 and arm64 command test binaries compiled,
+including the unsupported-backend/transport fixture; native macOS execution is
+left to CI. No workflow target, packaging flow or release format changed.
