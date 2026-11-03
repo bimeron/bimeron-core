@@ -1,10 +1,29 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
+
+// Start the rollback budget only when rollback begins; activation may exhaust
+// the operation deadline. All rollback phases share this one bounded budget.
+func updateRollbackContext(parent context.Context) (func() context.Context, func()) {
+	var cleanup context.Context
+	var cancel context.CancelFunc
+	return func() context.Context {
+			if cleanup == nil {
+				cleanup, cancel = context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+			}
+			return cleanup
+		}, func() {
+			if cancel != nil {
+				cancel()
+			}
+		}
+}
 
 var errUpdateRolledBack = errors.New("previous executable restored")
 
@@ -48,4 +67,25 @@ func replaceServiceExecutable(target, staged, backup string, activate, deactivat
 		return fmt.Errorf("updated successfully but backup cleanup failed: %w", err)
 	}
 	return nil
+}
+
+func activateServiceUpdate(ctx context.Context, wasRunning, force bool, start, ready func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !wasRunning && !force {
+		return nil
+	}
+	if err := start(); err != nil {
+		return err
+	}
+	return ready()
+}
+func finishRepairSidecar(result error, finalize func(bool) error, deactivate func() error) error {
+	if result != nil {
+		if err := deactivate(); err != nil {
+			return errors.Join(result, err)
+		}
+	}
+	return errors.Join(result, finalize(result == nil))
 }

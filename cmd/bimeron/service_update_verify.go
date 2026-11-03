@@ -63,16 +63,18 @@ func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string
 }
 
 func waitUpdatedService(wantVersion string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	return waitUpdatedServiceContext(context.Background(), wantVersion)
+}
+func waitUpdatedServiceContext(parent context.Context, wantVersion string) error {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	var last error
 	for ctx.Err() == nil {
 		probe, probeCancel := context.WithTimeout(ctx, 2*time.Second)
-		a, err := control.CallService(probe, control.Request{Command: "hello"})
+		err := verifyServiceReadiness(probe, control.CallService, func(hello control.Response) error {
+			return validateUpdatedHello(hello, wantVersion)
+		})
 		probeCancel()
-		if err == nil {
-			err = validateUpdatedHello(a, wantVersion)
-		}
 		if err == nil {
 			return nil
 		}
@@ -82,7 +84,7 @@ func waitUpdatedService(wantVersion string) error {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return errors.Join(fmt.Errorf("updated service IPC health check failed"), last)
+	return errors.Join(fmt.Errorf("updated service IPC health check failed"), last, ctx.Err())
 }
 
 func validateUpdatedHello(a control.Response, wantVersion string) error {

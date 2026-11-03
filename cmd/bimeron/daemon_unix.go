@@ -3,12 +3,12 @@
 package main
 
 import (
+	core "bimeron/core"
+	"bimeron/internal/control"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
-	core "bimeron/core"
-	"bimeron/internal/control"
 	"syscall"
 )
 
@@ -23,8 +23,17 @@ func daemon(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open control socket; another daemon may be running: %w", err)
 	}
+	finishRecord, err := beginDeveloperRecord()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Developer recovery record unavailable: %v\n", err)
+		finishRecord = func(bool) error { return nil }
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Println("Bimeron daemon ready. Use start, status, stop, shutdown or watch in another terminal.")
-	return control.NewServer(core.New(core.Options{})).Serve(ctx, l)
+	err = control.NewServer(core.New(core.Options{})).Serve(ctx, l)
+	if recordErr := finishRecord(err == nil); recordErr != nil {
+		fmt.Fprintf(os.Stderr, "Developer cleanup record unavailable: %v\n", recordErr)
+	}
+	return err
 }
