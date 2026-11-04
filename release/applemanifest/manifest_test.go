@@ -5,6 +5,7 @@ import (
 	"bimeron/internal/appleversion"
 	"bytes"
 	"crypto/ed25519"
+	"debug/macho"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -370,6 +371,66 @@ func TestBuildProvenanceAndArchives(t *testing.T) {
 		if e := checkBinary(untrimmed[arch], arch, rev, m.CoreVersion); e == nil {
 			t.Fatalf("untrimmed fixture must fail recipe evidence: %v", e)
 		}
+
+		mf, err := macho.NewFile(bytes.NewReader(plain[arch]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mf.DWARF(); err == nil {
+			t.Fatal("stripped fixture retained DWARF")
+		}
+		section := mf.Section("__rodata")
+		if section == nil {
+			t.Fatal("missing rodata")
+		}
+		frame, _ := appleversion.Frame(m.CoreVersion)
+		at := bytes.Index(plain[arch], frame)
+		if at < 0 {
+			t.Fatal("missing record")
+		}
+		for _, control := range []string{"missing", "duplicate", "length", "suffix", "section size", "section offset", "writable segment"} {
+			bad := append([]byte(nil), plain[arch]...)
+			switch control {
+			case "missing":
+				bad[at] = 'X'
+			case "duplicate":
+				pos := int(section.Offset)
+				if pos+len(frame) > at {
+					pos = at + len(frame)
+				}
+				if uint64(pos+len(frame)) > uint64(section.Offset)+section.Size {
+					t.Fatal("no duplicate room")
+				}
+				copy(bad[pos:], frame)
+			case "length":
+				copy(bad[at+len(appleversion.Prefix):], "999:")
+			case "suffix":
+				bad[at+len(frame)-2] = 'X'
+			case "section size", "section offset":
+				header := bytes.Index(bad, append([]byte("__rodata"), make([]byte, 8)...))
+				if header < 0 {
+					t.Fatal("missing section header")
+				}
+				if control == "section size" {
+					mf.ByteOrder.PutUint64(bad[header+40:], appleversion.MaxSection+1)
+				} else {
+					mf.ByteOrder.PutUint32(bad[header+48:], uint32(len(bad)-1))
+				}
+			case "writable segment":
+				// LC_SEGMENT_64 contains maxprot and initprot after its fixed ranges.
+				seg := mf.Segment("__TEXT")
+				raw := seg.Raw()
+				pos := bytes.Index(bad, raw)
+				if pos < 0 {
+					t.Fatal("segment header absent")
+				}
+				mf.ByteOrder.PutUint32(bad[pos+60:], seg.Prot|2)
+			}
+			if e := CheckArchive(zipBytes(t, entries(arch, bad)), arch, rev, m.CoreVersion); e == nil {
+				t.Fatalf("accepted %s", control)
+			}
+		}
+		mf.Close()
 		archives[arch] = zipBytes(t, entries(arch, plain[arch]))
 		if e := CheckArchive(archives[arch], arch, rev, m.CoreVersion); e != nil {
 			t.Fatal(e)

@@ -2,6 +2,7 @@ package provenance_test
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bimeron/release/applemanifest"
 	"bytes"
 	"crypto/sha256"
@@ -85,6 +86,32 @@ func TestProductionIntegration(t *testing.T) {
 				t.Logf("expected %s rejection: %s", goos, b)
 			}
 		}
+
+		if i == 0 {
+			for _, args := range [][]string{{"-version=1.2.3+bad", "-revision=" + rev}, {"-version=1.2.3", "-revision=" + strings.Repeat("0", 40)}} {
+				c := exec.Command(goexe, append([]string{"run", "./scripts/build-apple-release.go"}, args...)...)
+				c.Dir = dir
+				c.Env = env
+				if b, e := c.CombinedOutput(); e == nil {
+					t.Fatalf("builder accepted %v: %s", args, b)
+				}
+			}
+			path := filepath.Join(dir, "core/version.go")
+			original, e := os.ReadFile(path)
+			if e != nil {
+				t.Fatal(e)
+			}
+			os.WriteFile(path, append(original, []byte("\n// dirty control\n")...), 0644)
+			c := exec.Command(goexe, "run", "./scripts/build-apple-release.go", "-version=0.1.0-beta.1", "-revision="+rev)
+			c.Dir = dir
+			c.Env = env
+			if b, e := c.CombinedOutput(); e == nil || !bytes.Contains(b, []byte("source must be clean")) {
+				t.Fatalf("dirty source accepted/wrong failure: %v %s", e, b)
+			}
+			os.WriteFile(path, original, 0644)
+		} else {
+			os.WriteFile(filepath.Join(dir, "core/apple-version.record"), []byte("stale invalid ignored input"), 0644)
+		}
 		run(dir, goexe, "run", "./scripts/build-apple-release.go", "-version=0.1.0-beta.1", "-revision="+rev)
 		current := map[string][]byte{}
 		for _, arch := range []string{"amd64", "arm64"} {
@@ -113,6 +140,45 @@ func TestProductionIntegration(t *testing.T) {
 			run(dir, goexe, "build", "-trimpath", "-buildvcs=true", "-tags=bimeron_apple_release", "-ldflags=-s -w -X bimeron/core.Version=9.9.9 -X bimeron/core.Nonexistent=8.8.8", "-o", override, "./cmd/bimeron")
 			if e := json.Unmarshal(run(dir, override, "version"), &info); e != nil || info.Version != "0.1.0-beta.1" {
 				t.Fatal("Apple override", info, e)
+			}
+
+			overrideBytes, e := os.ReadFile(override)
+			if e != nil {
+				t.Fatal(e)
+			}
+			zr, e := zip.NewReader(bytes.NewReader(current["arm64"]), int64(len(current["arm64"])))
+			if e != nil {
+				t.Fatal(e)
+			}
+			var zipOut bytes.Buffer
+			zw := zip.NewWriter(&zipOut)
+			for _, f := range zr.File {
+				r, e := f.Open()
+				if e != nil {
+					t.Fatal(e)
+				}
+				b, e := io.ReadAll(r)
+				r.Close()
+				if e != nil {
+					t.Fatal(e)
+				}
+				if strings.HasSuffix(f.Name, "/bimeron") {
+					b = overrideBytes
+				}
+				h := f.FileHeader
+				w, e := zw.CreateHeader(&h)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if _, e = w.Write(b); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if e = zw.Close(); e != nil {
+				t.Fatal(e)
+			}
+			if e = applemanifest.CheckArchive(zipOut.Bytes(), "arm64", rev, "0.1.0-beta.1"); e != nil {
+				t.Fatal("override static check", e)
 			}
 			legacy := filepath.Join(dir, ".tmp/legacy")
 			run(dir, goexe, "build", "-trimpath", "-ldflags=-s -w -X bimeron/core.Version=7.8.9", "-o", legacy, "./cmd/bimeron")
