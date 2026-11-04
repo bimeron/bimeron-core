@@ -219,6 +219,10 @@ func (s *Server) record(e core.Event) {
 }
 func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer := Response{Version: Version, ID: r.ID, Instance: s.instance}
+	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+		s.command.Lock()
+		defer s.command.Unlock()
+	}
 	if len(r.ID) > 64 {
 		answer.Error = "invalid_request"
 		answer.ID = ""
@@ -235,8 +239,6 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 		answer.Error = "invalid_request"
 	} else {
 		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
-			s.command.Lock()
-			defer s.command.Unlock()
 			// Guard validation and mutation share admission with legacy commands.
 			if !s.foreground && r.Instance != "" {
 				answer.Status = s.engine.Status()

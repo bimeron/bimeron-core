@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -189,6 +190,10 @@ func TestDaemonGuardWireContract(t *testing.T) {
 	for _, line := range []string{
 		`{"version":1,"command":"stop","instance":"old","instance":""}`,
 		`{"version":1,"command":"stop","Instance":"old"}`,
+		`{"version":1,"command":"stop","inſtance":null}`,
+		`{"version":1,"command":"stop","ſession":null}`,
+		`{"version":1,"command":"stop","unknown":true}`,
+		`{"version":1,"command":"stop","instance":"old","in\u0073tance":null}`,
 		`{"version":1,"command":"stop","instance":null}`,
 		`{"version":1,"command":"stop","instance":""}`,
 		`{"version":1,"command":"stop","session":""}`,
@@ -231,5 +236,47 @@ func TestDaemonGuardWireContract(t *testing.T) {
 	}
 	if e.stops != 1 {
 		t.Fatal("guarded wire stop was not executed")
+	}
+}
+
+// admissionSnapshotEngine checks the contract without relying on goroutine timing.
+type admissionSnapshotEngine struct {
+	guardEngine
+	command          *sync.Mutex
+	outsideAdmission bool
+}
+
+func (e *admissionSnapshotEngine) Status() core.Status {
+	if e.command.TryLock() {
+		e.outsideAdmission = true
+		e.command.Unlock()
+	}
+	return e.guardEngine.Status()
+}
+
+func TestDaemonGuardRejectionSnapshotAdmission(t *testing.T) {
+	for _, command := range []string{"start", "stop", "shutdown"} {
+		t.Run(command, func(t *testing.T) {
+			for _, request := range []Request{
+				{Instance: "current"}, // Missing stop session or guards on shutdown.
+				{Session: "orphan"},
+				{ID: strings.Repeat("x", 65)},
+				{Installation: "private"},
+				{ChallengeID: "unexpected"},
+			} {
+				e := &admissionSnapshotEngine{}
+				s := NewServer(e)
+				e.command = &s.command
+				s.load = func(string) (core.SessionConfig, error) {
+					t.Fatal("rejected request loaded configuration")
+					return core.SessionConfig{}, nil
+				}
+				request.Version, request.Command = Version, command
+				a := s.dispatch(context.Background(), request)
+				if a.Error == "" || a.Instance != s.instance || e.outsideAdmission || e.starts != 0 || e.stops != 0 {
+					t.Fatalf("request=%+v response=%+v outside admission=%v starts=%d stops=%d", request, a, e.outsideAdmission, e.starts, e.stops)
+				}
+			}
+		})
 	}
 }
