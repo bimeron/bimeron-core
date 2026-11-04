@@ -2,7 +2,7 @@
 
 This is local implementation evidence under ADR0032, not a release approval.
 The tested production/test source commit is
-`36b930e09724b26ee4c33712bf086be1c114ce10`. Subsequent report-only commits do not
+`3bc62c51341d08afc7733acc567b6e8f583a9c6f`. Subsequent report-only commits do not
 change that evidence identity. The fixture version `0.1.0-beta.1` is synthetic,
 not an approved production candidate. No original Core85 or paused G/E worktree
 was changed or contacted.
@@ -75,11 +75,11 @@ existing `TestMASQUEProxyBackend` and `TestMASQUEVPNFlows`: the module cache lac
 `module lookup disabled by GOPROXY=off`; no network fallback was enabled.
 The real production CLI dependency build itself succeeds offline.
 
-The final integration run passed in 76.37 seconds. Both independent checkout
+The final integration run passed in 81.21 seconds. Both independent checkout
 paths produced byte-identical archives for the tested commit:
 
-- amd64 ZIP SHA-256: `30e9a9f2c1b2f38269b509549cc470cb5dcba5d404621f114ecd759bc2244b10`
-- arm64 ZIP SHA-256: `966b068e52eaeaa39a36c447726b35a758ef32fbdf8f68a779138e299e3b4fcc`
+- amd64 ZIP SHA-256: `efdf1906bbef782c0f2eec3f575434ff5f41e7642e0b147d9287945ed9cdb6b3`
+- arm64 ZIP SHA-256: `b33855d1932c511d6cbc001d7bf27546fc0cbbc3dea81f20a66b77df6e40c441`
 
 The integration matrix exercises real source-built arm64 CLI version output,
 Apple runtime and static immunity to both legacy and nonexistent `-X` assignments,
@@ -126,3 +126,14 @@ Regression controls compile the builder first, reject ambient overlay/other flag
 missing tools, wrong Go version and unsupported compiler host, then compare a clean
 build against one with hostile persisted GOENV flags, experiments, CPU levels,
 GOROOT and GOTOOLDIR. The existing runtime/static and path matrix remains intact.
+
+The hardening matrix passed at the source commit named above after committing
+with a clean tracked tree. Both CPU hashes matched across checkout paths,
+including the hostile-environment second build. Targeted tests for
+`internal/appleversion`, `release/applemanifest`, `core`, `cmd/bimeron` and this
+research package passed with `TestMASQUE*` excluded. Vet passed for those packages
+and the standalone builder. Local logs are in ignored
+`.tmp/hardening-integration.log`. MASQUE remains excluded for the documented
+missing offline helper dependencies; amd64 remains static-only on this arm64 host.
+Independent rereview of these fixes is still required and was not delegated by
+the implementation agent.
