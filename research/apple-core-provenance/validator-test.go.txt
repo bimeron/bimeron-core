@@ -1,0 +1,15 @@
+package applemanifest
+import("os";"path/filepath";"testing";"os/exec";"strings")
+func TestIndependentMissingVersionVariable(t *testing.T){
+ root:=os.Getenv("PROVENANCE_SCRATCH")
+ cmd:=exec.Command("/Users/wrk/.local/bin/git","rev-parse","HEAD");cmd.Dir=filepath.Join(root,"checkout-a")
+ out,e:=cmd.Output();if e!=nil{t.Fatal(e)};rev:=strings.TrimSpace(string(out))
+ for _,arch:=range []string{"amd64","arm64"}{
+  for _,trim:=range []string{"False","True"}{
+   b,e:=os.ReadFile(filepath.Join(root,"checkout-a-"+arch+"-"+trim));if e!=nil{t.Fatal(e)}
+   e=checkBinary(b,arch,rev,"0.1.0-beta.1")
+   if trim=="False" && e!=nil{t.Fatal(e)}
+   if trim=="True" && (e==nil||!strings.Contains(e.Error(),"Core version")){t.Fatalf("expected version rejection: %v",e)}
+  }
+ }
+}

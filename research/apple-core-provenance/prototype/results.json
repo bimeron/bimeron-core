@@ -1,0 +1,16 @@
+{
+  "amd64": "15ddb9e18206a9a2911c0633401e92d05f175d5af56515be46697a9d6359d468",
+  "arm64": "cff8a32dc2848df0a8230f75fb495c9b8998187bebb1d88f5c8adc1bff7a0331",
+  "file_bounds": "regular files only; 256 MiB maximum with growth-limited reads; sparse oversized-file and directory rejection tested",
+  "flags": "-buildvcs=true -trimpath -ldflags '-s -w'",
+  "go": "go version go1.26.9 darwin/arm64",
+  "host": "darwin/arm64",
+  "host_cli_assertions": "original record; nonexistent -X retains original; changed ignored record reports 2.0.0; malformed/truncated/oversized/trailing frames panic explicitly",
+  "ignored_generation_clean": true,
+  "negative_controls": "both CPUs: binary record mutations (duplicate asserted in allowed rodata), oversized section, hash-first OS/GOARCH/revision setting mutations, wrong expected version/revision/CPU/hash; ELF rejection; missing VCS; dirty source; writable marker; host CLI framing failures",
+  "revision": "5eca0e614068db0cd20a54cf2ec6ec3c64088bb1",
+  "runtime_arches": [
+    "arm64"
+  ],
+  "signature_verification": "not implemented or tested; harness-computed digest provides no authenticity"
+}

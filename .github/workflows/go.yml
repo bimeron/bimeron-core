@@ -190,7 +190,10 @@ jobs:
           go -C internal/masque/testdata/reference-server build -mod=readonly -o $masqueBinary .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "BIMERON_MASQUE_REFERENCE_BIN=$masqueBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - run: go test ./...
+      # Avoid overlapping deadline-bound PowerShell children with package builds,
+      # including the Apple manifest tests' nested cross-builds. Keep test timing
+      # visible: serialization does not diagnose stalls before script entry.
+      - run: go test -p 1 -v ./...
       - run: go vet ./...
       - name: Check core and control races
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque ./internal/systemvpn
@@ -211,7 +214,8 @@ jobs:
         env:
           GOARCH: '386'
           CGO_ENABLED: '0'
-        run: go test ./internal/systemvpn ./internal/killswitch ./internal/windowsnet
+        # Apply the same package scheduling to fresh native 386 test binaries.
+        run: go test -p 1 -v ./internal/systemvpn ./internal/killswitch ./internal/windowsnet
 
   test-apple-unsigned:
     # ARM64 hosted runners currently fail before acquiring a machine.

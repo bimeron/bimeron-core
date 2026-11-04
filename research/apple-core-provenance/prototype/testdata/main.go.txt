@@ -1,0 +1,22 @@
+package main
+import (
+ _ "embed"
+ "fmt"
+ "strings"
+)
+//go:embed version.record
+var record string
+func Version() string {
+ const head="BIMERON.APPLE."
+ const tail="CORE.VERSION/v1\x00"
+ if len(record)<len(head)+len(tail)+4 { panic("truncated record") }
+ if !strings.HasPrefix(record,head) || !strings.HasPrefix(record[len(head):],tail) { panic("invalid record prefix") }
+ p:=len(head)+len(tail)
+ n:=0
+ for _,c:=range record[p:p+3] { if c<'0' || c>'9' { panic("invalid record length") }; n=n*10+int(c-'0') }
+ if n<1 || n>128 || record[p+3]!=':' { panic("invalid record length") }
+ end:=p+4+n
+ if end>len(record) || record[end:]!="\x00END.APPLE.CORE.RECORD/v1\x00" { panic("invalid record frame") }
+ return record[p+4:end]
+}
+func main(){fmt.Println(Version())}
