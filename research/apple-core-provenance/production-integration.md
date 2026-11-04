@@ -177,3 +177,25 @@ for the same packages and standalone builder. The prior missing offline MASQUE
 helper dependency limitation remains; amd64 was statically checked, not executed.
 No network, real key, installation, CI, remote, push, publication or G/E contact
 was used. Parent independent read-only review of this small diff remains pending.
+
+## Independent review disposition
+
+The coordinator reviewed the implementation and independently ran the real Core
+integration matrix at source HEAD `8397ab2`: PASS, 79.51 seconds. Both architectures'
+ZIPs matched between paths. Targeted record/release/Core/CLI tests and vet also
+passed independently, with MASQUE excluded for the documented offline limitation.
+
+A separate read-only Sol MEDIUM reviewer found two P2 issues: inherited build
+flags/persisted Go configuration and hardcoded developer tool paths. Fix `3bc62c5`
+rejects ambient GOFLAGS, sanitizes child Go settings, disables GOENV and resolves
+explicit installed tools with exact compiler validation. A new independent review
+at `a993e5d` found no actionable findings and independently passed targeted tests;
+it did not rerun the final expensive integration matrix.
+
+The coordinator then found the builder/preparer archive-name mismatch. Fix
+`e8de435` changes the output filename to the existing contract name and adds an
+actual unsigned preparer CLI handoff in both checkout paths. The coordinator
+independently reviewed this final small diff and inspected its recorded passing
+integration log; no remaining actionable findings. The final 88.80-second matrix
+is implementation-run evidence, not a separate reviewer rerun. No production
+approval, hosted CI equivalence, signature or candidate approval is inferred.
