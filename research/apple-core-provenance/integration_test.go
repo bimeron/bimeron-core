@@ -48,6 +48,9 @@ func TestProductionIntegration(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			if h.Typeflag == tar.TypeXGlobalHeader {
+				continue
+			}
 			path := filepath.Join(dir, h.Name)
 			if h.Typeflag == tar.TypeDir {
 				os.MkdirAll(path, 0755)
