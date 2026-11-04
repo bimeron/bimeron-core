@@ -39,9 +39,13 @@ keys/trust/candidates. `scripts/build-dist` and the legacy publisher are unchang
 ## Reproduction
 
 Run from this worktree with the pinned compiler; set these variables for every
-Go command, including compilation of the standalone builder itself:
+Go command, including compilation of the standalone builder itself. Tool launch is
+a caller trust boundary: `go run` can apply an overlay before builder checks run.
+Compile the builder under a trusted clean environment before hostile-input tests:
 
 ```sh
+export GOENV=off GOFLAGS= GOEXPERIMENT= GOAMD64=v1 GOARM64=v8.0
+export BIMERON_TEST_GIT=<LOCAL_HOME>/.local/bin/git
 export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOWORK=off
 export GOCACHE="$PWD/.tmp/gocache" GOTMPDIR="$PWD/.tmp" TMPDIR="$PWD/.tmp"
 mkdir -p .tmp
@@ -57,7 +61,8 @@ builder in each. Temporary checkouts are removed by Go testing; no binaries are
 tracked. To invoke the builder separately at a clean approved commit:
 
 ```sh
-"$GO" run ./scripts/build-apple-release.go -version='<explicit approved version>' -revision='<full approved commit>'
+"$GO" build -o .tmp/apple-builder ./scripts/build-apple-release.go
+.tmp/apple-builder -git="$BIMERON_TEST_GIT" -go="$GO" -version='<explicit approved version>' -revision='<full approved commit>'
 ```
 
 ## Evidence and limits
@@ -99,3 +104,25 @@ watcher or main merge was performed. Independent review remains the parent's tas
 Embedded claims and clean Git metadata do not prove an honest builder; authenticated
 archives, independently reproduced source derivation and VPN readiness remain
 separate trust boundaries. Compiler upgrades require fresh retention evidence.
+
+## Ambient-input hardening
+
+The builder rejects nonempty ambient `GOFLAGS`, including overlays, and launches
+Go with an explicit environment rather than inheriting build settings. `GOENV=off`
+disables persisted configuration; experiments are empty, CPU levels are pinned to
+`GOAMD64=v1` and `GOARM64=v8.0`, CGO is disabled and target OS/CPU are explicit.
+Ambient `GOROOT`, `GOTOOLDIR`, architecture, compiler and other Go settings are
+excluded. The module cache/GOPATH location remains an input for offline dependency
+availability. Cache and temporary outputs stay under each checkout's `.tmp`.
+
+`-go` defaults to the running builder's `runtime.GOROOT()/bin/go`; `-git` defaults
+to installed Git resolution. Explicit paths are supported. The compiler must
+report exactly `go1.26.9` on Darwin arm64 or amd64. Go VCS stamping resolves a local
+Git link to the same selected executable. These installed tools and their truthful
+version reports remain trusted inputs. Local checks explicitly select the scoped
+`<LOCAL_HOME>/.local/bin/git`; no unscoped Git is executed here.
+
+Regression controls compile the builder first, reject ambient overlay/other flags,
+missing tools, wrong Go version and unsupported compiler host, then compare a clean
+build against one with hostile persisted GOENV flags, experiments, CPU levels,
+GOROOT and GOTOOLDIR. The existing runtime/static and path matrix remains intact.
