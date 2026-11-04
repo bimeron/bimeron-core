@@ -95,7 +95,7 @@ explicit approved version/revision and clean source, regenerates the ignored
 The generated record is an additional input, not authenticated by Git clean state.
 Default builds and `scripts/build-dist` retain legacy behavior. Consumer G/E binary
 evidence policy still requires a separately authorized update; publication remains
-blocked. See ADR0032 and the local integration report.
+blocked. See ADR0032 and the [local integration report](../research/apple-core-provenance/production-integration.md).
 
 ## Local use and validation
 
