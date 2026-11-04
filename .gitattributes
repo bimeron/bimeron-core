@@ -1,6 +1,8 @@
 *.sh text eol=lf
 *.yml text eol=lf
-
-# Signed Apple fixture bytes must survive Windows checkouts unchanged.
-/release/applemanifest/testdata/* -text
-/release/apple-compatibility.json -text
+release/apple-compatibility.json text eol=lf
+release/applemanifest/testdata/apple-update-manifest.json text eol=lf
+release/applemanifest/testdata/synthetic-vector.json text eol=lf
+# Preserve the exact signed interop bytes through every checkout.
+release/applemanifest/testdata/synthetic-reviewed-manifest.json -text
+release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig -text
