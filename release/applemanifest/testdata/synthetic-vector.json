@@ -1,0 +1,7 @@
+{
+  "expected_source_revision": "0000000000000000000000000000000000000000",
+  "expected_tag": "v0.1.0-beta.1",
+  "key_id": "139e3940e64b5491",
+  "public_key_base64": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=",
+  "purpose": "SYNTHETIC manifest-only interop vector; fake archive hashes; no archive acceptance or shipping trust"
+}
