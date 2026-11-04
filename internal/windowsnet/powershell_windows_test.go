@@ -56,7 +56,7 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 	t.Setenv("PSModulePath", temp)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd, err := PowerShellCommand(ctx, fixtureEntry+`[Console]::Error.WriteLine('diag:fixture'); $c=Get-Command Get-NetRoute -ErrorAction Stop; foreach($h in @('System32','SysWOW64')) { if($c.Module.ModuleBase -eq ($env:SystemRoot+'\'+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP')) { [Console]::Error.WriteLine('diag:module='+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP') } }; if(-not $c.Module.ModuleBase.StartsWith($PSHOME+'\Modules',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted module'}; [Console]::Out.Write('trusted-system-module'); [Console]::Error.WriteLine('diag:done')`)
+	cmd, err := PowerShellCommand(ctx, fixtureEntry+`[Console]::Error.WriteLine('diag:fixture'); [Console]::Error.WriteLine('diag:module-start'); $c=Get-Command Get-NetRoute -ErrorAction Stop; [Console]::Error.WriteLine('diag:module-done'); foreach($h in @('System32','SysWOW64')) { if($c.Module.ModuleBase -eq ($env:SystemRoot+'\'+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP')) { [Console]::Error.WriteLine('diag:module='+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP') } }; if(-not $c.Module.ModuleBase.StartsWith($PSHOME+'\Modules',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted module'}; [Console]::Out.Write('trusted-system-module'); [Console]::Error.WriteLine('diag:done')`)
 	if err != nil {
 		t.Fatal(err)
 	}
