@@ -167,7 +167,7 @@ func run() error {
 		if e = applemanifest.CheckArchive(archive.Bytes(), arch, *revision, *version); e != nil {
 			return e
 		}
-		if e = os.WriteFile(filepath.Join(*out, "macos-"+arch+".zip"), archive.Bytes(), 0644); e != nil {
+		if e = os.WriteFile(filepath.Join(*out, "bimeron-v"+*version+"-macos-"+arch+".zip"), archive.Bytes(), 0644); e != nil {
 			return e
 		}
 	}

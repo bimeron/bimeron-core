@@ -6,7 +6,9 @@ import (
 	"bimeron/release/applemanifest"
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -171,7 +173,7 @@ func TestProductionIntegration(t *testing.T) {
 		}
 		current := map[string][]byte{}
 		for _, arch := range []string{"amd64", "arm64"} {
-			b, e := os.ReadFile(filepath.Join(dir, ".tmp/apple-release/macos-"+arch+".zip"))
+			b, e := os.ReadFile(filepath.Join(dir, ".tmp/apple-release/bimeron-v0.1.0-beta.1-macos-"+arch+".zip"))
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -184,6 +186,33 @@ func TestProductionIntegration(t *testing.T) {
 				t.Fatal("path-dependent output", arch)
 			}
 		}
+		// Public identifier only: unsigned preparation must preserve shipping review=false.
+		pub := bytes.Repeat([]byte{0x42}, 32)
+		data := run(dir, goexe, "run", "./scripts/apple-release-manifest.go",
+			"-dir=.tmp/apple-release", "-tag=v0.1.0-beta.1", "-revision="+rev,
+			"-public-key="+base64.StdEncoding.EncodeToString(pub), "-compat=release/apple-compatibility.json")
+		manifest, err := applemanifest.Parse(data)
+		if err != nil {
+			t.Fatal("unsigned preparer output", err)
+		}
+		policyBytes, err := os.ReadFile(filepath.Join(dir, "release/apple-compatibility.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := applemanifest.ParseCompatibility(policyBytes)
+		if err != nil || policy.AppleReviewed || manifest.Compatibility != policy ||
+			manifest.Tag != "v0.1.0-beta.1" || manifest.CoreVersion != "0.1.0-beta.1" ||
+			manifest.SourceRevision != rev || manifest.KeyID != applemanifest.KeyID(pub) {
+			t.Fatalf("unsigned preparation identity/policy mismatch: %+v (%v)", manifest, err)
+		}
+		for _, a := range manifest.Archives {
+			b := current[a.Arch]
+			if a.Name != "bimeron-v0.1.0-beta.1-macos-"+a.Arch+".zip" ||
+				a.Size != int64(len(b)) || a.SHA256 != fmt.Sprintf("%x", sha256.Sum256(b)) {
+				t.Fatalf("preparer archive identity mismatch: %+v", a)
+			}
+		}
+		t.Logf("unsigned preparer handoff passed: both archive names/hashes, original review=false policy, synthetic public identifier only")
 		if i == 0 {
 			host := filepath.Join(dir, ".tmp/apple-release/bimeron-"+runtime.GOARCH)
 			var info struct {
