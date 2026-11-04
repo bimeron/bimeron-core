@@ -41,6 +41,15 @@ type Status struct {
 	LastError  string
 	ErrorStage string `json:",omitempty"`
 }
+
+// StatsSnapshot binds cumulative counters to a per-Start session.
+// Status.Attempt provides retry context; counters are not per-attempt.
+// Counters is nil until the first accepted Start.
+type StatsSnapshot struct {
+	Status   Status              `json:"status"`
+	Counters *telemetry.Snapshot `json:"counters,omitempty"`
+}
+
 type Options struct{ RetryMin, RetryMax time.Duration }
 
 type session interface {
@@ -108,9 +117,29 @@ func New(options Options) *Engine {
 	}
 	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}}
 }
+
+// StatsSnapshot returns detached session metadata and counters under one lock.
+// Terminal sessions retain their counters, including native unavailability.
+// Counter fields are independently sampled and need not form one atomic tuple.
+func (e *Engine) StatsSnapshot() StatsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	snapshot := StatsSnapshot{Status: e.statusLocked()}
+	if snapshot.Status.Session != nil {
+		counters := e.stats.Snapshot()
+		counters.Unavailable = snapshot.Status.Session.StatsUnavailable
+		snapshot.Counters = &counters
+	}
+	return snapshot
+}
+
 func (e *Engine) Status() Status {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.statusLocked()
+}
+
+func (e *Engine) statusLocked() Status {
 	status := e.status
 	if status.Native != nil {
 		snapshot := *status.Native
