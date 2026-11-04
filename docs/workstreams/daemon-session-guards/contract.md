@@ -72,3 +72,14 @@ lifecycle behavior is introduced.
 This keeps the approved decision local: optional guards extend the existing RPC
 and admission mutex instead of introducing a separate session coordinator or
 breaking legacy CLI requests.
+
+## Compatible release plan
+
+`v0.3.0-beta.2` lacks daemon session guard support. Clients must require the
+runtime `daemon_session_guards: true` handshake flag rather than infer support
+from a release version. Protocol version remains `1`.
+
+The candidate next prerelease is `v0.3.0-beta.3`, only after approved merge and
+passing CI, followed by a separately authorized release. This workstream does
+not hardcode a release version bump or authorize merge, release, or live
+acceptance. Publication approval covers the issue and pull request workflow.

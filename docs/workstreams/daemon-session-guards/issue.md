@@ -1,8 +1,9 @@
-# Issue draft: reject stale daemon session mutations
+# Issue #82: reject stale daemon session mutations
 
-Status: local draft; no remote issue created.
+Issue: https://github.com/bimeron/bimeron-core/issues/82.
+Status: publication authorized; parent handles push and pull request creation.
 Base: df7f2fd32a69efc49018e58efcc8d0f4f4c4e697.
-Branch: feat/daemon-session-guards.
+Branch: `feat/daemon-session-guards-publication`.
 
 A GUI can observe a privileged Unix daemon and later send a start or stop after
 that daemon or its session has changed. A separate status check cannot protect
@@ -21,4 +22,5 @@ Implement the approved atomic guard option before Apple IPC lifecycle work:
   replacement, concurrent admission, and serialized RPC behavior without tunnels.
 
 No Apple checkout edits, live tunnel sessions, privileged installation, dependency
-changes, remote writes, or new lifecycle framework are part of this workstream.
+changes, merge, release, live acceptance, or new lifecycle framework are authorized
+by publication approval.

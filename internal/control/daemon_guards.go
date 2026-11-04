@@ -22,6 +22,14 @@ func validDaemonGuardJSON(line []byte) bool {
 	if json.Unmarshal(line, &fields) != nil {
 		return false
 	}
+	// encoding/json folds Unicode aliases such as long s into ASCII field names.
+	for name := range fields {
+		for _, c := range name {
+			if c > 127 {
+				return false
+			}
+		}
+	}
 	instance, hasInstance := fields["instance"]
 	session, hasSession := fields["session"]
 	if hasInstance {
