@@ -125,6 +125,8 @@ ZIP parsing; extra/missing/duplicate/aliased/absolute/backslash/dot paths,
 links and special files, missing execute bits, empty/oversized contents,
 encryption, unsupported compression, CRC corruption; both Mach-O architectures
 and each architecture's missing/dirty/wrong revision, OS, architecture and version
-metadata. Tiny synthetic binaries use `-s -w` and the exact version assignment;
-the paired `-trimpath` builds prove the current production blocker. The old
+metadata. Tiny synthetic binaries retain the canonical version record under
+`-trimpath -s -w`; legacy exact-version `-X` fixtures remain negative controls.
+Real production retention and checkout-path reproducibility are documented in the
+local integration report; publication and consumer integration remain blocked. The old
 `release/manifest_test.go` suite runs unchanged alongside these checks.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,9 +22,16 @@ func TestProductionIntegration(t *testing.T) {
 		t.Skip("set BIMERON_APPLE_INTEGRATION=1 for offline real Core builds")
 	}
 	root, _ := filepath.Abs("../..")
-	goexe := "/Users/wrk/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go"
-	git := "/Users/wrk/.local/bin/git"
-	env := append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off", "GOCACHE="+filepath.Join(root, ".tmp/gocache"), "GOTMPDIR="+filepath.Join(root, ".tmp"), "CGO_ENABLED=0")
+	goexe := filepath.Join(runtime.GOROOT(), "bin", "go")
+	git := os.Getenv("BIMERON_TEST_GIT")
+	if git == "" {
+		var err error
+		git, err = exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := append(os.Environ(), "PATH="+filepath.Dir(git)+string(os.PathListSeparator)+os.Getenv("PATH"), "GOENV=off", "GOFLAGS=", "GOEXPERIMENT=", "GOAMD64=v1", "GOARM64=v8.0", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off", "GOCACHE="+filepath.Join(root, ".tmp/gocache"), "GOTMPDIR="+filepath.Join(root, ".tmp"), "CGO_ENABLED=0")
 	run := func(dir, exe string, args ...string) []byte {
 		t.Helper()
 		c := exec.Command(exe, args...)
@@ -73,6 +81,45 @@ func TestProductionIntegration(t *testing.T) {
 		// Reuse exact commit identity and tree without contacting any remote.
 		run(dir, git, "fetch", "--no-tags", root, rev)
 		run(dir, git, "reset", "--hard", rev)
+		builder := filepath.Join(dir, ".tmp/builder")
+		run(dir, goexe, "build", "-o", builder, "./scripts/build-apple-release.go")
+		builderArgs := []string{"-git=" + git, "-go=" + goexe, "-version=0.1.0-beta.1", "-revision=" + rev}
+		if i == 0 {
+			overlay := filepath.Join(dir, ".tmp/overlay.json")
+			replacement := filepath.Join(dir, ".tmp/replacement.go")
+			os.WriteFile(replacement, []byte("invalid overlaid source"), 0644)
+			data, _ := json.Marshal(map[string]any{"Replace": map[string]string{filepath.Join(dir, "core/version.go"): replacement}})
+			os.WriteFile(overlay, data, 0644)
+			for _, flags := range []string{"-overlay=" + overlay, "-tags=unapproved"} {
+				c := exec.Command(builder, builderArgs...)
+				c.Dir = dir
+				c.Env = append(env, "GOFLAGS="+flags)
+				if b, e := c.CombinedOutput(); e == nil || !bytes.Contains(b, []byte("GOFLAGS must be empty")) {
+					t.Fatalf("ambient flags accepted/wrong failure: %v %s", e, b)
+				}
+			}
+			for _, control := range []struct{ path, output, want string }{
+				{filepath.Join(dir, ".tmp/missing-go"), "", "resolve Go"},
+				{filepath.Join(dir, ".tmp/wrong-go"), "go version go1.26.8 darwin/arm64", "unsupported compiler"},
+				{filepath.Join(dir, ".tmp/wrong-host"), "go version go1.26.9 linux/amd64", "unsupported compiler"},
+			} {
+				if control.output != "" {
+					os.WriteFile(control.path, []byte("#!/bin/sh\necho '"+control.output+"'\n"), 0755)
+				}
+				c := exec.Command(builder, append(builderArgs, "-go="+control.path)...)
+				c.Dir = dir
+				c.Env = env
+				if b, e := c.CombinedOutput(); e == nil || !bytes.Contains(b, []byte(control.want)) {
+					t.Fatalf("tool control: %v %s", e, b)
+				}
+			}
+			c := exec.Command(builder, append(builderArgs, "-git="+filepath.Join(dir, ".tmp/missing-git"))...)
+			c.Dir = dir
+			c.Env = env
+			if b, e := c.CombinedOutput(); e == nil || !bytes.Contains(b, []byte("resolve Git")) {
+				t.Fatalf("Git control: %v %s", e, b)
+			}
+		}
 		// Missing embed and unsupported OS fail closed before generation.
 		if i == 0 {
 			for _, goos := range []string{"darwin", "linux"} {
@@ -89,7 +136,7 @@ func TestProductionIntegration(t *testing.T) {
 
 		if i == 0 {
 			for _, args := range [][]string{{"-version=1.2.3+bad", "-revision=" + rev}, {"-version=1.2.3", "-revision=" + strings.Repeat("0", 40)}} {
-				c := exec.Command(goexe, append([]string{"run", "./scripts/build-apple-release.go"}, args...)...)
+				c := exec.Command(builder, append([]string{"-git=" + git, "-go=" + goexe}, args...)...)
 				c.Dir = dir
 				c.Env = env
 				if b, e := c.CombinedOutput(); e == nil {
@@ -102,7 +149,7 @@ func TestProductionIntegration(t *testing.T) {
 				t.Fatal(e)
 			}
 			os.WriteFile(path, append(original, []byte("\n// dirty control\n")...), 0644)
-			c := exec.Command(goexe, "run", "./scripts/build-apple-release.go", "-version=0.1.0-beta.1", "-revision="+rev)
+			c := exec.Command(builder, builderArgs...)
 			c.Dir = dir
 			c.Env = env
 			if b, e := c.CombinedOutput(); e == nil || !bytes.Contains(b, []byte("source must be clean")) {
@@ -112,7 +159,16 @@ func TestProductionIntegration(t *testing.T) {
 		} else {
 			os.WriteFile(filepath.Join(dir, "core/apple-version.record"), []byte("stale invalid ignored input"), 0644)
 		}
-		run(dir, goexe, "run", "./scripts/build-apple-release.go", "-version=0.1.0-beta.1", "-revision="+rev)
+		if i == 1 {
+			config := filepath.Join(dir, ".tmp/hostile-goenv")
+			os.WriteFile(config, []byte("GOFLAGS=-overlay=/nonexistent/overlay.json\nGOEXPERIMENT=invalid\n"), 0644)
+			cleanEnv := env
+			env = append(env, "GOENV="+config, "GOEXPERIMENT=invalid", "GOAMD64=v4", "GOARM64=v9.5", "GOTOOLDIR=/nonexistent", "GOROOT=/nonexistent", "GOOS=linux", "GOARCH=386")
+			run(dir, builder, builderArgs...)
+			env = cleanEnv
+		} else {
+			run(dir, builder, builderArgs...)
+		}
 		current := map[string][]byte{}
 		for _, arch := range []string{"amd64", "arm64"} {
 			b, e := os.ReadFile(filepath.Join(dir, ".tmp/apple-release/macos-"+arch+".zip"))
@@ -129,7 +185,7 @@ func TestProductionIntegration(t *testing.T) {
 			}
 		}
 		if i == 0 {
-			host := filepath.Join(dir, ".tmp/apple-release/bimeron-arm64")
+			host := filepath.Join(dir, ".tmp/apple-release/bimeron-"+runtime.GOARCH)
 			var info struct {
 				Version string `json:"version"`
 			}
@@ -146,7 +202,7 @@ func TestProductionIntegration(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			zr, e := zip.NewReader(bytes.NewReader(current["arm64"]), int64(len(current["arm64"])))
+			zr, e := zip.NewReader(bytes.NewReader(current[runtime.GOARCH]), int64(len(current[runtime.GOARCH])))
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -177,7 +233,7 @@ func TestProductionIntegration(t *testing.T) {
 			if e = zw.Close(); e != nil {
 				t.Fatal(e)
 			}
-			if e = applemanifest.CheckArchive(zipOut.Bytes(), "arm64", rev, "0.1.0-beta.1"); e != nil {
+			if e = applemanifest.CheckArchive(zipOut.Bytes(), runtime.GOARCH, rev, "0.1.0-beta.1"); e != nil {
 				t.Fatal("override static check", e)
 			}
 			legacy := filepath.Join(dir, ".tmp/legacy")
