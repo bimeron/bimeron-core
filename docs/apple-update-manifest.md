@@ -82,16 +82,24 @@ bytes. These constants match `release/applemanifest` and consumer G.
 Read the binary as bytes, never execute it: require executable thin Mach-O of
 the expected CPU and Go build info with GOOS `darwin`, exact GOARCH,
 `vcs.revision` equal to source_revision, and explicitly present
-`vcs.modified=false`. Require exact `-X bimeron/core.Version=<core_version>`
-linker metadata: the exact supported recipe is
-`-s -w -X bimeron/core.Version=<core_version>`, with no other linker arguments.
-Missing or ambiguous evidence fails without subprocess fallback.
+`vcs.modified=false`. Require `vcs=git` and `-trimpath=true`. Recover the exact canonical Core version
+from the unique bounded record in the read-only Mach-O `__TEXT,__rodata` section,
+including segment/file range checks. The record uses ADR0032 framing and strict
+SemVer without a build suffix; compare it with `core_version`. No linker assignment
+is evidence of the Apple runtime version.
 
-**Current build limitation:** Go 1.26.9 strips `-ldflags` build-info settings
-with `-trimpath`, including when build-dist uses `-trimpath -s -w`. The validator
-therefore rejects current build-dist binaries. No build or policy workaround is
-silently applied. See ADR 0031; production preparation remains blocked pending
-an authorized provenance design.
+The local standalone `scripts/build-apple-release.go` writes
+`bimeron-v<version>-macos-<arch>.zip` directly into its output directory for
+`scripts/apple-release-manifest.go -dir=<output directory>`. Unsigned preparation
+uses the original compatibility policy with `apple_reviewed:false`; it does not
+sign, establish a trust pin, or approve review. The builder builds real Core with
+`bimeron_apple_release`, `-trimpath -s -w` and explicit VCS stamping. It requires
+explicit approved version/revision and clean source, regenerates the ignored
+`core/apple-version.record`, builds both CPUs offline and checks the resulting ZIPs.
+The generated record is an additional input, not authenticated by Git clean state.
+Default builds and `scripts/build-dist` retain legacy behavior. Consumer G/E binary
+evidence policy still requires a separately authorized update; publication remains
+blocked. See ADR0032 and the [local integration report](../research/apple-core-provenance/production-integration.md).
 
 ## Local use and validation
 
@@ -121,6 +129,8 @@ ZIP parsing; extra/missing/duplicate/aliased/absolute/backslash/dot paths,
 links and special files, missing execute bits, empty/oversized contents,
 encryption, unsupported compression, CRC corruption; both Mach-O architectures
 and each architecture's missing/dirty/wrong revision, OS, architecture and version
-metadata. Tiny synthetic binaries use `-s -w` and the exact version assignment;
-the paired `-trimpath` builds prove the current production blocker. The old
+metadata. Tiny synthetic binaries retain the canonical version record under
+`-trimpath -s -w`; legacy exact-version `-X` fixtures remain negative controls.
+Real production retention and checkout-path reproducibility are documented in the
+local integration report; publication and consumer integration remain blocked. The old
 `release/manifest_test.go` suite runs unchanged alongside these checks.

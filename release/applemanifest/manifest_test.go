@@ -2,8 +2,10 @@ package applemanifest
 
 import (
 	"archive/zip"
+	"bimeron/internal/appleversion"
 	"bytes"
 	"crypto/ed25519"
+	"debug/macho"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -294,7 +296,18 @@ func buildFixtures(t *testing.T) (map[string][]byte, map[string][]byte, string) 
 	t.Helper()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "core"), 0755)
-	for name, body := range map[string]string{"go.mod": "module bimeron\n\ngo 1.26.9\n", "core/version.go": "package core\nvar Version=\"dev\"\n", "main.go": "package main\nimport (\"fmt\";\"bimeron/core\")\nfunc main(){fmt.Println(core.Version)}\n"} {
+	root, _ := filepath.Abs("../..")
+	os.MkdirAll(filepath.Join(dir, "internal/appleversion"), 0755)
+	for _, name := range []string{"record.go", "macho.go"} {
+		b, e := os.ReadFile(filepath.Join(root, "internal/appleversion", name))
+		if e != nil {
+			t.Fatal(e)
+		}
+		os.WriteFile(filepath.Join(dir, "internal/appleversion", name), b, 0644)
+	}
+	record, _ := appleversion.Frame("0.1.0-beta.1")
+	os.WriteFile(filepath.Join(dir, "core/version.record"), record, 0644)
+	for name, body := range map[string]string{"go.mod": "module bimeron\n\ngo 1.26.9\n", "core/version.go": "package core\nimport (_ \"embed\"; \"bimeron/internal/appleversion\")\n//go:embed version.record\nvar record string\nvar Version=func()string{v,e:=appleversion.Runtime(record);if e!=nil{panic(e)};return v}()\n", "main.go": "package main\nimport (\"fmt\";\"bimeron/core\")\nfunc main(){fmt.Println(core.Version)}\n"} {
 		if e := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); e != nil {
 			t.Fatal(e)
 		}
@@ -307,7 +320,7 @@ func buildFixtures(t *testing.T) (map[string][]byte, map[string][]byte, string) 
 		}
 	}
 	command(t, dir, git, "init", "-q")
-	command(t, dir, git, "add", "go.mod", "core/version.go", "main.go")
+	command(t, dir, git, "add", ".")
 	command(t, dir, git, "-c", "user.name=Synthetic Test", "-c", "user.email=synthetic@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "test: synthetic build fixture")
 	rev := command(t, dir, git, "rev-parse", "HEAD")
 	goexe := filepath.Join(runtime.GOROOT(), "bin", "go")
@@ -315,7 +328,7 @@ func buildFixtures(t *testing.T) (map[string][]byte, map[string][]byte, string) 
 	for _, arch := range []string{"amd64", "arm64"} {
 		for _, trimpath := range []bool{false, true} {
 			out := filepath.Join(t.TempDir(), "fixture")
-			args := []string{"build", "-buildvcs=true", "-ldflags", "-s -w -X bimeron/core.Version=0.1.0-beta.1", "-o", out}
+			args := []string{"build", "-buildvcs=true", "-ldflags", "-s -w -X bimeron/core.Nonexistent=9.9.9", "-o", out}
 			if trimpath {
 				args = append(args, "-trimpath")
 			}
@@ -340,7 +353,8 @@ func buildFixtures(t *testing.T) (map[string][]byte, map[string][]byte, string) 
 	return plain, trim, rev
 }
 func TestBuildProvenanceAndArchives(t *testing.T) {
-	plain, trim, rev := buildFixtures(t)
+	untrimmed, plain, rev := buildFixtures(t)
+	trim := plain
 	key := syntheticKey()
 	pub := key.Public().(ed25519.PublicKey)
 	m, err := Parse(fixture(t))
@@ -351,12 +365,72 @@ func TestBuildProvenanceAndArchives(t *testing.T) {
 	c.AppleReviewed = true
 	archives := map[string][]byte{}
 	for _, arch := range []string{"amd64", "arm64"} {
-		if e := checkBinary(plain[arch], arch, rev, m.CoreVersion); e != nil {
+		if e := checkBinary(trim[arch], arch, rev, m.CoreVersion); e != nil {
 			t.Fatal(e)
 		}
-		if e := checkBinary(trim[arch], arch, rev, m.CoreVersion); e == nil || !strings.Contains(e.Error(), "Core version") {
-			t.Fatalf("actual build-dist flags must fail missing ldflags evidence: %v", e)
+		if e := checkBinary(untrimmed[arch], arch, rev, m.CoreVersion); e == nil {
+			t.Fatalf("untrimmed fixture must fail recipe evidence: %v", e)
 		}
+
+		mf, err := macho.NewFile(bytes.NewReader(plain[arch]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mf.DWARF(); err == nil {
+			t.Fatal("stripped fixture retained DWARF")
+		}
+		section := mf.Section("__rodata")
+		if section == nil {
+			t.Fatal("missing rodata")
+		}
+		frame, _ := appleversion.Frame(m.CoreVersion)
+		at := bytes.Index(plain[arch], frame)
+		if at < 0 {
+			t.Fatal("missing record")
+		}
+		for _, control := range []string{"missing", "duplicate", "length", "suffix", "section size", "section offset", "writable segment"} {
+			bad := append([]byte(nil), plain[arch]...)
+			switch control {
+			case "missing":
+				bad[at] = 'X'
+			case "duplicate":
+				pos := int(section.Offset)
+				if pos+len(frame) > at {
+					pos = at + len(frame)
+				}
+				if uint64(pos+len(frame)) > uint64(section.Offset)+section.Size {
+					t.Fatal("no duplicate room")
+				}
+				copy(bad[pos:], frame)
+			case "length":
+				copy(bad[at+len(appleversion.Prefix):], "999:")
+			case "suffix":
+				bad[at+len(frame)-2] = 'X'
+			case "section size", "section offset":
+				header := bytes.Index(bad, append([]byte("__rodata"), make([]byte, 8)...))
+				if header < 0 {
+					t.Fatal("missing section header")
+				}
+				if control == "section size" {
+					mf.ByteOrder.PutUint64(bad[header+40:], appleversion.MaxSection+1)
+				} else {
+					mf.ByteOrder.PutUint32(bad[header+48:], uint32(len(bad)-1))
+				}
+			case "writable segment":
+				// LC_SEGMENT_64 contains maxprot and initprot after its fixed ranges.
+				seg := mf.Segment("__TEXT")
+				raw := seg.Raw()
+				pos := bytes.Index(bad, raw)
+				if pos < 0 {
+					t.Fatal("segment header absent")
+				}
+				mf.ByteOrder.PutUint32(bad[pos+60:], seg.Prot|2)
+			}
+			if e := CheckArchive(zipBytes(t, entries(arch, bad)), arch, rev, m.CoreVersion); e == nil {
+				t.Fatalf("accepted %s", control)
+			}
+		}
+		mf.Close()
 		archives[arch] = zipBytes(t, entries(arch, plain[arch]))
 		if e := CheckArchive(archives[arch], arch, rev, m.CoreVersion); e != nil {
 			t.Fatal(e)
@@ -407,7 +481,7 @@ func TestBuildProvenanceAndArchives(t *testing.T) {
 			})
 		}
 		// Patch only synthetic build-info strings to cover explicit missing/dirty settings.
-		for _, pair := range [][2]string{{"vcs.modified=false", "vcs.modified=true "}, {"vcs.modified=false", "xxx.modified=false"}, {"vcs.revision=", "xxx.revision="}, {"bimeron/core.Version=", "bimeron/core.VersioX="}, {"GOOS=darwin", "GOOS=linuxx"}, {"GOARCH=" + arch, "GOARCX=" + arch}} {
+		for _, pair := range [][2]string{{"vcs.modified=false", "vcs.modified=true "}, {"vcs.modified=false", "xxx.modified=false"}, {"vcs.revision=", "xxx.revision="}, {"BIMERON.APPLE.CORE.VERSION/v1", "BIMERON.APPLE.CORE.VERSIOX/v1"}, {"GOOS=darwin", "GOOS=linuxx"}, {"GOARCH=" + arch, "GOARCX=" + arch}} {
 			bad := bytes.ReplaceAll(plain[arch], []byte(pair[0]), []byte(pair[1]))
 			if bytes.Equal(bad, plain[arch]) {
 				t.Fatalf("missing fixture setting %s", pair[0])

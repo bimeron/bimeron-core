@@ -4,6 +4,7 @@ package applemanifest
 
 import (
 	"archive/zip"
+	"bimeron/internal/appleversion"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -13,7 +14,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -64,29 +64,12 @@ type Manifest struct {
 var triplet = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 var revision = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var identifier = regexp.MustCompile(`^[0-9A-Za-z-]+$`)
 var keyPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func validVersion(v string) bool {
-	if len(v) > 128 {
-		return false
-	}
-	parts := strings.SplitN(v, "-", 2)
-	if !triplet.MatchString(parts[0]) {
-		return false
-	}
-	if len(parts) == 2 {
-		for _, s := range strings.Split(parts[1], ".") {
-			if !identifier.MatchString(s) {
-				return false
-			}
-			if strings.Trim(s, "0123456789") == "" && len(s) > 1 && s[0] == '0' {
-				return false
-			}
-		}
-	}
-	return true
+	return appleversion.ValidVersion(v)
 }
+
 func less(a, b string) bool {
 	aa, bb := strings.Split(a, "."), strings.Split(b, ".")
 	for i := range aa {
@@ -472,11 +455,15 @@ func checkBinary(b []byte, arch, rev, version string) error {
 	if settings["GOOS"] != "darwin" || settings["GOARCH"] != arch || settings["vcs.revision"] != rev || settings["vcs.modified"] != "false" {
 		return errors.New("missing or mismatched build provenance")
 	}
-	// Accept only the build recipe whose single version assignment can be proved.
-	// This avoids interpreting shell quoting or conflicting linker assignments.
-	want := "-s -w -X bimeron/core.Version=" + version
-	if settings["-ldflags"] != want {
-		return fmt.Errorf("missing exact Core version ldflags evidence: %s", strconv.Quote(want))
+	if settings["vcs"] != "git" || settings["-trimpath"] != "true" {
+		return errors.New("missing Apple build recipe evidence")
+	}
+	recovered, err := appleversion.SectionVersion(f, uint64(len(b)))
+	if err != nil {
+		return err
+	}
+	if recovered != version {
+		return errors.New("Core version record mismatch")
 	}
 	return nil
 }
