@@ -49,21 +49,22 @@ type LoggedEvent struct {
 type Response struct {
 	closeAccepted bool // internal admission result; never serialized
 
-	Installation string                 `json:"installation,omitempty"`
-	SourceDrops  uint64                 `json:"source_drops,omitempty"`
-	Owner        *ProcessIdentity       `json:"owner,omitempty"`
-	Endpoint     string                 `json:"endpoint,omitempty"`
-	Profile      *systemvpn.ProfilePlan `json:"profile,omitempty"`
-	Operation    string                 `json:"operation,omitempty"`
-	Core         *core.BuildDetails     `json:"core,omitempty"`
-	ID           string                 `json:"id,omitempty"`
-	Instance     string                 `json:"instance"`
-	Version      int                    `json:"version"`
-	Status       core.Status            `json:"status"`
-	Error        string                 `json:"error,omitempty"`
-	Events       []LoggedEvent          `json:"events,omitempty"`
-	Cursor       uint64                 `json:"cursor,omitempty"`
-	Dropped      bool                   `json:"dropped,omitempty"`
+	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
+	Installation        string                 `json:"installation,omitempty"`
+	SourceDrops         uint64                 `json:"source_drops,omitempty"`
+	Owner               *ProcessIdentity       `json:"owner,omitempty"`
+	Endpoint            string                 `json:"endpoint,omitempty"`
+	Profile             *systemvpn.ProfilePlan `json:"profile,omitempty"`
+	Operation           string                 `json:"operation,omitempty"`
+	Core                *core.BuildDetails     `json:"core,omitempty"`
+	ID                  string                 `json:"id,omitempty"`
+	Instance            string                 `json:"instance"`
+	Version             int                    `json:"version"`
+	Status              core.Status            `json:"status"`
+	Error               string                 `json:"error,omitempty"`
+	Events              []LoggedEvent          `json:"events,omitempty"`
+	Cursor              uint64                 `json:"cursor,omitempty"`
+	Dropped             bool                   `json:"dropped,omitempty"`
 
 	Stats        *telemetry.Snapshot `json:"stats,omitempty"`
 	Capabilities *core.Capabilities  `json:"capabilities,omitempty"`
@@ -218,6 +219,10 @@ func (s *Server) record(e core.Event) {
 }
 func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer := Response{Version: Version, ID: r.ID, Instance: s.instance}
+	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+		s.command.Lock()
+		defer s.command.Unlock()
+	}
 	if len(r.ID) > 64 {
 		answer.Error = "invalid_request"
 		answer.ID = ""
@@ -226,17 +231,38 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	if r.Version != Version {
 		answer.Error = "unsupported_protocol"
-	} else if !s.foreground && (r.Installation != "" || r.Instance != "" || r.Session != "" || r.PlanToken != "" || r.AcceptRevision != "") {
+	} else if !s.foreground && (r.Installation != "" || r.PlanToken != "" || r.AcceptRevision != "") {
+		answer.Error = "invalid_request"
+	} else if !s.foreground && !validDaemonGuardRequest(r) {
 		answer.Error = "invalid_request"
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
 	} else {
+		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+			// Guard validation and mutation share admission with legacy commands.
+			if !s.foreground && r.Instance != "" {
+				answer.Status = s.engine.Status()
+				if r.Instance != s.instance {
+					answer.Error = "stale_instance"
+				} else if r.Command == "start" {
+					if answer.Status.Session != nil && answer.Status.Session.Active {
+						answer.Error = "session_already_running"
+					}
+				} else if answer.Status.Session == nil || !answer.Status.Session.Active || answer.Status.Session.ID != r.Session {
+					answer.Error = "stale_session"
+				}
+				if answer.Error != "" {
+					return answer
+				}
+			}
+		}
 		switch r.Command {
 		case "hello", "version":
 			if r.Config != "" || r.After != 0 {
 				answer.Error = "invalid_request"
 				break
 			}
+			answer.DaemonSessionGuards = !s.foreground
 			c := core.PlatformCapabilities()
 			answer.Capabilities = &c
 			build := s.build()
@@ -317,10 +343,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				answer.Error = "absolute_config_path_required"
 				break
 			}
-			s.command.Lock()
 			if s.closing {
 				answer.Error = "daemon_shutting_down"
-				s.command.Unlock()
 				break
 			}
 			cfg, err := s.load(r.Config)
@@ -329,7 +353,6 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			} else {
 				if cfg.IKEv2 != nil {
 					answer.Error = "ikev2_requires_foreground_user_session"
-					s.command.Unlock()
 					break
 				}
 				cfg.SSHPrompt = s.prompt
@@ -341,19 +364,16 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 					}
 				}
 			}
-			s.command.Unlock()
 		case "stop", "shutdown":
 			if r.Config != "" || r.After != 0 {
 				answer.Error = "invalid_request"
 				break
 			}
-			s.command.Lock()
 			if err := s.engine.Stop(ctx); err != nil {
 				answer.Error = "session_stop_failed"
 			} else if r.Command == "shutdown" {
 				s.closing = true
 			}
-			s.command.Unlock()
 		default:
 			answer.Error = "unknown_command"
 		}
@@ -378,7 +398,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	if err != nil || len(line) > maxRequest {
 		return
 	}
-	if s.foreground && !strictForegroundJSON(line) {
+	if !strictForegroundJSON(line) || (!s.foreground && !validDaemonGuardJSON(line)) {
 		return
 	}
 	var r Request
