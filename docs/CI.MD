@@ -8,6 +8,21 @@ TLS transport, both AEAD ciphers, and representative TLS fingerprints. The
 compiled dependency and notice checks reject unwanted modules. The Linux job
 also runs VLESS and VMess transport tests with Go's race detector.
 
+The Windows full-suite and native 386 steps use `go test -p 1 -v` to
+serialize package build/test work and expose individual test timing. The full
+suite includes Apple manifest fixtures that launch four nested Darwin builds;
+these can otherwise overlap deadline-bound native PowerShell children. No
+packages or tests are removed, and the focused uncached module checks, race
+checks, 386 execution, and 15-second fixture deadlines remain unchanged.
+
+This is a scheduling control, not a proven PowerShell runtime fix. At
+`b8883d3`, one hosted run stalled in 64-bit system-module discovery while the
+manifest package took 39.288 seconds; another stalled before script entry in
+two 386 fixtures after its companion packages completed quickly. The latter
+is not explained by concurrent Apple builds. Verbose native CI timing must
+confirm behavior on both architectures; package serialization cannot exclude
+host-level contention or diagnose PowerShell initialization itself.
+
 The fingerprint dependency matrix also tests the two local Hysteria/QUIC
 modules explicitly on Linux and Windows, including decoded UDP Initials and
 Retry/loss/HelloRetryRequest. Linux jobs run focused race checks. Root Hysteria

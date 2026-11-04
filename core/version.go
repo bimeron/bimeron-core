@@ -19,7 +19,7 @@ type BuildDetails struct {
 }
 
 func GetBuildInfo() BuildDetails {
-	info := BuildDetails{Version: Version, GoVersion: runtime.Version(), Platform: runtime.GOOS, Architecture: runtime.GOARCH}
+	info := BuildDetails{Version: buildVersion(), GoVersion: runtime.Version(), Platform: runtime.GOOS, Architecture: runtime.GOARCH}
 	if b, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range b.Settings {
 			switch setting.Key {
