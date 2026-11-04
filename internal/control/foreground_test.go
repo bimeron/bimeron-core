@@ -18,7 +18,7 @@ func TestForegroundCommandsAndInstanceBinding(t *testing.T) {
 	s := NewServer(e)
 	s.foreground = true
 	hello := s.foregroundDispatcher(context.Background(), Request{ID: "h", Version: 1, Command: "hello"})
-	if hello.Error != "" || hello.Core == nil || hello.Capabilities == nil {
+	if hello.Error != "" || hello.Core == nil || hello.Capabilities == nil || hello.DaemonSessionGuards {
 		t.Fatal(hello)
 	}
 	for _, command := range []string{"start", "shutdown", "stats", "auth_reply", "recover", "apply"} {
@@ -237,7 +237,7 @@ func TestForegroundPeerRejectsForeignAndReplacedIdentity(t *testing.T) {
 
 func TestDaemonRejectsPrivateForegroundBindings(t *testing.T) {
 	s := NewServer(&fakeEngine{})
-	for _, r := range []Request{{Version: 1, Command: "start", Instance: "private"}, {Version: 1, Command: "stop", PlanToken: "private"}} {
+	for _, r := range []Request{{Version: 1, Command: "start", Installation: "private"}, {Version: 1, Command: "stop", PlanToken: "private"}} {
 		if a := s.dispatch(context.Background(), r); a.Error != "invalid_request" {
 			t.Fatal(a)
 		}
