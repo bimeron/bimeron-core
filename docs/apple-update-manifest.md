@@ -88,7 +88,11 @@ including segment/file range checks. The record uses ADR0032 framing and strict
 SemVer without a build suffix; compare it with `core_version`. No linker assignment
 is evidence of the Apple runtime version.
 
-The local standalone `scripts/build-apple-release.go` builds real Core with
+The local standalone `scripts/build-apple-release.go` writes
+`bimeron-v<version>-macos-<arch>.zip` directly into its output directory for
+`scripts/apple-release-manifest.go -dir=<output directory>`. Unsigned preparation
+uses the original compatibility policy with `apple_reviewed:false`; it does not
+sign, establish a trust pin, or approve review. The builder builds real Core with
 `bimeron_apple_release`, `-trimpath -s -w` and explicit VCS stamping. It requires
 explicit approved version/revision and clean source, regenerates the ignored
 `core/apple-version.record`, builds both CPUs offline and checks the resulting ZIPs.

@@ -28,7 +28,9 @@ The standalone `scripts/build-apple-release.go` requires explicit exact version
 and full revision matching clean HEAD. It deterministically regenerates ignored
 `core/apple-version.record`, builds both CPU targets with the pinned installed Go,
 `CGO_ENABLED=0`, `-buildvcs=true -trimpath -tags=bimeron_apple_release -ldflags='-s -w'`,
-then creates and statically checks actual ZIPs through `CheckArchive`. All caches,
+then creates and statically checks actual ZIPs through `CheckArchive`. Archive
+names follow the existing preparer contract:
+`bimeron-v<version>-macos-<arch>.zip`. All caches,
 intermediate binaries and ZIPs stay under ignored `.tmp`. The generated record is
 an additional explicit input, not authenticated by `vcs.modified=false`.
 The synthetic 72-byte record has SHA-256
@@ -63,6 +65,10 @@ tracked. To invoke the builder separately at a clean approved commit:
 ```sh
 "$GO" build -o .tmp/apple-builder ./scripts/build-apple-release.go
 .tmp/apple-builder -git="$BIMERON_TEST_GIT" -go="$GO" -version='<explicit approved version>' -revision='<full approved commit>'
+# Unsigned preparation only; PUBLIC_KEY is an explicit base64 public identifier.
+"$GO" run ./scripts/apple-release-manifest.go -dir=.tmp/apple-release \
+  -tag='v<explicit approved version>' -revision='<full approved commit>' \
+  -public-key="$PUBLIC_KEY" -compat=release/apple-compatibility.json
 ```
 
 ## Evidence and limits
