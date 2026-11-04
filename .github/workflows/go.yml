@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -165,6 +168,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -208,6 +214,9 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -228,6 +237,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -261,17 +273,28 @@ jobs:
         run: go test -race -skip '^TestFrameParserAllocs$/^STREAM$' . ./internal/handshake ./internal/wire ./internal/ackhandler
 
   cli-dist:
-    runs-on: ubuntu-latest
+    # Only externally approved, exact same-repository PR heads use the private runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.repository == 'bimeron/bimeron-core' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["79|refs/heads/docs/73-volume-root-contract","85|refs/heads/feat/apple-release-manifest","86|refs/heads/design/core-maintenance-contract","87|refs/heads/research/guarded-ssh-auth-reply","88|refs/heads/feat/apple-retained-version-provenance"]'), format('{0}|refs/heads/{1}', github.event.pull_request.number, github.head_ref)) && contains(fromJSON(vars.TRUSTED_MACOS_PR_HEADS || '[]'), format('{0}|{1}|refs/heads/{2}|{3}', github.repository, github.event.pull_request.number, github.head_ref, github.event.pull_request.head.sha)) && fromJSON('["self-hosted","macOS","ARM64","mb-wrk"]') || fromJSON('["ubuntu-latest"]') }}
+    timeout-minutes: 45
     env:
       BIMERON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
+      - name: Log build provenance
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'SHA=%s OS=%s ARCH=%s\n' "$EXPECTED_SHA" "$(uname -s)" "$(uname -m)"
+          go version
       - run: go run scripts/build-dist.go
       - run: go run scripts/check-dist.go
       - uses: actions/upload-artifact@v4
@@ -287,6 +310,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
