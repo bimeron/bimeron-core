@@ -77,6 +77,37 @@ code. Responses do not contain secrets or configuration contents.
 
 Changes to required fields or existing command semantics require a new version.
 
+### Optional session-bound statistics
+
+Servers implementing the optional snapshot provider return
+`session_bound_stats: true` on hello/capabilities. Older servers omit it.
+The additive `stats_snapshot` command accepts the same empty config/after as
+stats and returns `stats_snapshot: {status, counters?}`. Bind this observation
+using the response's `instance` and the inner `status.Session.id`; use the inner
+status exclusively for attribution. Legacy stats/status commands are unchanged
+and their separately read values must not be combined to infer ownership.
+Servers without the provider return `unknown_command`, without a legacy fallback.
+Foreground owners expose the command under their existing identity guards and
+advertise support on hello; their command allowlist otherwise stays unchanged.
+
+The inner status/session/active and selection of the counter owner are captured
+under one Engine lock. Before the first accepted Start, Session and counters are
+absent: there is no sample, rather than measured zero traffic. Every accepted
+Start creates a new Session ID and resets counters, including a Start whose
+asynchronous setup later fails. Rejected Start leaves them unchanged. Counters
+accumulate across reconnects and remain readable with the inactive session
+after termination. Native IKEv2 counters have `unavailable: true`, including
+after termination, and must not be displayed as zero traffic.
+
+`status.Attempt` describes Open/Reconnect progress, not a counter reset epoch
+or proof of an installed transport. Counter fields are independently atomic
+loads and may reflect different instants; the guarantee is session ownership,
+not a simultaneous counter tuple or attempt-specific traffic measurement.
+Rate consumers use local monotonic sample time and invalidate their baseline
+on identity changes, resync/loss, unavailable data or decreasing byte counters.
+Any consumer observation generation remains local; events and cursors do not
+establish identity or counter ownership.
+
 Hello/version contain optional core: version, revision, commit_time, modified,
 go_version, platform, architecture. This is the running core's version; the RPC
 version remains 1. Older builds omit the field. The development version is

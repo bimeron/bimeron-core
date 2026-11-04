@@ -49,6 +49,7 @@ type LoggedEvent struct {
 type Response struct {
 	closeAccepted bool // internal admission result; never serialized
 
+	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
 	Installation        string                 `json:"installation,omitempty"`
 	SourceDrops         uint64                 `json:"source_drops,omitempty"`
@@ -66,9 +67,10 @@ type Response struct {
 	Cursor              uint64                 `json:"cursor,omitempty"`
 	Dropped             bool                   `json:"dropped,omitempty"`
 
-	Stats        *telemetry.Snapshot `json:"stats,omitempty"`
-	Capabilities *core.Capabilities  `json:"capabilities,omitempty"`
-	Auth         *AuthChallenge      `json:"auth,omitempty"`
+	StatsSnapshot *core.StatsSnapshot `json:"stats_snapshot,omitempty"`
+	Stats         *telemetry.Snapshot `json:"stats,omitempty"`
+	Capabilities  *core.Capabilities  `json:"capabilities,omitempty"`
+	Auth          *AuthChallenge      `json:"auth,omitempty"`
 }
 type Engine interface {
 	Start(context.Context, core.SessionConfig) error
@@ -77,6 +79,10 @@ type Engine interface {
 	Events() <-chan core.Event
 	Stats() telemetry.Snapshot
 }
+type statsSnapshotProvider interface {
+	StatsSnapshot() core.StatsSnapshot
+}
+
 type Server struct {
 	installation       string
 	build              func() core.BuildDetails
@@ -262,6 +268,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				answer.Error = "invalid_request"
 				break
 			}
+			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			answer.DaemonSessionGuards = !s.foreground
 			c := core.PlatformCapabilities()
 			answer.Capabilities = &c
@@ -278,11 +285,26 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			}
 			snapshot := s.engine.Stats()
 			answer.Stats = &snapshot
+		case "stats_snapshot":
+			if r.Config != "" || r.After != 0 {
+				answer.Error = "invalid_request"
+				break
+			}
+			provider, ok := s.engine.(statsSnapshotProvider)
+			if !ok {
+				answer.Error = "unknown_command"
+				break
+			}
+			snapshot := provider.StatsSnapshot()
+			answer.StatsSnapshot = &snapshot
+			answer.Status = snapshot.Status
+			return answer
 		case "capabilities":
 			if r.Config != "" || r.After != 0 {
 				answer.Error = "invalid_request"
 				break
 			}
+			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			c := core.PlatformCapabilities()
 			answer.Capabilities = &c
 		case "events":
