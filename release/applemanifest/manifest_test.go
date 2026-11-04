@@ -23,6 +23,68 @@ func fixture(t *testing.T) []byte {
 	}
 	return b
 }
+
+// Exercise Git's checkout conversion, including an unprotected CRLF control.
+func TestWindowsCheckoutFixtureBytes(t *testing.T) {
+	git := "<LOCAL_HOME>/.local/bin/git"
+	if _, e := os.Stat(git); e != nil {
+		var err error
+		git, err = exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := t.TempDir()
+	command(t, dir, git, "init", "-q")
+	paths := []string{
+		".gitattributes",
+		"release/apple-compatibility.json",
+		"release/applemanifest/testdata/apple-update-manifest.json",
+		"release/applemanifest/testdata/synthetic-vector.json",
+		"release/applemanifest/testdata/synthetic-reviewed-manifest.json",
+		"release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig",
+	}
+	original := map[string][]byte{"control.txt": []byte("checkout control\n")}
+	for _, path := range paths {
+		b, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		original[path] = b
+	}
+	for path, b := range original {
+		dest := filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dest, b, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command(t, dir, git, "-c", "core.autocrlf=false", "add", ".")
+	for path := range original {
+		if err := os.Remove(filepath.Join(dir, filepath.FromSlash(path))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command(t, dir, git, "-c", "core.autocrlf=true", "checkout-index", "--all", "--force")
+	for path, want := range original {
+		if path == ".gitattributes" {
+			continue
+		}
+		if path == "control.txt" {
+			want = []byte("checkout control\r\n")
+		}
+		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("Windows checkout changed %s bytes", path)
+		}
+	}
+}
+
 func syntheticKey() ed25519.PrivateKey { return ed25519.NewKeyFromSeed(make([]byte, 32)) }
 func TestSyntheticInterop(t *testing.T) {
 	b, e := os.ReadFile("testdata/synthetic-reviewed-manifest.json")
@@ -281,7 +343,10 @@ func TestBuildProvenanceAndArchives(t *testing.T) {
 	plain, trim, rev := buildFixtures(t)
 	key := syntheticKey()
 	pub := key.Public().(ed25519.PublicKey)
-	m, _ := Parse(fixture(t))
+	m, err := Parse(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := m.Compatibility
 	c.AppleReviewed = true
 	archives := map[string][]byte{}
