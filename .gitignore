@@ -17,3 +17,5 @@
 .continue/
 /doctor-report*.json
 /dist/
+
+/core/apple-version.record

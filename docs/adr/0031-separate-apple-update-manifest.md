@@ -31,8 +31,10 @@ Executing an archived binary to obtain a version is unsafe and is prohibited.
 Go 1.26.9 retains GOOS, GOARCH and VCS settings with `-trimpath -s -w`, but omits
 `-ldflags` from build info under `-trimpath`. Therefore the existing build-dist
 output cannot prove `-X bimeron/core.Version` through `debug/buildinfo.Read`.
-The new validator fails closed. Tests cross-compile both architectures using the
-actual flags and record this rejection; untrimmed synthetic builds demonstrate
-positive provenance validation. A separately authorized build/provenance design
-is required before production use. This ADR does not approve a build change,
-Apple compatibility, a key, a release candidate, or shipping.
+ADR0032 now authorizes local production integration of a retained canonical
+record, shared generation/runtime extraction/static checking, and an explicit
+Darwin-only release build selection. The validator replaces only the invalid
+ldflags evidence with exact record recovery; source/clean/CPU/OS/architecture and
+archive checks remain required. No signed wire change is introduced. This does
+not approve consumer G/E changes, Apple compatibility, a key, a release candidate,
+or shipping.
