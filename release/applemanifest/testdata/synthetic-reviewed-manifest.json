@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "product": "bimeron-apple-core",
+  "tag": "v0.1.0-beta.1",
+  "core_version": "0.1.0-beta.1",
+  "channel": "beta",
+  "source_revision": "0000000000000000000000000000000000000000",
+  "key_id": "139e3940e64b5491",
+  "compatibility": {
+    "schema": 1,
+    "app_min": "0.1.0",
+    "app_max_exclusive": "0.1.1",
+    "apple_reviewed": true,
+    "ipc_min": 1,
+    "ipc_max": 1,
+    "profile_format": 1,
+    "daemon_session_guards": true
+  },
+  "archives": [
+    {
+      "os": "macos",
+      "arch": "amd64",
+      "name": "bimeron-v0.1.0-beta.1-macos-amd64.zip",
+      "size": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "os": "macos",
+      "arch": "arm64",
+      "name": "bimeron-v0.1.0-beta.1-macos-arm64.zip",
+      "size": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
