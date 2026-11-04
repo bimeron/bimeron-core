@@ -1,9 +1,11 @@
 # Local production integration of retained Apple Core version
 
 This is local implementation evidence under ADR0032, not a release approval.
-The tested production/test source commit is
+The latest tested production/test source commit is
+`e8de4354e2dc5d0364a2fb93119c50971cdf8a5c`; see the final handoff evidence below.
+Earlier hardening evidence below applies to
 `3bc62c51341d08afc7733acc567b6e8f583a9c6f`. Subsequent report-only commits do not
-change that evidence identity. The fixture version `0.1.0-beta.1` is synthetic,
+change those evidence identities. The fixture version `0.1.0-beta.1` is synthetic,
 not an approved production candidate. No original Core85 or paused G/E worktree
 was changed or contacted.
 
@@ -143,3 +145,35 @@ and the standalone builder. Local logs are in ignored
 missing offline helper dependencies; amd64 remains static-only on this arm64 host.
 Independent rereview of these fixes is still required and was not delegated by
 the implementation agent.
+
+## Final builder-to-preparer handoff evidence
+
+The clean committed implementation `e8de4354e2dc5d0364a2fb93119c50971cdf8a5c`
+passed the complete real integration matrix in 88.80 seconds (Go package elapsed
+89.069 seconds). The reproduction command above was used with the pinned local
+Go 1.26.9 compiler, offline dependencies and explicitly scoped Git. The tracked
+tree was clean before execution. Logs are local and ignored at
+`.tmp/preparer-handoff-integration.log`.
+
+Both checkout paths, including the hostile-environment second builder invocation,
+produced identical bytes:
+
+- `bimeron-v0.1.0-beta.1-macos-amd64.zip`: SHA-256 `c428a7cddabb752505cb4f0b0e2ad8d951b0302541c1f5d42ac6c5e5befa5fc5`
+- `bimeron-v0.1.0-beta.1-macos-arm64.zip`: SHA-256 `ffd977be9be015ebb6c7e1a1bb6b218d8066c79afa9f873db6a581bdf0d6e479`
+
+In each checkout the actual preparer CLI consumed the builder output directory
+without renaming archives, with explicit synthetic tag, exact source revision,
+and a synthetic 32-byte public identifier (all bytes `0x42`; no private key).
+The test parsed the unsigned output with `applemanifest.Parse`, checked both
+archive names, byte sizes and SHA-256 identities against the actual builder ZIPs,
+and checked tag/version/revision/key identifier plus exact original shipping
+compatibility including `apple_reviewed:false`. No isolated policy was needed.
+Preparation does not sign, establish a trust pin, or approve Apple review; the
+production verification review gate and wire contract remain unchanged.
+
+Targeted tests passed for `internal/appleversion`, `release/applemanifest`, `core`,
+`cmd/bimeron` and this research package with `TestMASQUE*` excluded. Vet passed
+for the same packages and standalone builder. The prior missing offline MASQUE
+helper dependency limitation remains; amd64 was statically checked, not executed.
+No network, real key, installation, CI, remote, push, publication or G/E contact
+was used. Parent independent read-only review of this small diff remains pending.
