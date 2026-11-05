@@ -1,6 +1,8 @@
 package androidcore
 
 import (
+	"bimeron/core"
+	"context"
 	"sync"
 	"testing"
 )
@@ -72,5 +74,67 @@ func TestSSConfLifecycle(t *testing.T) {
 	result.Content()[0] = 'X'
 	if string(result.Content()) != "secret" || result.Metadata() != "{\"bytes\":6}" {
 		t.Fatal("result mutation")
+	}
+}
+
+func TestSSConfPublication(t *testing.T) {
+	for _, cancelFirst := range []bool{false, true} {
+		r, err := NewSSConfRequest("ssconf://fixture.invalid", "wifi", "127.0.0.1", &ssconfSockets{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entered, release := make(chan struct{}), make(chan struct{})
+		r.resolve = func(context.Context, string, core.PacketNetwork) ([]byte, error) {
+			close(entered)
+			<-release
+			return []byte("validated"), nil
+		}
+		done := make(chan *SSConfResult)
+		go func() {
+			v, e := r.Resolve()
+			if (e != nil) != cancelFirst {
+				t.Errorf("unexpected error: %v", e)
+			}
+			done <- v
+		}()
+		<-entered
+		if v, e := r.Resolve(); v != nil || e == nil {
+			t.Fatal("concurrent resolve accepted")
+		}
+		if cancelFirst {
+			r.Cancel()
+		}
+		close(release)
+		v := <-done
+		if cancelFirst {
+			if v != nil {
+				t.Fatal("canceled publication")
+			}
+			continue
+		}
+		r.Cancel()
+		v.Content()[0] = 'X'
+		if string(v.Content()) != "validated" {
+			t.Fatal("mutable success")
+		}
+	}
+}
+func TestSSConfConstructorValidation(t *testing.T) {
+	for _, tc := range []struct{ source, network, dns string }{
+		{"https://example.com", "wifi", "1.1.1.1"},
+		{"ssconf://user:pass@example.com", "wifi", "1.1.1.1"},
+		{"ssconf://", "wifi", "1.1.1.1"},
+		{"ssconf://example.com", " ", "1.1.1.1"},
+		{"ssconf://example.com", "wifi", ""},
+		{"ssconf://example.com", "wifi", "::1"},
+		{"ssconf://example.com", "wifi", "1.1.1.1,"},
+		{"ssconf://example.com", "wifi", "1.1.1.1,1.1.1.1,1.1.1.1,1.1.1.1,1.1.1.1"},
+	} {
+		if r, e := NewSSConfRequest(tc.source, tc.network, tc.dns, &ssconfSockets{}); r != nil || e == nil {
+			t.Fatal(tc)
+		}
+	}
+	if r, e := NewSSConfRequest("ssconf://example.com", "wifi", "1.1.1.1", nil); r != nil || e == nil {
+		t.Fatal("nil callbacks accepted")
 	}
 }

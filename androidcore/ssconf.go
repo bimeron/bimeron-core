@@ -28,6 +28,7 @@ type SSConfRequest struct {
 	cancel            context.CancelFunc
 	source            string
 	network           core.PacketNetwork
+	resolve           func(context.Context, string, core.PacketNetwork) ([]byte, error)
 }
 
 // SSConfResult holds immutable validated configuration.
@@ -87,7 +88,11 @@ func (r *SSConfRequest) Resolve() (*SSConfResult, error) {
 	r.cancel = cancel
 	r.mu.Unlock()
 	defer cancel()
-	b, err := core.ResolveSSConf(ctx, r.source, r.network)
+	resolve := r.resolve
+	if resolve == nil {
+		resolve = core.ResolveSSConf
+	}
+	b, err := resolve(ctx, r.source, r.network)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.canceled || ctx.Err() != nil {
