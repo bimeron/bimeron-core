@@ -44,7 +44,9 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - name: Check Android SSH authentication races
-        run: CGO_ENABLED=1 go test -race ./androidcore ./internal/sshtunnel
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check shared, VLESS, VMess, and Trojan transport races
         run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
       - name: Check MASQUE interoperability and transport races
@@ -198,7 +200,9 @@ jobs:
       - run: go test -p 1 -v ./...
       - run: go vet ./...
       - name: Check Android SSH authentication races
-        run: CGO_ENABLED=1 go test -race ./androidcore ./internal/sshtunnel
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check core and control races
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque ./internal/systemvpn
       - name: Check private foreground control without networking
