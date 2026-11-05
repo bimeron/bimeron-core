@@ -810,40 +810,50 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	if strings.HasPrefix(key, "masque://") {
 		return ParseMASQUE(key)
 	}
+	_, p, err := r.FetchSSConf(ctx, key)
+	return p, err
+}
+
+// FetchSSConf returns validated bytes and their parsed profile.
+func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile, error) {
+	key = strings.TrimSpace(key)
 	if !strings.HasPrefix(key, "ssconf://") {
-		return Profile{}, fmt.Errorf("unsupported access key scheme")
+		return nil, Profile{}, fmt.Errorf("unsupported access key scheme")
 	}
 	u, err := url.Parse("https://" + strings.TrimPrefix(key, "ssconf://"))
 	if err != nil || u.Hostname() == "" || u.User != nil {
-		return Profile{}, fmt.Errorf("invalid ssconf URL")
+		return nil, Profile{}, fmt.Errorf("invalid ssconf URL")
 	}
 	name := u.Fragment
 	u.Fragment = ""
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return Profile{}, fmt.Errorf("invalid config request")
+		return nil, Profile{}, fmt.Errorf("invalid config request")
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return Profile{}, fmt.Errorf("could not fetch dynamic config")
+		return nil, Profile{}, fmt.Errorf("could not fetch dynamic config")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound, http.StatusGone:
-			return Profile{}, unavailableError{resp.StatusCode}
+			return nil, Profile{}, unavailableError{resp.StatusCode}
 		}
-		return Profile{}, fmt.Errorf("config server returned HTTP %d", resp.StatusCode)
+		return nil, Profile{}, fmt.Errorf("config server returned HTTP %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return Profile{}, fmt.Errorf("could not read config")
+		return nil, Profile{}, fmt.Errorf("could not read config")
 	}
 	p, err := ParseConfig(b)
 	if err == nil && name != "" {
 		p.Name = name
 	}
-	return p, err
+	if err != nil {
+		return nil, Profile{}, err
+	}
+	return b, p, nil
 }
 
 // ParseSS2022Keys returns identity keys followed by the user key.
