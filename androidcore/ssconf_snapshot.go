@@ -34,7 +34,7 @@ func NewSSConfSnapshot(source string, content []byte) (*SSConfSnapshot, error) {
 	if err != nil || u.Hostname() == "" || u.User != nil {
 		return nil, invalid
 	}
-	if u.Port() != "" {
+	if u.Port() != "" || strings.HasSuffix(u.Host, ":") {
 		addr, err := netip.ParseAddrPort(net.JoinHostPort("127.0.0.1", u.Port()))
 		if err != nil || addr.Port() == 0 {
 			return nil, invalid

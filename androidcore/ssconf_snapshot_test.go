@@ -3,11 +3,14 @@ package androidcore
 import (
 	"bimeron/core"
 	"bimeron/internal/accesskey"
+	"bimeron/internal/routing"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"reflect"
 	"strings"
 	"sync"
@@ -36,6 +39,15 @@ func TestSnapshotPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Stop()
+	keySession, err := NewSessionWithSSConfSnapshot(bytes.Replace(profile, []byte("SSConf ="), []byte("Key ="), 1), snapshot, nil, nil, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer keySession.Stop()
+	p, err := keySession.config.ResolveOnNetwork(context.Background(), snapshotTransport{t})
+	if err != nil || p.TCP.Host != "example.com" || p.Name != "Display Name" {
+		t.Fatal("exact Key binding failed", err)
+	}
 	profile[0] = 'x'
 	if protector.calls.Load() != 0 || s.auth.id == "" {
 		t.Fatal("construction side effects or missing auth")
@@ -243,8 +255,14 @@ func TestSnapshotBindingFailuresAndShadowTLS(t *testing.T) {
 func TestSnapshotOriginalConfigurationAndAuth(t *testing.T) {
 	source := "ssconf://source.invalid/key#name"
 	raw := []byte("[Profile]\nVersion = 1\nName = Original\n[AccessKey]\nSSConf = " + source + "\n[Interface]\nName = original-interface\nMTU = 1380\nDNS = 9.9.9.9, 1.1.1.1\nIPv6 = disable\n[Rule]\nGeoIP = test\nAction = direct\n[Rule]\nGeoSite = test\nAction = direct\n")
-	ip := []byte{10, 6, 10, 4, 'T', 'E', 'S', 'T'}
-	site := append([]byte(nil), ip...)
+	field := func(n byte, b []byte) []byte {
+		out := binary.AppendUvarint([]byte{n<<3 | 2}, uint64(len(b)))
+		return append(out, b...)
+	}
+	cidr := append(field(1, []byte{203, 0, 113, 0}), 16, 24)
+	ip := field(1, append(field(1, []byte("TEST")), field(2, cidr)...))
+	domain := append([]byte{8, 2}, field(2, []byte("example.org"))...)
+	site := field(1, append(field(1, []byte("TEST")), field(2, domain)...))
 	expected, e := core.LoadConfigDataWithGeoData(raw, ip, site)
 	if e != nil {
 		t.Fatal(e)
@@ -262,6 +280,18 @@ func TestSnapshotOriginalConfigurationAndAuth(t *testing.T) {
 	clear(raw)
 	clear(ip)
 	clear(site)
+	for _, tc := range []struct {
+		ip, domain string
+		want       routing.Action
+	}{
+		{"203.0.113.9", "", routing.Direct},
+		{"192.0.2.1", "www.example.org", routing.Direct},
+		{"192.0.2.1", "unmatched.invalid", routing.Proxy},
+	} {
+		if got := s.config.Policy.Decide(netip.MustParseAddr(tc.ip), tc.domain); got != tc.want {
+			t.Fatalf("routing after mutation: %v, want %v", got, tc.want)
+		}
+	}
 	a, b := s.config, expected
 	a.Resolve = nil
 	a.ResolveOnNetwork = nil
@@ -285,5 +315,23 @@ func TestSnapshotOriginalConfigurationAndAuth(t *testing.T) {
 	}
 	if protector.calls.Load() != 0 {
 		t.Fatal("outbound creation invoked protector")
+	}
+}
+
+func TestSnapshotSourcePorts(t *testing.T) {
+	for _, host := range []string{"example.com", "[2001:db8::1]"} {
+		for _, port := range []string{"", ":", ":443", ":0", ":invalid", ":65536"} {
+			t.Run(host+port, func(t *testing.T) {
+				source := "ssconf://" + host + port + "/private-key#private-name"
+				got, err := NewSSConfSnapshot(source, []byte("ss://aes-256-gcm:private-secret@example.com:8388"))
+				if port == "" || port == ":443" {
+					if err != nil || got == nil {
+						t.Fatal("valid source rejected", err)
+					}
+				} else if got != nil || err == nil || err.Error() != "invalid SSConf snapshot source" {
+					t.Fatal("expected nil snapshot and redacted source error")
+				}
+			})
+		}
 	}
 }
