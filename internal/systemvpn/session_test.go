@@ -14,6 +14,7 @@ type fakeDriver struct {
 	dialFn    func(Config) (uintptr, error)
 	statusFn  func(uintptr) (connectionState, error)
 	hangupFn  func(uintptr) error
+	ownedFn   func(uintptr) (bool, error)
 }
 
 func (d fakeDriver) release() {
@@ -31,6 +32,14 @@ func (d fakeDriver) inspect(c Config) error {
 func (d fakeDriver) dial(c Config) (uintptr, error)            { return d.dialFn(c) }
 func (d fakeDriver) status(h uintptr) (connectionState, error) { return d.statusFn(h) }
 func (d fakeDriver) hangup(h uintptr) error                    { return d.hangupFn(h) }
+
+// owned defaults to absent so tests that predate enumeration keep their meaning.
+func (d fakeDriver) owned(h uintptr) (bool, error) {
+	if d.ownedFn != nil {
+		return d.ownedFn(h)
+	}
+	return false, nil
+}
 
 func testConfig() Config {
 	return Config{WindowsProfile: "Corporate VPN", ServerName: "vpn.example.com"}

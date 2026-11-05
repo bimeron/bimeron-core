@@ -376,25 +376,61 @@ func (d *windowsDriver) hangup(h uintptr) error {
 		d.attempt.mu.Unlock()
 	}
 	code, _, _ := rasHangUp.Call(h)
-	if code == 0 && d.attempt != nil {
-		d.attempt.mu.Lock()
-		d.attempt.hangupAccepted = true
-		d.attempt.mu.Unlock()
+	return classifyHangup(uint32(code), d.attempt)
+}
+
+// classifyHangup maps a RasHangUp return code against callback state without
+// native calls. Without terminal dial evidence, 6/668 means the port is not
+// allocated yet. With it, 6/668 is a distinct not-accepted outcome and never
+// errInvalidHandle: only a fresh status probe can report invalidation.
+func classifyHangup(code uint32, a *rasAttempt) error {
+	if code == 0 {
+		if a != nil {
+			a.mu.Lock()
+			a.hangupAccepted = true
+			a.mu.Unlock()
+		}
+		return nil
 	}
-	if (code == 6 || code == 668) && d.attempt != nil {
-		d.attempt.mu.Lock()
-		latest := d.attempt.latest
-		connected := d.attempt.connected
-		d.attempt.mu.Unlock()
-		if !connected && latest.state != stateDisconnected && latest.code == 0 {
+	if code == 6 || code == 668 {
+		terminal := false
+		if a != nil {
+			a.mu.Lock()
+			terminal = a.connected || a.latest.state == stateDisconnected || a.latest.code != 0
+			a.mu.Unlock()
+		}
+		if !terminal {
 			return errDialPending
 		}
-		return errInvalidHandle
+		return errHangupNoConnection
 	}
-	if code != 0 {
-		return rasError(uint32(code))
+	return rasError(code)
+}
+
+// ownedEnumCapacity bounds the read-only presence check. More connections
+// than this fail the check instead of growing the buffer.
+const ownedEnumCapacity = 16
+
+func (d *windowsDriver) owned(h uintptr) (bool, error) {
+	connections := make([]rasConnection, ownedEnumCapacity)
+	connections[0].Size = uint32(unsafe.Sizeof(connections[0]))
+	size, count := uint32(len(connections))*uint32(unsafe.Sizeof(connections[0])), uint32(0)
+	code, _, _ := rasEnumConnections.Call(uintptr(unsafe.Pointer(&connections[0])), uintptr(unsafe.Pointer(&size)), uintptr(unsafe.Pointer(&count)))
+	return ownedIn(uint32(code), connections, count, h)
+}
+
+// ownedIn reports whether h is among the first count enumerated connections.
+// Only handles are compared; unrelated entries are never otherwise inspected.
+func ownedIn(code uint32, connections []rasConnection, count uint32, h uintptr) (bool, error) {
+	if code != 0 || uint64(count) > uint64(len(connections)) {
+		return false, errors.New("ikev2_connection_enumeration_failed")
 	}
-	return nil
+	for _, c := range connections[:count] {
+		if c.Handle.get() == h {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (d *windowsDriver) release() {
