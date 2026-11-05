@@ -26,6 +26,7 @@ type SSConfRequest struct {
 	mu                sync.Mutex
 	started, canceled bool
 	cancel            context.CancelFunc
+	socketFailure     error
 	source            string
 	network           core.PacketNetwork
 	resolve           func(context.Context, string, core.PacketNetwork) ([]byte, error)
@@ -58,8 +59,14 @@ func NewSSConfRequest(source, networkID, dns string, sockets SSConfSocketProtect
 		}
 		servers[i] = ip.String()
 	}
+	r := &SSConfRequest{source: source}
 	d := net.Dialer{Control: func(_, _ string, raw syscall.RawConn) error {
-		var failure error
+		r.mu.Lock()
+		failure := r.socketFailure
+		r.mu.Unlock()
+		if failure != nil {
+			return failure
+		}
 		err := raw.Control(func(fd uintptr) {
 			if !sockets.Protect(int(fd)) {
 				failure = errors.New("socket protection failed")
@@ -70,11 +77,20 @@ func NewSSConfRequest(source, networkID, dns string, sockets SSConfSocketProtect
 			}
 		})
 		if err != nil {
-			return errors.New("socket control failed")
+			failure = errors.New("socket control failed")
 		}
-		return failure
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.socketFailure == nil && failure != nil {
+			r.socketFailure = failure
+			if r.cancel != nil {
+				r.cancel()
+			}
+		}
+		return r.socketFailure
 	}}
-	return &SSConfRequest{source: source, network: core.PacketNetwork{Identity: networkID, DNS: servers, Dialer: d}}, nil
+	r.network = core.PacketNetwork{Identity: networkID, DNS: servers, Dialer: d}
+	return r, nil
 }
 
 func (r *SSConfRequest) Resolve() (*SSConfResult, error) {
@@ -95,6 +111,9 @@ func (r *SSConfRequest) Resolve() (*SSConfResult, error) {
 	b, err := resolve(ctx, r.source, r.network)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.socketFailure != nil {
+		return nil, r.socketFailure
+	}
 	if r.canceled || ctx.Err() != nil {
 		return nil, errors.New("ssconf request canceled or timed out")
 	}

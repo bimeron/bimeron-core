@@ -9,7 +9,7 @@ Issue #95 adds a single-use operation independent of Session.Start and storage:
 - result.Content() []byte
 - result.Metadata() string
 
-Construction performs no networking. Supply an ssconf URL, a nonempty physical network ID, and one to four comma-separated IPv4 DNS addresses. There is no OS DNS fallback. The host must capture the exact physical Network in Bind. Every DNS and HTTPS socket invokes Protect before Bind; either false result prevents connection. Callbacks are synchronous and must return promptly: cancellation cannot forcibly interrupt host callback code.
+Construction performs no networking. Supply an ssconf URL, a nonempty physical network ID, and one to four comma-separated IPv4 DNS addresses. There is no OS DNS fallback. The host must capture the exact physical Network in Bind. Every DNS and HTTPS socket invokes Protect before Bind; The first protection, binding, or socket control failure terminates the entire request, including subsequent socket attempts. Callbacks are synchronous and must return promptly: cancellation cannot forcibly interrupt host callback code.
 
 Resolve has a 15-second total deadline, verified HTTPS, the existing redirect policy (reject when len(via) >= 5, non-HTTPS, or user information), and a 64 KiB decoded body limit. ParseConfig validates the complete body before publication. Errors contain no source or credentials. Content returns a defensive copy; metadata is fixed-schema JSON containing only the byte count.
 
