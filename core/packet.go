@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bimeron/internal/sshtunnel"
 	"context"
 	"errors"
 	"net"
@@ -17,9 +18,11 @@ import (
 // PacketNetwork describes the host-provided path outside the VPN. The dialer
 // MUST bypass captured routes; core never silently falls back to an OS backend.
 type PacketNetwork struct {
-	Identity string
-	DNS      []string
-	Dialer   net.Dialer
+	// SSHPrompt is bound to this inspected physical path.
+	SSHPrompt sshtunnel.Prompt
+	Identity  string
+	DNS       []string
+	Dialer    net.Dialer
 }
 
 // PacketOptions delegates all network configuration to the embedding host.
@@ -143,7 +146,7 @@ func (p *packetPlatform) Inspect(ctx context.Context, _ string, _ bool) (network
 	if err != nil {
 		return networkPath{}, fault("packet_outbound_unavailable", true)
 	}
-	return networkPath{identity: n.Identity, dns: append([]string(nil), n.DNS...), dialer: n.Dialer}, nil
+	return networkPath{identity: n.Identity, dns: append([]string(nil), n.DNS...), dialer: n.Dialer, sshPrompt: n.SSHPrompt}, nil
 }
 func (p *packetPlatform) Open(_ context.Context, _ SessionConfig, router *flowRouter, report func(string, string)) (link, error) {
 	s, err := tunstack.CreateStack(&tunstack.Config{LinkEndpoint: p.port.endpoint, TransportHandler: router})
