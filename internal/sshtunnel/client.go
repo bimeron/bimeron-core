@@ -114,6 +114,12 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	if err != nil {
 		return nil, err
 	}
+	a := newAttempt(ctx)
+	defer a.close()
+	ctx = a.ctx
+	if prompt != nil {
+		prompt = a.prompt(prompt)
+	}
 	var methods []ssh.AuthMethod
 	if identity != "" {
 		s, err := signer(identity, ctx, prompt)
@@ -166,8 +172,8 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 		return nil, fmt.Errorf("SSH authentication method unavailable")
 	}
 	address := net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))
-	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	a.resume()
+	dialCtx := ctx
 	conn, err := streamtransport.Dial(dialCtx, dialer, address, p.ShadowTLS, nil)
 	if err != nil {
 		if agentConn != nil {
@@ -177,7 +183,7 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	}
 	stop := context.AfterFunc(dialCtx, func() { _ = conn.Close() })
 	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, HostKeyCallback: verify, Timeout: 20 * time.Second}
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, config)
+	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
 	stop()
 	if err != nil {
 		conn.Close()

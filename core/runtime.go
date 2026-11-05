@@ -33,10 +33,11 @@ type platform interface {
 	Open(context.Context, SessionConfig, *flowRouter, func(string, string)) (link, error)
 }
 type networkPath struct {
-	identity string
-	dialer   net.Dialer
-	dns      []string
-	refresh  func(context.Context) error
+	sshPrompt sshtunnel.Prompt
+	identity  string
+	dialer    net.Dialer
+	dns       []string
+	refresh   func(context.Context) error
 }
 type link interface{ Close() error }
 
@@ -160,7 +161,11 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		}
 		tcp, udp, closeTransport = client, client, client.Close
 	} else if p.Type == "ssh" {
-		client, clientErr := sshtunnel.New(ctx, p, outbound, c.SSHPrompt, c.SSHDefaultKeys)
+		prompt := c.SSHPrompt
+		if path.sshPrompt != nil {
+			prompt = path.sshPrompt
+		}
+		client, clientErr := sshtunnel.New(ctx, p, outbound, prompt, c.SSHDefaultKeys)
 		if clientErr != nil {
 			return nil, nil, nil, nil, fault("ssh_connection_failed", false)
 		}
