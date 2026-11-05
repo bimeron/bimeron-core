@@ -1,8 +1,8 @@
 # Android SSConf snapshots
 
-Create a snapshot with NewSSConfSnapshot(source, content), then pass the original
+Create a snapshot with `NewSSConfSnapshot(source, content)`, then pass the original
 full configuration, snapshot, optional geodata bytes and socket protector to
-NewSessionWithSSConfSnapshot. Both calls are synchronous and local. Construction
+`NewSessionWithSSConfSnapshot(profile, snapshot, geoIP, geoSite, protector)`. Both calls are synchronous and local. Construction
 does not start the session or invoke the protector; call SetNetwork and Start
 afterward.
 
@@ -21,11 +21,12 @@ The original configuration must select exactly one matching SSConf source throug
 SSConf or Key. Sandbox restrictions and Android mode restrictions still apply.
 Original routing, DNS, interface, geodata and ShadowTLS settings remain effective.
 Both resolver paths return isolated fixed profiles, including after reconnect;
-they never fetch an updated body. Refresh by constructing another snapshot and
-session.
+they never fetch an updated body. Refresh only constructs and validates a new snapshot; it never calls a session
+factory or `Start`. A later explicit connection may create a session using the
+newly committed snapshot.
 
 A typed snapshot proves local validation, not authenticity or freshness. The host
 owns source, revision, digest, attempt and lease pairing. Persist the exact source
-and body securely, and reload them through NewSSConfSnapshot; do not serialize
+and body securely, and reload them through `NewSSConfSnapshot`; do not serialize
 the opaque handle. Public errors use fixed categories and contain no supplied
 source, credentials, body or parser diagnostics. Failed construction returns nil.
