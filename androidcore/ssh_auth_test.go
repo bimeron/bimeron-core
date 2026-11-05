@@ -157,3 +157,26 @@ func TestAuthSessionHooks(t *testing.T) {
 		s.Stop()
 	}
 }
+
+func TestAuthStrictAnswers(t *testing.T) {
+	for _, valid := range []string{`[""]`, `["\ud83d\ude00"]`, `["�"]`} {
+		s := &Session{}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, e := s.auth.prompt(0)(ctx, sshtunnel.Challenge{Kind: "password", Prompts: []string{"Password"}, Echo: []bool{false}})
+			done <- e
+		}()
+		r := pending(t, s)
+		for _, bad := range []string{`[null]`, `[1]`, `["\ud800"]`, `["\udc00"]`, `["\ud800\u0041"]`, `["\ud800x"]`} {
+			if s.ReplyAuth(r.SessionID, r.RequestID, bad) == nil || s.PendingAuth() == "null" {
+				t.Fatal("invalid answer consumed request")
+			}
+		}
+		if e := s.ReplyAuth(r.SessionID, r.RequestID, valid); e != nil {
+			t.Fatal(e)
+		}
+		<-done
+		cancel()
+	}
+}

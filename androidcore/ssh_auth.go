@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"unicode"
 	"unicode/utf8"
@@ -130,9 +131,43 @@ func (s *Session) ReplyAuth(sessionID, requestID, answersJSON string) error {
 	if len(answersJSON) > 131072 || !utf8.ValidString(answersJSON) {
 		return errAuth
 	}
-	var answers []string
-	if json.Unmarshal([]byte(answersJSON), &answers) != nil || len(answers) < 1 || len(answers) > 8 {
+	var raw []json.RawMessage
+	if json.Unmarshal([]byte(answersJSON), &raw) != nil || len(raw) < 1 || len(raw) > 8 {
 		return errAuth
+	}
+	answers := make([]string, len(raw))
+	for i, value := range raw {
+		if len(value) < 2 || value[0] != '"' {
+			return errAuth
+		}
+		// encoding/json replaces unpaired surrogates; validate escapes before decoding.
+		for j := 1; j < len(value)-1; j++ {
+			if value[j] != '\\' {
+				continue
+			}
+			j++
+			if value[j] != 'u' {
+				continue
+			}
+			n, _ := strconv.ParseUint(string(value[j+1:j+5]), 16, 16)
+			j += 4
+			if n >= 0xdc00 && n <= 0xdfff {
+				return errAuth
+			}
+			if n >= 0xd800 && n <= 0xdbff {
+				if j+6 >= len(value) || value[j+1] != '\\' || value[j+2] != 'u' {
+					return errAuth
+				}
+				low, err := strconv.ParseUint(string(value[j+3:j+7]), 16, 16)
+				if err != nil || low < 0xdc00 || low > 0xdfff {
+					return errAuth
+				}
+				j += 6
+			}
+		}
+		if json.Unmarshal(value, &answers[i]) != nil {
+			return errAuth
+		}
 	}
 	total := 0
 	for _, v := range answers {

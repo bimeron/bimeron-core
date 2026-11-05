@@ -13,13 +13,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestAuthSSHFixture(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
-	for _, mode := range []string{"password", "key_passphrase", "keyboard_interactive", "cancel", "disconnect", "parent_deadline"} {
+	for _, mode := range []string{"password", "key_passphrase", "keyboard_interactive", "cancel", "disconnect", "parent_deadline", "budget"} {
 		t.Run(mode, func(t *testing.T) {
 			_, key, _ := ed25519.GenerateKey(rand.Reader)
 			signer, _ := ssh.NewSignerFromKey(key)
@@ -31,6 +32,15 @@ func TestAuthSSHFixture(t *testing.T) {
 				return nil, nil
 			}
 			cfg.KeyboardInteractiveCallback = func(_ ssh.ConnMetadata, c ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+				if mode == "budget" {
+					for i := 0; i < 2; i++ {
+						time.Sleep(5 * time.Second)
+						if _, err := c("", "", []string{"Code"}, []bool{false}); err != nil {
+							return nil, err
+						}
+					}
+					time.Sleep(15 * time.Second)
+				}
 				a, e := c("", "", []string{"Code"}, []bool{false})
 				if e != nil {
 					return nil, e
@@ -40,7 +50,7 @@ func TestAuthSSHFixture(t *testing.T) {
 				}
 				return nil, nil
 			}
-			if mode == "keyboard_interactive" {
+			if mode == "keyboard_interactive" || mode == "budget" {
 				cfg.PasswordCallback = nil
 			}
 			cfg.AddHostKey(signer)
@@ -49,6 +59,7 @@ func TestAuthSSHFixture(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer l.Close()
+			closed := make(chan struct{})
 			accepted := make(chan net.Conn, 1)
 			go func() {
 				conn, e := l.Accept()
@@ -56,6 +67,7 @@ func TestAuthSSHFixture(t *testing.T) {
 					return
 				}
 				accepted <- conn
+				defer close(closed)
 				defer conn.Close()
 				c, ch, r, e := ssh.NewServerConn(conn, cfg)
 				if e != nil {
@@ -97,16 +109,57 @@ func TestAuthSSHFixture(t *testing.T) {
 			}
 			s := &Session{}
 			s.auth.id = opaqueID()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			limit := 40 * time.Second
+			if mode == "parent_deadline" {
+				limit = 500 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), limit)
+			started := time.Now()
+			var calls atomic.Int32
+			prompt := s.auth.prompt(0)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				client, e := sshtunnel.New(ctx, p, net.Dialer{}, s.auth.prompt(0), false)
+				client, e := sshtunnel.New(ctx, p, net.Dialer{}, func(ctx context.Context, c sshtunnel.Challenge) ([]string, error) {
+					calls.Add(1)
+					return prompt(ctx, c)
+				}, false)
 				if client != nil {
 					client.Close()
 				}
 				done <- e
 			}()
+			if mode == "budget" {
+				for i := 0; i < 2; i++ {
+					until := time.Now().Add(8 * time.Second)
+					for s.PendingAuth() == "null" && time.Now().Before(until) {
+						time.Sleep(10 * time.Millisecond)
+					}
+					r := pending(t, s)
+					time.Sleep(2 * time.Second)
+					if err := s.ReplyAuth(r.SessionID, r.RequestID, `["secret"]`); err != nil {
+						t.Fatal(err)
+					}
+				}
+				select {
+				case err := <-done:
+					elapsed := time.Since(started)
+					if err == nil || elapsed < 23*time.Second || elapsed > 27*time.Second {
+						t.Fatalf("aggregate budget result %v after %v", err, elapsed)
+					}
+				case <-time.After(19 * time.Second):
+					t.Fatal("network budget reset")
+				}
+				select {
+				case <-closed:
+				case <-time.After(8 * time.Second):
+					t.Fatal("socket remained open")
+				}
+				if calls.Load() != 2 || s.PendingAuth() != "null" {
+					t.Fatal("fallback prompt")
+				}
+				return
+			}
 			r := pending(t, s)
 			switch mode {
 			case "cancel":
@@ -114,7 +167,10 @@ func TestAuthSSHFixture(t *testing.T) {
 			case "disconnect":
 				(<-accepted).Close()
 			case "parent_deadline":
-				cancel()
+				<-ctx.Done()
+				if ctx.Err() != context.DeadlineExceeded {
+					t.Fatal("parent did not expire")
+				}
 			default:
 				if r.Kind != mode {
 					t.Fatalf("kind %s", r.Kind)
@@ -131,6 +187,17 @@ func TestAuthSSHFixture(t *testing.T) {
 				}
 			case <-time.After(30 * time.Second):
 				t.Fatal("handshake blocked")
+			}
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("socket remained open")
+			}
+			if calls.Load() != 1 {
+				t.Fatal("later prompt callback")
+			}
+			if s.ReplyAuth(r.SessionID, r.RequestID, `["late"]`) == nil {
+				t.Fatal("late reply accepted")
 			}
 			if s.PendingAuth() != "null" {
 				t.Fatal("terminal prompt remains")
