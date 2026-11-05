@@ -67,6 +67,14 @@ with an independent deadline; a cleanup failure overrides cancellation. An
 existing RAS connection prevents startup. No existing connection is adopted,
 and no profile, certificate, route or DNS setting is created or deleted.
 
+Amendment (2026-11-05): when `RasHangUp` returns 6 or 668 after terminal dial
+evidence, the hangup is not treated as acknowledged. Native data is released
+only after a fresh post-HangUp status 6 and a read-only enumeration that no
+longer lists the owned handle. A failed rollback still reports the cleanup
+error but keeps the startup error reachable. See
+[RAS 668 positive cleanup](../IKEV2_RAS_668_CLEANUP.MD); native confirmation
+of this predicate is pending.
+
 Windows retains its native IKE mobility/rekey behavior. A lost connection or
 manual disconnect ends the session without Engine redial. This prevents
 competing retry owners and reconnecting against explicit user intent.
