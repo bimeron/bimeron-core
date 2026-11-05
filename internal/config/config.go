@@ -1004,6 +1004,14 @@ func (c *File) ResolveWithTransport(ctx context.Context, t http.RoundTripper) (a
 }
 
 func (c *File) withShadowTLS(p accesskey.Profile, err error) (accesskey.Profile, error) {
+	if p.SSPlugin != nil {
+		plugin := *p.SSPlugin
+		p.SSPlugin = &plugin
+	}
+	if p.ShadowTLS != nil {
+		settings := *p.ShadowTLS
+		p.ShadowTLS = &settings
+	}
 	if err != nil {
 		return accesskey.Profile{}, err
 	}

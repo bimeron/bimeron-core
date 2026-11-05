@@ -54,11 +54,16 @@ func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProte
 	if err != nil {
 		return nil, err
 	}
+	return newSession(c, protector)
+}
+
+func newSession(c core.SessionConfig, protector SocketProtector) (*Session, error) {
 	if c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
 		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
 	}
 	s := &Session{config: c, protector: protector}
 	s.auth.id = opaqueID()
+	var err error
 	s.engine, s.port, err = core.NewPacketEngine(core.Options{}, core.PacketOptions{MTU: c.MTU, Outbound: s.outbound})
 	if err != nil {
 		return nil, err
