@@ -1,0 +1,203 @@
+{
+  "draft": "ikev2-offline-error-raw-addendum-v1",
+  "cases": [
+    {
+      "name": "canonical",
+      "attempt": 1,
+      "valid": true,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_duplicate_1_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_duplicate_2_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":2,\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_duplicate_1_2",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"version\":2,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_1.0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1.0,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_1e0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1e0,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_1E+0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1E+0,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_-0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":-0,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_01",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":01,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "version_lexical_+1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":+1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_duplicate_1_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":1,\"code\":1,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_duplicate_2_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":2,\"code\":1,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_duplicate_1_2",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":1,\"code\":2,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_1.0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":1.0,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_1e0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":1e0,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_1E+0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":1E+0,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_-0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":-0,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_01",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":01,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "code_lexical_+1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":+1,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "attempt_duplicate_1_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1,\"attempt\":1}}"
+    },
+    {
+      "name": "attempt_duplicate_2_1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":2,\"attempt\":1}}"
+    },
+    {
+      "name": "attempt_duplicate_1_2",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1,\"attempt\":2}}"
+    },
+    {
+      "name": "attempt_lexical_1.0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1.0}}"
+    },
+    {
+      "name": "attempt_lexical_1e0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1e0}}"
+    },
+    {
+      "name": "attempt_lexical_1E+0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1E+0}}"
+    },
+    {
+      "name": "attempt_lexical_-0",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":-0}}"
+    },
+    {
+      "name": "attempt_lexical_01",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":01}}"
+    },
+    {
+      "name": "attempt_lexical_+1",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":+1}}"
+    },
+    {
+      "name": "escaped_duplicate_code",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"co\\u0064e\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "escaped_duplicate_slot",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"version\":1,\"oper\\u0061tion\":{},\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "lone_high_surrogate",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"\\uD800version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "lone_low_surrogate",
+      "attempt": 1,
+      "valid": false,
+      "raw": "{\"\\uDC00version\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    },
+    {
+      "name": "escaped_valid_key",
+      "attempt": 1,
+      "valid": true,
+      "raw": "{\"vers\\u0069on\":1,\"operation\":{\"domain\":\"windows_ras\",\"code\":775,\"stage\":\"dial\",\"attempt\":1}}"
+    }
+  ]
+}
