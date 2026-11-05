@@ -47,6 +47,8 @@ jobs:
           CGO_ENABLED=1 go test -race ./internal/masque -count=1 -v
           go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=5s
           go test ./internal/masque -run '^$' -bench '^BenchmarkUDPEcho$' -benchtime=200ms -count=1
+      - name: Check Windows IKEv2 session lifecycle races
+        run: CGO_ENABLED=1 go test -race ./internal/systemvpn -count=1
       - name: Check AnyTLS transport races
         run: CGO_ENABLED=1 go test -race ./internal/anytls ./internal/accesskey ./internal/config
       - name: AnyTLS interoperability with reference server
