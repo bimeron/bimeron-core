@@ -40,9 +40,8 @@ Reply validation rejects null elements and unpaired escaped UTF-16 surrogates
 without consuming the pending request. Empty strings, valid surrogate pairs and
 literal U+FFFD remain valid answers.
 
-Focused review validation includes generated local SSH fixtures with two
+Validation includes generated local SSH fixtures with two
 two-second human waits and accumulated network delays against the production
 20-second budget, actual parent deadline expiry, terminal socket closure and
 callback counts. Network-change and Stop hooks also reject stale callbacks.
-Full suite, race checks, desktop/proxy regression checks and Android device/SDK/AAR
-validation are deferred while the host is resource constrained.
+Android device, SDK and AAR validation is separate.
