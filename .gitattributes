@@ -8,3 +8,5 @@ release/applemanifest/testdata/synthetic-vector.json text eol=lf
 # Preserve the exact signed interop bytes through every checkout.
 release/applemanifest/testdata/synthetic-reviewed-manifest.json -text
 release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig -text
+# Lab harness snapshot: keep exact bytes (scripts and tests hash and parse files as-is).
+lab/ikev2-admin-recovery/** -text

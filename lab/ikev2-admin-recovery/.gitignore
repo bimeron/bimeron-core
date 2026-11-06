@@ -1,0 +1,7 @@
+__pycache__/
+validation/
+rpc-tests-*/
+test-temporary/
+*.pcap
+*.log
+lab-config.json
