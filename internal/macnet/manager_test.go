@@ -468,3 +468,50 @@ func TestInspectDiagnosticsDNSConflict(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigureCancellationRestoresPartiallyAppliedDNS(t *testing.T) {
+	for _, failCleanup := range []bool{false, true} {
+		t.Run(fmt.Sprint(failCleanup), func(t *testing.T) {
+			m, f := testMacManager(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			interrupted := false
+			m.Run = func(commandCtx context.Context, name, input string, args ...string) ([]byte, error) {
+				if !interrupted && name == "networksetup" && args[0] == "-setdnsservers" {
+					// The mutation can complete before exec reports that Stop killed it.
+					_, err := f.run(commandCtx, name, input, args...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					interrupted = true
+					if failCleanup {
+						f.fail = "-setdnsservers"
+					}
+					cancel()
+					return nil, context.Canceled
+				}
+				if interrupted && commandCtx.Err() != nil {
+					t.Fatal("rollback inherited cancellation")
+				}
+				return f.run(commandCtx, name, input, args...)
+			}
+			err := m.Configure(ctx, "utun3", 1420)
+			if failCleanup {
+				if !errors.Is(err, ErrCleanupFailed) || errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			} else {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+				if len(f.routes) != 0 || len(f.dns[wifiID]) != 0 || !equal(f.dns[ethernetID], []string{"9.9.9.9", "2001:4860:4860::8888"}) {
+					t.Fatal("network state leaked", f)
+				}
+			}
+			state, loadErr := m.Load()
+			if loadErr != nil || (state != nil) != failCleanup {
+				t.Fatal(state, loadErr)
+			}
+		})
+	}
+}
