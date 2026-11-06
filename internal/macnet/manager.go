@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+var ErrCleanupFailed = errors.New("cleanup_failed_run_recover")
+
 type Runner func(context.Context, string, string, ...string) ([]byte, error)
 type Manager struct {
 	Dir    string
@@ -204,6 +206,9 @@ func (m *Manager) Preflight(ctx context.Context) error {
 func (m *Manager) Default(ctx context.Context) (string, string, error) {
 	b, err := m.command(ctx, "route", "-n", "get", "-inet", "default")
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return "", "", err
+		}
 		return "", "", ErrNetworkUnavailable
 	}
 	return ParseDefaultRoute(string(b))
@@ -301,11 +306,17 @@ func (m *Manager) setDNS(ctx context.Context, name string, dns []string) error {
 		args = append(args, dns...)
 	}
 	out, err := m.command(ctx, "networksetup", args...)
-	if err != nil || strings.TrimSpace(string(out)) != "" {
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("cannot set network service DNS")
 	}
 	actual, err := m.dns(ctx, name)
-	if err != nil || !equal(actual, dns) {
+	if err != nil {
+		return err
+	}
+	if !equal(actual, dns) {
 		return fmt.Errorf("network service DNS verification failed")
 	}
 	return nil
@@ -399,7 +410,9 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int) (err erro
 		if err != nil {
 			cleanCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
-			err = errors.Join(err, m.Recover(cleanCtx, false))
+			if cleanupErr := m.Recover(cleanCtx, false); cleanupErr != nil {
+				err = fmt.Errorf("%w: %v", ErrCleanupFailed, cleanupErr)
+			}
 		}
 	}()
 	if err = m.ensureBypass(ctx, s, device, gateway); err != nil {
@@ -411,7 +424,7 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int) (err erro
 		{name, "mtu", strconv.Itoa(mtu), "up"},
 	} {
 		if _, err = m.command(ctx, "ifconfig", args...); err != nil {
-			return fmt.Errorf("macos_adapter_setup_failed")
+			return fmt.Errorf("macos_adapter_setup_failed: %w", err)
 		}
 	}
 	// Verify resolver ownership before capture routes can disrupt another
@@ -437,7 +450,7 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int) (err erro
 			family = "-inet6"
 		}
 		if _, err = m.command(ctx, "route", "-q", "-n", "add", family, "-net", prefix, "-interface", name); err != nil {
-			return fmt.Errorf("macos_route_setup_failed")
+			return fmt.Errorf("macos_route_setup_failed: %w", err)
 		}
 	}
 	return nil
