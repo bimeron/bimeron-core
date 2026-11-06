@@ -101,7 +101,10 @@ func openLocked(path string, directory bool) (*os.File, error) {
 	}
 	h, err := windows.CreateFile(ptr, windows.GENERIC_READ|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, flags, 0)
 	if err != nil {
-		return nil, errForegroundIdentity
+		// Optional recovery records may not exist yet. Retain the native cause
+		// so absence can be distinguished from access or sharing failures;
+		// callers requiring a protected object still receive an identity error.
+		return nil, fmt.Errorf("%w: %w", errForegroundIdentity, err)
 	}
 	var info windows.ByHandleFileInformation
 	kind, kindErr := windows.GetFileType(h)
@@ -169,11 +172,11 @@ func lockExpectedImage(path string, expected *ProcessIdentity) ([]*os.File, stri
 		return nil, "", errForegroundIdentity
 	}
 	files := []*os.File{}
-	fail := func() ([]*os.File, string, error) {
+	fail := func(cause error) ([]*os.File, string, error) {
 		for _, f := range files {
 			f.Close()
 		}
-		return nil, "", errForegroundIdentity
+		return nil, "", cause
 	}
 	paths := []string{}
 	for p := clean; ; p = filepath.Dir(p) {
@@ -186,11 +189,11 @@ func lockExpectedImage(path string, expected *ProcessIdentity) ([]*os.File, stri
 		p := paths[i]
 		f, e := openLocked(p, p != clean)
 		if e != nil {
-			return fail()
+			return fail(e)
 		}
 		files = append(files, f)
 		if protectedObject(windows.Handle(f.Fd())) != nil {
-			return fail()
+			return fail(errForegroundIdentity)
 		}
 	}
 	// Keep the image at index zero for hashing/file identity; directories remain pinned.
@@ -201,11 +204,11 @@ func lockExpectedImage(path string, expected *ProcessIdentity) ([]*os.File, stri
 		if windows.GetFileInformationByHandle(windows.Handle(files[0].Fd()), &info) == nil && info.VolumeSerialNumber == expected.ImageVolume && (uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow)) == expected.ImageIndex {
 			return files, expected.ImageSHA256, nil
 		}
-		return fail()
+		return fail(errForegroundIdentity)
 	}
 	digest := sha256.New()
 	if _, err = io.Copy(digest, files[0]); err != nil {
-		return fail()
+		return fail(errForegroundIdentity)
 	}
 	return files, hex.EncodeToString(digest.Sum(nil)), nil
 }
@@ -302,4 +305,53 @@ func expectedPipePeer(c net.Conn, server bool, expected *ProcessIdentity) (Proce
 		return ProcessIdentity{}, nil, errForegroundIdentity
 	}
 	return inspectExpectedProcess(pid, expected)
+}
+
+// LockRepairImage validates and retains handles for a protected executable and
+// its parent chain until the caller completes the privileged transaction.
+func LockRepairImage(path string) (func(), error) {
+	files, _, err := lockImage(path)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		for _, f := range files {
+			f.Close()
+		}
+	}, nil
+}
+
+// LockRepairDirectory pins the protected installation directory and ancestors.
+func LockRepairDirectory(path string) (func(), error) {
+	root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		return nil, err
+	}
+	clean := filepath.Clean(path)
+	relative, err := filepath.Rel(root, clean)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return nil, errForegroundIdentity
+	}
+	files := []*os.File{}
+	release := func() {
+		for _, f := range files {
+			f.Close()
+		}
+	}
+	for p := clean; ; p = filepath.Dir(p) {
+		f, e := openLocked(p, true)
+		if e != nil {
+			release()
+			return nil, e
+		}
+		files = append(files, f)
+		if e = protectedObject(windows.Handle(f.Fd())); e != nil {
+			release()
+			return nil, e
+		}
+		if strings.EqualFold(p, root) {
+			break
+		}
+	}
+	return release, nil
 }

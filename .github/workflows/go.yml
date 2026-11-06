@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -40,6 +43,10 @@ jobs:
           echo "BIMERON_MASQUE_REFERENCE_BIN=$RUNNER_TEMP/masque-reference" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: go vet ./...
+      - name: Check Android SSH authentication races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check shared, VLESS, VMess, and Trojan transport races
         run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
       - name: Check MASQUE interoperability and transport races
@@ -172,6 +179,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -186,8 +196,15 @@ jobs:
           go -C internal/masque/testdata/reference-server build -mod=readonly -o $masqueBinary .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "BIMERON_MASQUE_REFERENCE_BIN=$masqueBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - run: go test ./...
+      # Avoid overlapping deadline-bound PowerShell children with package builds,
+      # including the Apple manifest tests' nested cross-builds. Keep test timing
+      # visible: serialization does not diagnose stalls before script entry.
+      - run: go test -p 1 -v ./...
       - run: go vet ./...
+      - name: Check Android SSH authentication races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check core and control races
         run: go test -race ./core ./internal/control ./internal/proxy ./internal/routing ./internal/masque ./internal/systemvpn
       - name: Check private foreground control without networking
@@ -207,7 +224,8 @@ jobs:
         env:
           GOARCH: '386'
           CGO_ENABLED: '0'
-        run: go test ./internal/systemvpn ./internal/killswitch ./internal/windowsnet
+        # Apply the same package scheduling to fresh native 386 test binaries.
+        run: go test -p 1 -v ./internal/systemvpn ./internal/killswitch ./internal/windowsnet
 
   test-apple-unsigned:
     # ARM64 hosted runners currently fail before acquiring a machine.
@@ -215,6 +233,9 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -235,6 +256,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -269,16 +293,26 @@ jobs:
 
   cli-dist:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       BIMERON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
+      - name: Log build provenance
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'SHA=%s OS=%s ARCH=%s\n' "$EXPECTED_SHA" "$(uname -s)" "$(uname -m)"
+          go version
       - run: go run scripts/build-dist.go
       - run: go run scripts/check-dist.go
       - uses: actions/upload-artifact@v4
@@ -294,6 +328,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:

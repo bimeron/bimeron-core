@@ -46,7 +46,7 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 		return a
 	}
 	switch r.Command {
-	case "hello", "status", "events":
+	case "hello", "status", "events", "stats_snapshot":
 		answer := s.dispatch(ctx, r)
 		if r.Command == "events" {
 			if source, ok := s.engine.(interface{ EventDrops() uint64 }); ok {

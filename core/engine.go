@@ -41,6 +41,15 @@ type Status struct {
 	LastError  string
 	ErrorStage string `json:",omitempty"`
 }
+
+// StatsSnapshot binds cumulative counters to a per-Start session.
+// Status.Attempt provides retry context; counters are not per-attempt.
+// Counters is nil until the first accepted Start.
+type StatsSnapshot struct {
+	Status   Status              `json:"status"`
+	Counters *telemetry.Snapshot `json:"counters,omitempty"`
+}
+
 type Options struct{ RetryMin, RetryMax time.Duration }
 
 type session interface {
@@ -66,17 +75,18 @@ func fault(code string, retry bool) error { return &stageError{code: code, retry
 func retryable(err error) bool            { var e *stageError; return errors.As(err, &e) && e.retry }
 
 type Engine struct {
-	mu         sync.Mutex
-	opts       Options
-	status     Status
-	events     chan Event
-	eventDrops uint64
-	runResult  *runResult
-	cancel     context.CancelFunc
-	active     bool
-	factory    func(SessionConfig) backend
-	lastReport map[string]time.Time
-	stats      *telemetry.Counters
+	mu          sync.Mutex
+	maintenance *maintenanceCoordinator
+	opts        Options
+	status      Status
+	events      chan Event
+	eventDrops  uint64
+	runResult   *runResult
+	cancel      context.CancelFunc
+	active      bool
+	factory     func(SessionConfig) backend
+	lastReport  map[string]time.Time
+	stats       *telemetry.Counters
 }
 
 // Stats returns counters for the most recent Start. Counters reset on every
@@ -108,9 +118,29 @@ func New(options Options) *Engine {
 	}
 	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}}
 }
+
+// StatsSnapshot returns detached session metadata and counters under one lock.
+// Terminal sessions retain their counters, including native unavailability.
+// Counter fields are independently sampled and need not form one atomic tuple.
+func (e *Engine) StatsSnapshot() StatsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	snapshot := StatsSnapshot{Status: e.statusLocked()}
+	if snapshot.Status.Session != nil {
+		counters := e.stats.Snapshot()
+		counters.Unavailable = snapshot.Status.Session.StatsUnavailable
+		snapshot.Counters = &counters
+	}
+	return snapshot
+}
+
 func (e *Engine) Status() Status {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.statusLocked()
+}
+
+func (e *Engine) statusLocked() Status {
 	status := e.status
 	if status.Native != nil {
 		snapshot := *status.Native
@@ -195,6 +225,9 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	cfg.DNS = append([]string(nil), cfg.DNS...)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.maintenance != nil {
+		return errMaintenanceSealed
+	}
 	if e.active {
 		return ErrSessionRunning
 	}
@@ -282,7 +315,15 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.cancel()
 		close(r.done)
 	}()
+	if err := e.maintenanceBarrier(); err != nil {
+		result = err
+		return
+	}
 	b := e.factory(cfg)
+	if err := e.maintenanceBarrier(); err != nil {
+		result = err
+		return
+	}
 	release, err := b.Acquire(ctx)
 	if err != nil {
 		if cfg.IKEv2 != nil && err.Error() == "ikev2_existing_kill_switch_requires_recovery" {
@@ -302,6 +343,10 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.mu.Lock()
 		e.status.Attempt++
 		e.mu.Unlock()
+		if err := e.maintenanceBarrier(); err != nil {
+			result = err
+			return
+		}
 		s, err := b.Open(ctx, cfg, e.report)
 		if err == nil {
 			if ctx.Err() == nil {
@@ -386,6 +431,9 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 			e.mu.Lock()
 			e.status.Attempt++
 			e.mu.Unlock()
+			if err := e.maintenanceBarrier(); err != nil {
+				return err
+			}
 			err = p.Reconnect(ctx)
 			if ctx.Err() != nil {
 				return ctx.Err()

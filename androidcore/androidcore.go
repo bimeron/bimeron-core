@@ -26,6 +26,7 @@ type SocketProtector interface {
 
 // Session is single-use: create a new one for each VPN start.
 type Session struct {
+	auth       authBridge
 	mu         sync.RWMutex
 	lifecycle  sync.Mutex
 	engine     *core.Engine
@@ -53,10 +54,16 @@ func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProte
 	if err != nil {
 		return nil, err
 	}
+	return newSession(c, protector)
+}
+
+func newSession(c core.SessionConfig, protector SocketProtector) (*Session, error) {
 	if c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
 		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
 	}
 	s := &Session{config: c, protector: protector}
+	s.auth.id = opaqueID()
+	var err error
 	s.engine, s.port, err = core.NewPacketEngine(core.Options{}, core.PacketOptions{MTU: c.MTU, Outbound: s.outbound})
 	if err != nil {
 		return nil, err
@@ -85,6 +92,7 @@ func (s *Session) SetNetwork(id, dns string) error {
 	if s.networkID != id || strings.Join(s.dns, ",") != strings.Join(servers, ",") {
 		s.networkID, s.dns = id, servers
 		s.generation++
+		s.auth.invalidate(s.generation, false)
 	}
 	return nil
 }
@@ -101,8 +109,9 @@ func (s *Session) outbound(ctx context.Context) (core.PacketNetwork, error) {
 		return core.PacketNetwork{}, errors.New("physical network unavailable")
 	}
 	return core.PacketNetwork{
-		Identity: fmt.Sprintf("%s:%d", id, generation),
-		DNS:      dns,
+		Identity:  fmt.Sprintf("%s:%d", id, generation),
+		DNS:       dns,
+		SSHPrompt: s.auth.prompt(generation),
 		Dialer: net.Dialer{Timeout: 15 * time.Second, Control: func(_, _ string, raw syscall.RawConn) error {
 			var protectErr error
 			if err := raw.Control(func(fd uintptr) {
@@ -175,6 +184,9 @@ func (s *Session) DisableIPv6() bool { return s.config.DisableIPv6 }
 func (s *Session) Stop() error {
 	s.lifecycle.Lock()
 	s.stopped = true
+	s.mu.Lock()
+	s.auth.invalidate(s.generation, true)
+	s.mu.Unlock()
 	s.port.Close()
 	s.lifecycle.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

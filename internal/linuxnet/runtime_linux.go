@@ -3,6 +3,7 @@
 package linuxnet
 
 import (
+	"bimeron/internal/unixutil"
 	"bytes"
 	"context"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"bimeron/internal/unixutil"
 	"sort"
 	"strings"
 	"syscall"
@@ -66,7 +66,10 @@ func runCommand(ctx context.Context, name, input string, args ...string) ([]byte
 	defer cancel()
 	cmd := exec.CommandContext(bounded, path, args...)
 	cmd.Stdin = strings.NewReader(input)
-	cmd.Env = append(os.Environ(), "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C")
+	// Recovery may run at the privilege boundary. Do not pass caller-controlled
+	// loader, resolver or tool configuration variables to system executables.
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", "LANG=C"}
+	cmd.WaitDelay = time.Second
 	var out, diagnostics boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &diagnostics

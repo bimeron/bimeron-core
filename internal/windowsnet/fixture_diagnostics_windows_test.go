@@ -7,10 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"os/exec"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,73 +32,30 @@ $taskConfig = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('` + b
 ` + body + "\n[Console]::Error.WriteLine('diag:done');"
 }
 
-type fixtureTrace struct {
-	buffer    bytes.Buffer
-	onFixture func()
-}
-
-func (d *fixtureTrace) Write(p []byte) (int, error) {
-	n := len(p)
-	if left := 4096 - d.buffer.Len(); left > 0 {
-		if len(p) > left {
-			p = p[:left]
-		}
-		d.buffer.Write(p)
-	}
-	if d.onFixture != nil && (bytes.Contains(d.buffer.Bytes(), []byte("diag:fixture\r\n")) || bytes.Contains(d.buffer.Bytes(), []byte("diag:fixture\n"))) {
-		d.onFixture()
-		d.onFixture = nil
-	}
-	return n, nil
-}
-
-func runFixture(ctx context.Context, cmd *exec.Cmd, onFixture func()) ([]byte, error, string) {
-	trace := &fixtureTrace{onFixture: onFixture}
-	cmd.Stderr = trace
-	start := time.Now()
-	out, err := cmd.Output()
-	var records []string
-	for _, line := range strings.Split(trace.buffer.String(), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		switch line {
-		case "diag:entry", "diag:bits=32", "diag:bits=64", "diag:json-start", "diag:json-done", "diag:fixture", "diag:done",
-			`diag:PSHOME=System32\WindowsPowerShell\v1.0`, `diag:PSHOME=SysWOW64\WindowsPowerShell\v1.0`,
-			`diag:module=System32\WindowsPowerShell\v1.0\Modules\NetTCPIP`, `diag:module=SysWOW64\WindowsPowerShell\v1.0\Modules\NetTCPIP`:
-			if !slices.Contains(records, line) {
-				records = append(records, line)
-			}
-		}
-	}
-	process := "ok"
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			process = fmt.Sprintf("exit=%d", exit.ExitCode())
-		} else {
-			process = fmt.Sprintf("error-type=%T", err)
-		}
-	}
-	diagnostic := fmt.Sprintf("elapsed=%s context=%v process=%s records=[%s]", time.Since(start).Round(time.Millisecond), ctx.Err(), process, strings.Join(records, ","))
-	return out, err, diagnostic
-}
-
 func TestFixtureDiagnosticsControlledCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd, err := PowerShellCommand(ctx, fixtureSource(Config{Name: "config-secret"}, `[Console]::Out.Write('stdout-secret'); [Console]::Error.WriteLine('stderr-secret'); while($true) { [Threading.Thread]::Sleep(100) }`))
+	// Cancellation readiness must not depend on JSON cmdlet/module initialization.
+	// The shadow cmdlet makes an accidental parsing dependency fail on Windows.
+	source := fixtureEntry + `function ConvertFrom-Json { throw 'unexpected-json-secret' }
+[Console]::Error.WriteLine('diag:fixture');
+[Console]::Out.Write('stdout-secret'); [Console]::Error.WriteLine('stderr-secret');
+while($true) { [Threading.Thread]::Sleep(100) }
+[Console]::Error.WriteLine('diag:done');`
+	cmd, err := PowerShellCommand(ctx, source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err, diagnostic := runFixture(ctx, cmd, cancel)
-	if err == nil || ctx.Err() != context.Canceled {
+	if err == nil || ctx.Err() != context.Canceled || cmd.ProcessState == nil {
 		t.Fatalf("controlled cancellation failed: %s", diagnostic)
 	}
-	for _, want := range []string{"elapsed=", "context=context canceled", "process=exit=", "diag:entry", "diag:bits=", "diag:PSHOME=", "diag:json-start", "diag:json-done", "diag:fixture"} {
+	for _, want := range []string{"elapsed=", "context=context canceled", "process=exit=", "diag:entry", "diag:bits=", "diag:PSHOME=", "diag:fixture"} {
 		if !strings.Contains(diagnostic, want) {
 			t.Fatalf("missing %s: %s", want, diagnostic)
 		}
 	}
-	if len(diagnostic) > 1024 || strings.Contains(diagnostic, "secret") || strings.Contains(diagnostic, "diag:done") {
+	if len(diagnostic) > 1024 || strings.Contains(diagnostic, "secret") || strings.Contains(diagnostic, "diag:done") || strings.Contains(diagnostic, "diag:json-") {
 		t.Fatalf("unsafe or misleading diagnostic: %s", diagnostic)
 	}
 	t.Log(diagnostic)
@@ -122,7 +76,25 @@ func TestFixtureDiagnosticsSanitizesFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err, diagnostic := runFixture(ctx, cmd, nil)
-	if err == nil || !bytes.Contains(out, []byte("stdout-secret")) || !strings.Contains(diagnostic, "process=exit=1") || !strings.Contains(diagnostic, "diag:fixture") || strings.Contains(diagnostic, "secret") || len(diagnostic) > 1024 {
+	if err == nil || !bytes.Contains(out, []byte("stdout-secret")) || !strings.Contains(diagnostic, "process=exit=1") || !strings.Contains(diagnostic, "diag:fixture") || !strings.Contains(diagnostic, "diag:json-done") || strings.Contains(diagnostic, "secret") || len(diagnostic) > 1024 {
 		t.Fatalf("failure diagnostic lost bounded sanitized evidence: %s", diagnostic)
+	}
+}
+
+func TestFixtureConfigJSONRoundTrip(t *testing.T) {
+	want := Config{Action: "setup", MTU: 1400, DNS: []string{"1.1.1.1", "2606:4700:4700::1111"}, Name: "quoted-'\"-`-$()-雪\nsecret", Tag: "BimeronCore:roundtrip", Index: 42}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := PowerShellCommand(ctx, fixtureSource(want, `$taskConfig | ConvertTo-Json -Compress`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err, diagnostic := runFixture(ctx, cmd, nil)
+	if err != nil || ctx.Err() != nil || !strings.Contains(diagnostic, "diag:json-done") || !strings.Contains(diagnostic, "diag:done") {
+		t.Fatalf("config round trip failed: %s", diagnostic)
+	}
+	var got Config
+	if json.Unmarshal(out, &got) != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("config round trip changed input: %s", diagnostic)
 	}
 }

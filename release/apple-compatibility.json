@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "app_min": "0.1.0",
+  "app_max_exclusive": "0.1.1",
+  "apple_reviewed": false,
+  "ipc_min": 1,
+  "ipc_max": 1,
+  "profile_format": 1,
+  "daemon_session_guards": true
+}

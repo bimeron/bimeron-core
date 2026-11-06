@@ -1,0 +1,38 @@
+{
+  "toolchain": "go version go1.26.9 darwin/arm64",
+  "revision": "e44d58950ff02c24e35f66fab363b4700b97d5f7",
+  "rows": [
+    {
+      "arch": "arm64",
+      "trimpath": false,
+      "equal_across_paths": false,
+      "checkout_path_present": true,
+      "sha256": "9e2a6b977e39e352cc64f50273d3e0e40f6c5c2674becf15a2fb04b7602fc661",
+      "buildinfo": "<LOCAL_WORKTREES>/bimeron-core/research-apple-core-provenance/research/apple-core-provenance/scratch/checkout-a-arm64-False: go1.26.9\n\tpath\tbimeron\n\tmod\tbimeron\tv0.0.0-20261104145840-e44d58950ff0\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-ldflags=\"-s -w -X bimeron/core.Version=0.1.0-beta.1\"\n\tbuild\tCGO_ENABLED=0\n\tbuild\tGOARCH=arm64\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=e44d58950ff02c24e35f66fab363b4700b97d5f7\n\tbuild\tvcs.time=2026-11-04T14:58:40Z\n\tbuild\tvcs.modified=false"
+    },
+    {
+      "arch": "arm64",
+      "trimpath": true,
+      "equal_across_paths": true,
+      "checkout_path_present": false,
+      "sha256": "d479420e7b10463573cc35a77994e9a7135e5340e84f3d3769138070b2181b42",
+      "buildinfo": "<LOCAL_WORKTREES>/bimeron-core/research-apple-core-provenance/research/apple-core-provenance/scratch/checkout-a-arm64-True: go1.26.9\n\tpath\tbimeron\n\tmod\tbimeron\tv0.0.0-20261104145840-e44d58950ff0\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=0\n\tbuild\tGOARCH=arm64\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=e44d58950ff02c24e35f66fab363b4700b97d5f7\n\tbuild\tvcs.time=2026-11-04T14:58:40Z\n\tbuild\tvcs.modified=false"
+    },
+    {
+      "arch": "amd64",
+      "trimpath": false,
+      "equal_across_paths": false,
+      "checkout_path_present": true,
+      "sha256": "948caa4fb6aa195a53c07adeea826850528933a9b5dcaaede9e8fd145d9739dd",
+      "buildinfo": "<LOCAL_WORKTREES>/bimeron-core/research-apple-core-provenance/research/apple-core-provenance/scratch/checkout-a-amd64-False: go1.26.9\n\tpath\tbimeron\n\tmod\tbimeron\tv0.0.0-20261104145840-e44d58950ff0\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-ldflags=\"-s -w -X bimeron/core.Version=0.1.0-beta.1\"\n\tbuild\tCGO_ENABLED=0\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=darwin\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=e44d58950ff02c24e35f66fab363b4700b97d5f7\n\tbuild\tvcs.time=2026-11-04T14:58:40Z\n\tbuild\tvcs.modified=false"
+    },
+    {
+      "arch": "amd64",
+      "trimpath": true,
+      "equal_across_paths": true,
+      "checkout_path_present": false,
+      "sha256": "0cd730e13be27a5f4ca7aa0785af0d68442fac2732e55711ce586889b1f25c8c",
+      "buildinfo": "<LOCAL_WORKTREES>/bimeron-core/research-apple-core-provenance/research/apple-core-provenance/scratch/checkout-a-amd64-True: go1.26.9\n\tpath\tbimeron\n\tmod\tbimeron\tv0.0.0-20261104145840-e44d58950ff0\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=0\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=darwin\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=e44d58950ff02c24e35f66fab363b4700b97d5f7\n\tbuild\tvcs.time=2026-11-04T14:58:40Z\n\tbuild\tvcs.modified=false"
+    }
+  ]
+}

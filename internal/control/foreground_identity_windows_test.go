@@ -4,6 +4,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
@@ -12,6 +13,59 @@ import (
 	"testing"
 	"time"
 )
+
+func TestForegroundLockPreservesMissingPathCause(t *testing.T) {
+	directory := t.TempDir()
+	for _, path := range []string{filepath.Join(directory, "missing.json"), filepath.Join(directory, "missing", "record.json")} {
+		file, err := openLocked(path, false)
+		if file != nil {
+			file.Close()
+			t.Fatal("opened absent record")
+		}
+		if !errors.Is(err, errForegroundIdentity) ||
+			(!errors.Is(err, windows.ERROR_FILE_NOT_FOUND) && !errors.Is(err, windows.ERROR_PATH_NOT_FOUND)) {
+			t.Fatalf("lost identity or absence classification: %v", err)
+		}
+	}
+
+	path := filepath.Join(directory, "busy.json")
+	if err := os.WriteFile(path, []byte("record"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	file, err := openLocked(path, false)
+	if file != nil {
+		file.Close()
+		t.Fatal("opened a record with an active writer")
+	}
+	if !errors.Is(err, errForegroundIdentity) || !errors.Is(err, windows.ERROR_SHARING_VIOLATION) ||
+		errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+		t.Fatalf("sharing violation treated as absence: %v", err)
+	}
+}
+
+func TestRepairLocksPreserveOptionalRecordAbsence(t *testing.T) {
+	root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Read-only checks beneath the real protected root; no files are created.
+	absent := filepath.Join(root, fmt.Sprintf("Bimeron.Absent.%d.%d", os.Getpid(), time.Now().UnixNano()))
+	for _, lock := range []func(string) (func(), error){LockRepairDirectory, LockRepairImage} {
+		release, err := lock(absent)
+		if release != nil {
+			release()
+			t.Fatal("locked absent optional record")
+		}
+		if !errors.Is(err, errForegroundIdentity) || !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+			t.Fatalf("protected lock lost optional-record absence: %v", err)
+		}
+	}
+}
 
 func TestForegroundDescriptorRejectsWritableOrUserOwnedImage(t *testing.T) {
 	for _, test := range []struct {

@@ -2,3 +2,9 @@
 *.yml text eol=lf
 # Hash-verified shared fixtures must keep exact bytes on every checkout.
 core/testdata/ikev2-error-*.json -text
+release/apple-compatibility.json text eol=lf
+release/applemanifest/testdata/apple-update-manifest.json text eol=lf
+release/applemanifest/testdata/synthetic-vector.json text eol=lf
+# Preserve the exact signed interop bytes through every checkout.
+release/applemanifest/testdata/synthetic-reviewed-manifest.json -text
+release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig -text
