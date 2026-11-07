@@ -1,12 +1,12 @@
 package main
 
 import (
+	core "bimeron/core"
+	"bimeron/internal/routing"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	core "bimeron/core"
-	"bimeron/internal/routing"
 )
 
 func serve(args []string) error {

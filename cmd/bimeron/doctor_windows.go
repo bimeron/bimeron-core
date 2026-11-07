@@ -3,9 +3,9 @@
 package main
 
 import (
-	"context"
 	"bimeron/internal/killswitch"
 	"bimeron/internal/windowsnet"
+	"context"
 	"time"
 )
 

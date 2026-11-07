@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bimeron/core"
+	"bimeron/internal/control"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"bimeron/core"
-	"bimeron/internal/control"
 	"time"
 )
 

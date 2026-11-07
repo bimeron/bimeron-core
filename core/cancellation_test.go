@@ -1,10 +1,10 @@
 package core
 
 import (
+	"bimeron/internal/accesskey"
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"bimeron/internal/accesskey"
 	"strings"
 	"sync/atomic"
 	"testing"

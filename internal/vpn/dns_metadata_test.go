@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/dns/dnsmessage"
 	"bimeron/internal/routing"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func metadataQuery(t *testing.T, domain string, kind dnsmessage.Type) []byte {
