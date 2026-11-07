@@ -69,7 +69,7 @@ func (s *Server) serveUDP(ctx context.Context, control net.Conn, host string, po
 	defer s.Stats.EndUDP()
 	var mu sync.Mutex
 	var source *net.UDPAddr
-	allowed := make(map[string]routing.Action)
+	allowed := newUDPPeers()
 	forward := func(conn net.PacketConn, action routing.Action) {
 		defer wg.Done()
 		defer cancel()
@@ -86,9 +86,9 @@ func (s *Server) serveUDP(ctx context.Context, control net.Conn, host string, po
 			}
 			mu.Lock()
 			dest := source
-			route, ok := allowed[from.String()]
+			ok := allowed.allows(from.String(), action)
 			mu.Unlock()
-			if dest == nil || !ok || route != action {
+			if dest == nil || !ok {
 				continue
 			}
 			address, err := socksAddress(from.String())
@@ -164,12 +164,8 @@ func (s *Server) serveUDP(ctx context.Context, control net.Conn, host string, po
 			destination = address
 		}
 		mu.Lock()
-		if _, ok := allowed[destination.String()]; !ok && len(allowed) >= 64 {
-			mu.Unlock()
-			continue
-		}
 		source = from
-		allowed[destination.String()] = action
+		allowed.add(destination.String(), action, domain != "" && action == routing.Proxy)
 		mu.Unlock()
 		payload := b[n-r.Len() : n]
 		writer := upstream
@@ -189,3 +185,63 @@ type udpTarget string
 
 func (a udpTarget) Network() string { return "udp" }
 func (a udpTarget) String() string  { return string(a) }
+
+// maxUDPPeers bounds the destinations remembered per UDP association.
+const maxUDPPeers = 64
+
+// udpPeers records the destinations an association has sent to so replies are
+// accepted only from them and only through the route that carried the
+// request. The least recently used destination is evicted when full, so
+// long-lived associations keep reaching new destinations.
+type udpPeers struct {
+	entries map[string]udpPeer
+	clock   uint64
+	// domains counts recorded proxied destinations addressed by domain name.
+	domains int
+}
+
+type udpPeer struct {
+	action routing.Action
+	domain bool
+	used   uint64
+}
+
+func newUDPPeers() *udpPeers { return &udpPeers{entries: make(map[string]udpPeer)} }
+
+func (p *udpPeers) add(key string, action routing.Action, domain bool) {
+	p.clock++
+	if old, ok := p.entries[key]; ok {
+		p.remove(key, old)
+	} else if len(p.entries) >= maxUDPPeers {
+		oldest, victim := "", udpPeer{used: ^uint64(0)}
+		for k, e := range p.entries {
+			if e.used < victim.used {
+				oldest, victim = k, e
+			}
+		}
+		p.remove(oldest, victim)
+	}
+	p.entries[key] = udpPeer{action: action, domain: domain, used: p.clock}
+	if domain {
+		p.domains++
+	}
+}
+
+func (p *udpPeers) remove(key string, e udpPeer) {
+	delete(p.entries, key)
+	if e.domain {
+		p.domains--
+	}
+}
+
+func (p *udpPeers) allows(key string, action routing.Action) bool {
+	if e, ok := p.entries[key]; ok {
+		return e.action == action
+	}
+	// The proxy server resolves domain targets itself, so their replies come
+	// from an address the client never saw. The proxied upstream belongs to
+	// this association alone, so accept its replies while a proxied domain
+	// destination is recorded. Direct targets are resolved locally and keyed
+	// by IP, keeping the internet-facing direct socket strictly filtered.
+	return action == routing.Proxy && p.domains > 0
+}

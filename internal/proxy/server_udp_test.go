@@ -135,3 +135,121 @@ func TestSOCKSUDPPolicyAndSourcePinning(t *testing.T) {
 		})
 	}
 }
+
+// domainPackets emulates a proxy server that resolves every domain target to
+// loopback, so replies come back from an IP source.
+type domainPackets struct{}
+
+func (domainPackets) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	c, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	return domainPacket{c}, nil
+}
+
+type domainPacket struct{ net.PacketConn }
+
+func (p domainPacket) WriteTo(b []byte, a net.Addr) (int, error) {
+	_, port, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return 0, err
+	}
+	target, err := net.ResolveUDPAddr("udp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		return 0, err
+	}
+	return p.PacketConn.WriteTo(b, target)
+}
+
+func udpEcho(t *testing.T) net.PacketConn {
+	t.Helper()
+	target, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+	go func() {
+		b := make([]byte, 2048)
+		for {
+			n, a, err := target.ReadFrom(b)
+			if err != nil {
+				return
+			}
+			_, _ = target.WriteTo(b[:n], a)
+		}
+	}()
+	return target
+}
+
+func socksUDP(t *testing.T, s *Server) *socksPacketConn {
+	t.Helper()
+	address, cancel, _ := start(t, s)
+	t.Cleanup(cancel)
+	host, portText, _ := net.SplitHostPort(address)
+	port, _ := strconv.Atoi(portText)
+	conn, err := (&SOCKS5{Endpoint: accesskey.Endpoint{Host: host, Port: port}}).ListenPacket(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn.(*socksPacketConn)
+}
+
+func TestSOCKSUDPProxiedDomainReply(t *testing.T) {
+	target := udpEcho(t)
+	p := socksUDP(t, &Server{Proxy: &transport.TCPDialer{}, Packet: domainPackets{}})
+	_, port, _ := net.SplitHostPort(target.LocalAddr().String())
+	_ = p.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := p.WriteTo([]byte("domain"), udpTarget(net.JoinHostPort("echo.invalid", port))); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 64)
+	if n, _, err := p.ReadFrom(b); err != nil || string(b[:n]) != "domain" {
+		t.Fatalf("domain reply: %q, %v", b[:n], err)
+	}
+}
+
+func TestSOCKSUDPEvictsIdleDestinations(t *testing.T) {
+	policy, err := routing.Compile(routing.Config{Default: routing.Direct})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := socksUDP(t, &Server{Proxy: &transport.TCPDialer{}, Packet: &resolvedPackets{}, Policy: policy})
+	b := make([]byte, 64)
+	for i := range maxUDPPeers + 6 {
+		destination := udpEcho(t).LocalAddr()
+		_ = p.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, err := p.WriteTo([]byte("ping"), destination); err != nil {
+			t.Fatal(err)
+		}
+		if n, from, err := p.ReadFrom(b); err != nil || string(b[:n]) != "ping" || from.String() != destination.String() {
+			t.Fatalf("destination %d: %q, %v, %v", i, b[:n], from, err)
+		}
+	}
+}
+
+func TestUDPPeersLeastRecentlyUsedEviction(t *testing.T) {
+	peers := newUDPPeers()
+	for i := range maxUDPPeers {
+		peers.add(strconv.Itoa(i), routing.Direct, false)
+	}
+	peers.add("0", routing.Direct, false) // refresh the oldest entry
+	peers.add("new", routing.Direct, false)
+	if !peers.allows("0", routing.Direct) || peers.allows("1", routing.Direct) || !peers.allows("new", routing.Direct) {
+		t.Fatal("least recently used destination was not evicted")
+	}
+	if peers.allows("new", routing.Proxy) {
+		t.Fatal("reply accepted through a different route")
+	}
+	peers.add("echo.invalid:53", routing.Proxy, true)
+	if !peers.allows("192.0.2.1:53", routing.Proxy) || peers.allows("192.0.2.1:53", routing.Direct) {
+		t.Fatal("proxied domain reply filtering")
+	}
+	for i := range maxUDPPeers {
+		peers.add("evict"+strconv.Itoa(i), routing.Direct, false)
+	}
+	if peers.domains != 0 || peers.allows("192.0.2.1:53", routing.Proxy) {
+		t.Fatal("evicted domain destination still accepted")
+	}
+}
