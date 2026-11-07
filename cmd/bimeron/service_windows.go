@@ -234,7 +234,7 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 		if err = windows.QueryServiceStatus(service, &status); err != nil {
 			return err
 		}
-		fmt.Printf("Service state: %d\n", status.CurrentState)
+		fmt.Printf("Service state: %s\n", formatServiceState(status.CurrentState))
 		return nil
 	}
 	expect, updating, err := parseWindowsUpdateAction(args)
