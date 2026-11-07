@@ -136,6 +136,12 @@ compare its fingerprint with the trusted value before using it. A changed key
 causes connection failure until investigated and corrected. Do not remove an
 old entry solely to silence that failure.
 
+The embedded Android Session can opt in to OpenSSH-style `accept-new` (ADR
+0035, `docs/android-ssh-auth.md`). An unknown host is then shown to the user as
+a fingerprint offer, and the app stores accepted keys itself. A changed key is
+still refused, now with the distinct fault `ssh_host_key_mismatch`. The CLI,
+daemon and desktop/Apple consumers do not opt in and behave as described above.
+
 The identity and `known_hosts` files must be readable by the Bimeron process.
 On Windows, the installed service runs as `LocalSystem`; mapped drives and
 user-protected EFS files may be unavailable. The GUI should save absolute paths

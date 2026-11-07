@@ -1,7 +1,9 @@
 # Android SSH authentication
 
-Issue #96. SSH identities and known_hosts remain filesystem paths. No in-memory
-key import or protocol capability flag is provided.
+Issue #96. SSH identities and the user-imported known_hosts remain filesystem
+paths. App-owned trusted host keys are passed as bytes (see "Host-key offers"
+below, ADR 0035). No in-memory identity import or protocol capability flag is
+provided.
 
 `Session.PendingAuth()` returns JSON null or an object containing `sessionId`,
 `requestId`, `kind`, `prompts`, and `echo`. IDs are opaque random 48-character hex
@@ -45,3 +47,79 @@ two-second human waits and accumulated network delays against the production
 20-second budget, actual parent deadline expiry, terminal socket closure and
 callback counts. Network-change and Stop hooks also reject stale callbacks.
 Android device, SDK and AAR validation is separate.
+
+## Host-key offers (accept-new)
+
+Host-key offers are opt-in. Call `Session.AcceptNewHostKeys(trustedKnownHosts)`
+at most once, before `Start`. Without that call, nothing below applies:
+verification uses only the profile's `KnownHostsFile`, and every SSH failure
+stays `ssh_connection_failed`.
+
+`trustedKnownHosts` holds the app-owned known_hosts lines for the profile:
+null or empty for none, at most 256 KiB. Blank lines and `#` comments are
+ignored. Every other line must be `host[,host...] keytype base64 [comment]`,
+where each host is a literal name or IP, or `[host]:port`. Markers
+(`@revoked`, `@cert-authority`), hashed hosts (`|1|`), patterns (`*`, `?`, `!`)
+and certificates are rejected; import such files through `KnownHostsFile`. An
+invalid line fails the call with an error naming only its line number. The
+user-imported `KnownHostsFile` keeps full OpenSSH syntax. Without it, no
+default `~/.ssh/known_hosts` is read.
+
+Verification, in order:
+
+1. A key that `KnownHostsFile` marks `@revoked` is refused.
+2. A key that matches either source connects with no offer.
+3. A host listed in either source with no matching key is refused with no
+   offer, whatever the key type. No call accepts a changed key.
+4. Otherwise the host is unknown, and `PendingAuth` returns one offer.
+
+An offer has exactly these seven string fields, in this order:
+
+```json
+{"sessionId":"<48 hex>","requestId":"<48 hex>","kind":"host_key","host":"ssh.example.com:2222","keyType":"ssh-ed25519","fingerprint":"SHA256:<base64>","knownHostsLine":"[ssh.example.com]:2222 ssh-ed25519 AAAAC3Nza..."}
+```
+
+- `host` is the dialed `host:port`. An IPv6 literal is bracketed. Only
+  `A-Z a-z 0-9 . - _ : % [ ]` appear in it.
+- `keyType` is the SSH public-key type, such as `ssh-ed25519`,
+  `ecdsa-sha2-nistp256` or `ssh-rsa`. It has at most 128 bytes and no space
+  or comma.
+- `fingerprint` is the OpenSSH SHA-256 form: `SHA256:` followed by 43
+  unpadded standard-base64 characters.
+- `knownHostsLine` is the exact line to persist, with no newline. It has three
+  fields separated by single spaces: the normalized host (bare for port 22,
+  `[host]:port` otherwise), `keyType`, and the base64 key. Each field is
+  printable ASCII; the line has at most 12 KiB.
+- `prompts` and `echo` are absent. The kinds `password`, `key_passphrase` and
+  `keyboard_interactive` keep their previous byte-identical JSON.
+
+Render `host`, `keyType` and `fingerprint`. Show the full fingerprint; do not
+truncate it.
+
+- **Accept:** `ReplyAuth(sessionId, requestId, "[\"accept\"]")`. Any other array,
+  including `["Accept"]`, `[""]` or two elements, is rejected and leaves the
+  offer pending.
+- **Decline:** `CancelAuth(sessionId, requestId)`.
+
+An offer has the same 60-second limit, eight-round limit, generation binding,
+and Stop/network invalidation as other prompts, and it is consumed once.
+
+After `ReplyAuth` accepts, the app appends `knownHostsLine` to its per-profile
+store. It passes the stored lines to the next Session's `AcceptNewHostKeys`.
+The same Session remembers the accepted key for its reconnects, so a reconnect
+does not offer again. Core writes no files. A later authentication failure
+does not revoke the acceptance; this matches OpenSSH `accept-new`.
+
+With opt-in, `Status.LastError` uses these host-key faults. Other SSH
+failures stay `ssh_connection_failed`.
+
+| LastError | Meaning | Suggested app code |
+|---|---|---|
+| `ssh_host_key_mismatch` | Known host with no matching key, or a revoked key. No offer was made. | `HOST_KEY_MISMATCH` |
+| `ssh_host_key_rejected` | The user declined the offer with `CancelAuth`. | `AUTH_CANCELLED` |
+| `ssh_host_key_unanswered` | The offer timed out (60 s), the round limit was hit, or the offer was withdrawn by a network change, Stop, deadline or connection loss. | `AUTH_UNANSWERED` |
+| `ssh_host_key_unknown` | The host is unknown and no offer could be made, for example because the host is not a literal name. | `SSH_CONNECTION_FAILED` |
+
+All four faults are terminal: Core does not retry them. An app whose
+pendingAuth parser does not know `host_key` must not opt in, because an
+unrendered offer only expires after 60 seconds.
