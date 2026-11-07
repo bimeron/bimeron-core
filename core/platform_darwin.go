@@ -30,7 +30,7 @@ func (p *darwinPlatform) Acquire(ctx context.Context) (func(), error) {
 		return nil, fault("kill_switch_unsupported_on_macos", false)
 	}
 	if err := macnet.Requirements(); err != nil {
-		return nil, macosFault(err, err.Error(), false)
+		return nil, requirementsFault(err)
 	}
 	release, err := unixutil.Lock("vpn.lock")
 	if err != nil {
@@ -47,7 +47,7 @@ func (p *darwinPlatform) Acquire(ctx context.Context) (func(), error) {
 func (p *darwinPlatform) Inspect(ctx context.Context, _ string, startup bool) (networkPath, error) {
 	if startup {
 		if err := p.manager.Preflight(ctx); err != nil {
-			return networkPath{}, macosFault(err, err.Error(), false)
+			return networkPath{}, macosFault(err, "network_inspect_failed", false)
 		}
 	} else {
 		iface, err := net.InterfaceByName(p.tunnelName)
@@ -55,12 +55,12 @@ func (p *darwinPlatform) Inspect(ctx context.Context, _ string, startup bool) (n
 			return networkPath{}, fault("tunnel_adapter_lost", false)
 		}
 		if err := p.manager.EnsureDNS(ctx); err != nil {
-			return networkPath{}, macosFault(err, err.Error(), !errors.Is(err, macnet.ErrDNSConflict))
+			return networkPath{}, macosFault(err, "network_inspect_failed", !errors.Is(err, macnet.ErrDNSConflict))
 		}
 	}
 	s, err := p.manager.Observe(ctx)
 	if err != nil {
-		return networkPath{}, macosFault(err, err.Error(), errors.Is(err, macnet.ErrNetworkUnavailable))
+		return networkPath{}, macosFault(err, "network_inspect_failed", errors.Is(err, macnet.ErrNetworkUnavailable))
 	}
 	if !startup {
 		if err := p.manager.EnsureBypass(ctx, s.Device, s.Gateway); err != nil {
@@ -109,21 +109,19 @@ func (p *darwinPlatform) Open(ctx context.Context, c SessionConfig, h *flowRoute
 	})
 	report("network_setup", "Configuring macOS routes and tunnel DNS")
 	if err := p.manager.Configure(ctx, d.Name(), c.MTU); err != nil {
-		if errors.Is(err, macnet.ErrDNSConflict) {
-			return nil, macosFault(err, err.Error(), false)
-		}
-		return nil, macosFault(err, "macos_network_setup_failed: "+err.Error(), false)
+		return nil, macosFault(err, "macos_network_setup_failed", false)
 	}
 	return owned, nil
 }
 
-// Preserve cancellation only after rollback has succeeded.
-func macosFault(err error, reason string, retry bool) error {
+// Preserve cancellation only after rollback has succeeded. A catalog code in
+// err passes through; any other text becomes fallback.
+func macosFault(err error, fallback string, retry bool) error {
 	if errors.Is(err, macnet.ErrCleanupFailed) {
 		return fault("cleanup_failed_run_recover", false)
 	}
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
 	}
-	return fault(reason, retry)
+	return codeFault(err, fallback, retry)
 }

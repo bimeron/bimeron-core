@@ -7,7 +7,14 @@ type observedNativeSession struct {
 	config SessionConfig
 }
 
-func (s *observedNativeSession) Wait(ctx context.Context) error { return s.native.Wait(ctx) }
+// Wait keeps cancellation as is; native failures become catalog codes.
+func (s *observedNativeSession) Wait(ctx context.Context) error {
+	err := s.native.Wait(ctx)
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	return codeFault(err, "ikev2_native_operation_failed", false)
+}
 func (s *observedNativeSession) Close() error {
 	s.config.updateNative(func(n *NativeStatus) { n.RASCleanup = "pending" })
 	err := s.native.Close()
@@ -18,5 +25,8 @@ func (s *observedNativeSession) Close() error {
 			n.RASCleanup = "succeeded"
 		}
 	})
-	return err
+	if err != nil {
+		return codeFault(err, "ikev2_cleanup_failed", false)
+	}
+	return nil
 }

@@ -107,8 +107,12 @@ return the catalog embedded in that core build:
 | Android | `ValidateConfigWithGeoData` adds `problems`. | `ErrorCatalog()` |
 | Apple | `RLValidate(data, size, geoIP, geoIPSize, geoSite, geoSiteSize)` returns `{"version":1,"problems":[...]}`; free with `RLFree`. | `RLErrorCatalog()`; free with `RLFree` |
 
-Connection failures keep using `Status.LastError` and event `error` values; each
-value is a catalog code of kind `connection`.
+Connection failures keep using `Status.LastError` and event `LastError` values;
+each value is a catalog code, usually of kind `connection`. Platform text that
+is not a catalog code is replaced by a generic code for that step, and any
+remaining uncoded failure is reported as `connection_failed`. Local control
+response `error` values are catalog codes of kind `control`. Codes ending in
+`_run_recover` tell the user to run network recovery.
 
 ## Compatibility
 

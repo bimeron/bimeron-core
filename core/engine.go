@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/problem"
 	"bimeron/internal/telemetry"
 )
 
@@ -73,6 +74,34 @@ type stageError struct {
 func (e *stageError) Error() string       { return e.code }
 func fault(code string, retry bool) error { return &stageError{code: code, retry: retry} }
 func retryable(err error) bool            { var e *stageError; return errors.As(err, &e) && e.retry }
+
+// connectionFailed is the LastError code for failures that carry no catalog code.
+const connectionFailed = "connection_failed"
+
+// codeFault converts err from a platform or native component into a fault
+// whose code is safe to show to users. A stageError with a catalog code is kept
+// as is; otherwise err's text is used only when it is a catalog code, and any
+// other text becomes fallback. fallback must be a catalog code.
+func codeFault(err error, fallback string, retry bool) error {
+	var staged *stageError
+	if errors.As(err, &staged) && problem.Known(staged.code) {
+		return staged
+	}
+	code := fallback
+	if err != nil && problem.Known(err.Error()) {
+		code = err.Error()
+	}
+	return fault(code, retry)
+}
+
+// lastErrorCode is the Status.LastError value for err. Clients show it to
+// users, so text that is not a catalog code never reaches it.
+func lastErrorCode(err error) string {
+	if code := err.Error(); problem.Known(code) {
+		return code
+	}
+	return connectionFailed
+}
 
 type Engine struct {
 	mu          sync.Mutex
@@ -176,13 +205,13 @@ func (e *Engine) transitionLocked(state State, err error) {
 	if e.status.State == Stopping && (state == Connected || state == Reconnecting) {
 		return
 	}
-	if e.status.State == state && (err == nil || e.status.LastError == err.Error()) {
+	if e.status.State == state && (err == nil || e.status.LastError == lastErrorCode(err)) {
 		return
 	}
 	e.status.State = state
 	e.status.Since = time.Now()
 	if err != nil {
-		e.status.LastError = err.Error()
+		e.status.LastError = lastErrorCode(err)
 		var staged *stageError
 		if errors.As(err, &staged) {
 			e.status.ErrorStage = staged.stage
