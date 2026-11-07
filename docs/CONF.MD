@@ -738,6 +738,7 @@ Action = proxy
 
 A more specific CIDR receives no automatic priority: rule order matters.
 Domain rules are case-insensitive, include subdomains, and do not use `*`.
+A leading dot is optional: `.example.com` is the same as `example.com`.
 In SOCKS5, the client must supply the domain.
 
 In system VPN mode, Bimeron remembers validated A/AAAA responses from its DNS and

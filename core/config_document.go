@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/routing"
 )
 
 var geoDataDocumentID = regexp.MustCompile(`\A[A-Za-z0-9_!-]{1,256}\z`)
@@ -542,8 +543,7 @@ func documentValidate(matcher, value, action string) error {
 			}
 		}
 	case "Domain":
-		v := strings.TrimSuffix(value, ".")
-		if v == "" || strings.ContainsAny(v, " /*:\t\r\n") {
+		if !routing.ValidDomain(value) {
 			return invalid("domain_invalid", "invalid domain")
 		}
 	case "GeoIP", "GeoSite":
