@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -257,6 +258,10 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 		if f.NArg() != 0 {
 			return fmt.Errorf("unexpected install arguments")
 		}
+		wantDLL, pinned := wintunDLLSHA256[runtime.GOARCH]
+		if !pinned {
+			return fmt.Errorf("no pinned Wintun DLL for %s", runtime.GOARCH)
+		}
 		existing, e := m.OpenService(serviceName)
 		if e == nil {
 			existing.Close()
@@ -302,16 +307,18 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 			return err
 		}
 		dll := filepath.Join(dir, "wintun.dll")
-		if err = copyServiceFile(filepath.Join(filepath.Dir(executable), "wintun.dll"), dll); err != nil {
+		// Verify the copies inside the protected directory against the pinned
+		// release digests; the source folder may be writable by other users.
+		if err = copyVerifiedServiceFile(filepath.Join(filepath.Dir(executable), "wintun.dll"), dll, wantDLL, copyServiceFile); err != nil {
 			os.Remove(dest)
-			return fmt.Errorf("cannot copy Wintun DLL: %w", err)
+			return fmt.Errorf("cannot install pinned Wintun DLL: %w", err)
 		}
 		startType := uint32(mgr.StartManual)
 		license := filepath.Join(dir, "WINTUN-LICENSE.txt")
-		if err = copyServiceFile(filepath.Join(filepath.Dir(executable), "WINTUN-LICENSE.txt"), license); err != nil {
+		if err = copyVerifiedServiceFile(filepath.Join(filepath.Dir(executable), "WINTUN-LICENSE.txt"), license, wintunLicenseSHA256, copyServiceFile); err != nil {
 			os.Remove(dest)
 			os.Remove(dll)
-			return err
+			return fmt.Errorf("cannot install pinned Wintun license: %w", err)
 		}
 		if *automatic {
 			startType = mgr.StartAutomatic
