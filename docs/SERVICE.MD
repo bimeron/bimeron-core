@@ -99,7 +99,11 @@ dist\windows-amd64\bimeron.exe service uninstall
 ```
 
 Uninstallation is allowed only after stopping; it removes the service, event
-source, and three installed files. The adjacent wintun.dll must match the EXE's
+source, and three installed files. If uninstallation is interrupted after the
+service registration is removed, run it again to remove the remaining event
+source and files; it reports every cleanup step that fails. When no service is
+registered, installation also replaces files and the event source left by an
+interrupted installation or uninstallation. The adjacent wintun.dll must match the EXE's
 architecture. WINTUN-LICENSE.txt is also required. Profiles and keys remain in place.
 
 ## Updating

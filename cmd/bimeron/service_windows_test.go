@@ -4,6 +4,8 @@ package main
 
 import (
 	"net"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +80,19 @@ func TestWindowsServiceExitClean(t *testing.T) {
 		if got := windowsServiceExitClean(test.status); got != test.clean {
 			t.Errorf("%s: clean = %v, want %v", test.name, got, test.clean)
 		}
+	}
+}
+
+func TestProtectServiceDirRefusesJunction(t *testing.T) {
+	base := t.TempDir()
+	target, link := filepath.Join(base, "target"), filepath.Join(base, "link")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Skip("cannot create junction:", err, string(out))
+	}
+	if err := protectServiceDir(link); err == nil || err.Error() != "unsafe service directory" {
+		t.Fatal("junction accepted as service directory:", err)
 	}
 }
