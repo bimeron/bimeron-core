@@ -39,7 +39,8 @@ own texts for the codes.
    `ErrorCatalog()` binding and the Apple `RLErrorCatalog()` export. Validation
    problems are returned by `validate --json`, the desktop document bridge, the
    control `start` response, Android `ValidateConfigWithGeoData` and Apple
-   `RLValidate`.
+   `RLValidateConfigWithGeoData`. The Android and Apple hosts share
+   `core.ValidateEmbeddedHost` for their mode restrictions.
 6. The English `message` stays the previous error text. CLI output, logs and
    existing string-based callers are unchanged.
 7. Every `Status.LastError` and event error value is a catalog code.

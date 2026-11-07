@@ -104,8 +104,8 @@ return the catalog embedded in that core build:
 | CLI | `bimeron validate --json <absolute-path>` prints `{"version":1,"problems":[...]}`. Failures keep the existing `error` and `details` fields. Plain `validate` output is unchanged. | `bimeron errors --json` |
 | Desktop document bridge | `bimeron document` and `bimeron geodata` responses add `problems` on failure. | |
 | Local control | A rejected `start` keeps `error: "invalid_configuration"` and adds `problems`. | |
-| Android | `ValidateConfigWithGeoData` adds `problems`. | `ErrorCatalog()` |
-| Apple | `RLValidate(data, size, geoIP, geoIPSize, geoSite, geoSiteSize)` returns `{"version":1,"problems":[...]}`; free with `RLFree`. | `RLErrorCatalog()`; free with `RLFree` |
+| Android | `ValidateConfigWithGeoData` and `GeoDataGroups` add `problems` on failure; success JSON is unchanged. | `ErrorCatalog()` |
+| Apple | `RLValidateConfigWithGeoData` and `RLGeoDataGroups` add `problems` on failure; success JSON is unchanged. Free results with `RLFree`. | `RLErrorCatalog()`; free with `RLFree` |
 
 Connection failures keep using `Status.LastError` and event `error` values; each
 value is a catalog code of kind `connection`.

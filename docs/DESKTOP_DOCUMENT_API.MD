@@ -66,8 +66,9 @@ spacing and line endings survive replacement. Adding text may add a separator
 and final newline. Section/key identifiers are case-sensitive. No implicit delete
 or runtime interpretation is performed by set_field.
 
-Response: `version:1`, `profile:string`, `rules:array`, optional `error:string`
-and optional `details:object`. Rules contain `index`, `enabled`, `matcher`,
+Response: `version:1`, `profile:string`, `rules:array`, optional `error:string`,
+optional `details:object` and, on failure, `problems:array` of structured problems
+(see [ERRORS.MD](ERRORS.MD)). Decide on problem codes, never on `error` text. Rules contain `index`, `enabled`, `matcher`,
 `value`, `action`, `editable`, and optional `error`. Invalid requests rejected
 before accepting a profile omit profile/rules. Error text is intentionally generic
 and must not be parsed. Row errors explain unsafe document edits. Draft editing
@@ -76,7 +77,7 @@ never certifies runtime policy, dataset membership or endpoint capabilities.
 ## Local catalogs
 
 `bimeron geodata groups <geoip|geosite> <absolute-file>` returns
-`{"version":1,"groups":["stable-id"]}` with optional error/details. Errors return
+`{"version":1,"groups":["stable-id"]}` with optional error/details/problems. Errors return
 an empty groups array. Only regular files are accepted; opening follows OS
 symlinks and uses the caller's permissions. Reads are limited to 64 MiB plus one
 sentinel byte, including growing files. The existing bounded V2Ray protobuf
@@ -91,8 +92,10 @@ Core error fields; do not infer typed locations from prose.
 Use existing `bimeron validate <absolute-profile-path>` for file-based runnable
 validation in the final profile directory. It resolves dataset paths against
 that directory and does not start networking. `bimeron validate --json <absolute-profile-path>` wraps the same file validator
-and returns version with optional generic error and shared typed GeoData details.
-Success is exactly {"version":1}. It retains the existing file parser and dataset
+and returns version, `problems` (an empty array on success; see
+[ERRORS.MD](ERRORS.MD)), and on failure the generic error and shared typed GeoData
+details. Success is exactly {"version":1,"problems":[]}. `bimeron errors --json`
+prints the catalog of human-readable texts for problem codes. It retains the existing file parser and dataset
 limits and profile-relative resource handling. The existing embedded
 `ValidateConfigDataWithGeoData` also remains available. Plain validate diagnostics
 are not this JSON protocol. File validation and service access

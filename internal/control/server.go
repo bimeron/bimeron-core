@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	core "bimeron/core"
+	"bimeron/internal/problem"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
 	"bimeron/internal/telemetry"
@@ -63,9 +64,11 @@ type Response struct {
 	Version             int                    `json:"version"`
 	Status              core.Status            `json:"status"`
 	Error               string                 `json:"error,omitempty"`
-	Events              []LoggedEvent          `json:"events,omitempty"`
-	Cursor              uint64                 `json:"cursor,omitempty"`
-	Dropped             bool                   `json:"dropped,omitempty"`
+	// Problems explains invalid_configuration; see docs/ERRORS.MD.
+	Problems []*problem.Error `json:"problems,omitempty"`
+	Events   []LoggedEvent    `json:"events,omitempty"`
+	Cursor   uint64           `json:"cursor,omitempty"`
+	Dropped  bool             `json:"dropped,omitempty"`
 
 	StatsSnapshot *core.StatsSnapshot `json:"stats_snapshot,omitempty"`
 	Stats         *telemetry.Snapshot `json:"stats,omitempty"`
@@ -378,6 +381,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			cfg, err := s.load(r.Config)
 			if err != nil {
 				answer.Error = "invalid_configuration"
+				answer.Problems = problem.List(err)
 			} else {
 				if cfg.IKEv2 != nil {
 					answer.Error = "ikev2_requires_foreground_user_session"

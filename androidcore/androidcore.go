@@ -58,8 +58,8 @@ func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProte
 }
 
 func newSession(c core.SessionConfig, protector SocketProtector) (*Session, error) {
-	if c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
-		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
+	if err := core.ValidateEmbeddedHost(c); err != nil {
+		return nil, err
 	}
 	s := &Session{config: c, protector: protector}
 	s.auth.id = opaqueID()
@@ -217,14 +217,21 @@ func GeoDataGroups(kind string, data []byte) string {
 	return geoDataJSON(groups, err)
 }
 
-// ValidateConfigWithGeoData returns JSON with error null on success.
-// It also enforces this embedded host's mode and kill-switch restrictions.
+// ValidateConfigWithGeoData returns JSON with error null on success and adds
+// problems on failure; see docs/ERRORS.MD. It also enforces
+// this embedded host's mode and kill-switch restrictions.
 func ValidateConfigWithGeoData(profile, geoIP, geoSite []byte) string {
 	c, err := core.LoadConfigDataWithGeoData(profile, geoIP, geoSite)
-	if err == nil && (c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil) {
-		err = errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
+	if err == nil {
+		err = core.ValidateEmbeddedHost(c)
 	}
 	return geoDataJSON(nil, err)
+}
+
+// ErrorCatalog returns the JSON catalog of human-readable error texts.
+func ErrorCatalog() string {
+	b, _ := core.ErrorCatalog()
+	return string(b)
 }
 
 func geoDataJSON(groups []string, err error) string {
@@ -236,9 +243,19 @@ func geoDataJSON(groups []string, err error) string {
 	var details *core.GeoDataError
 	errors.As(err, &details)
 	b, _ := json.Marshal(struct {
-		Groups  []string           `json:"groups"`
-		Error   *string            `json:"error"`
-		Details *core.GeoDataError `json:"details,omitempty"`
-	}{groups, message, details})
+		Groups   []string           `json:"groups"`
+		Error    *string            `json:"error"`
+		Details  *core.GeoDataError `json:"details,omitempty"`
+		Problems []*core.Problem    `json:"problems,omitempty"`
+	}{groups, message, details, problems(err)})
 	return string(b)
+}
+
+// problems lists structured failures; success keeps the historical JSON
+// without a problems field.
+func problems(err error) []*core.Problem {
+	if err == nil {
+		return nil
+	}
+	return core.Problems(err)
 }
