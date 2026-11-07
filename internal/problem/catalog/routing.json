@@ -1,0 +1,74 @@
+{
+  "codes": {
+    "rule_matcher_count": {
+      "kind": "config",
+      "en": "A rule must have exactly one condition: an IP address range, a domain, a GeoIP group or a GeoSite group.",
+      "ru": "В правиле должно быть ровно одно условие: диапазон IP-адресов, домен, группа GeoIP или группа GeoSite."
+    },
+    "cidr_invalid": {
+      "kind": "config",
+      "en": "Enter IP address ranges in CIDR notation separated by commas, for example 10.0.0.0/8, 2001:db8::/32.",
+      "ru": "Укажите диапазоны IP-адресов в формате CIDR через запятую, например 10.0.0.0/8, 2001:db8::/32."
+    },
+    "domain_invalid": {
+      "kind": "config",
+      "en": "Enter a domain name without spaces, slashes, colons or asterisks, for example example.com.",
+      "ru": "Укажите доменное имя без пробелов, косых черт, двоеточий и звёздочек, например example.com."
+    },
+    "rule_index_out_of_range": {
+      "kind": "config",
+      "en": "This rule no longer exists. Reload the profile and try again.",
+      "ru": "Этого правила больше нет. Загрузите профиль заново и повторите попытку."
+    },
+    "section_ambiguous": {
+      "kind": "config",
+      "en": "This section cannot be edited in the form because some of its settings follow a disabled rule. Edit the profile text instead.",
+      "ru": "Эту секцию нельзя изменить в форме: часть её параметров стоит после отключённого правила. Измените текст профиля."
+    },
+    "geodata_required": {
+      "kind": "config",
+      "en": "A GeoIP or GeoSite group is used, but the dataset file is not specified or contains no groups.",
+      "ru": "Используется группа GeoIP или GeoSite, но файл базы не указан или в нём нет групп."
+    },
+    "geodata_unreadable": {
+      "kind": "config",
+      "en": "The dataset file cannot be read. Check that it exists and that you have access to it.",
+      "ru": "Не удалось прочитать файл базы. Проверьте, что он существует и доступен."
+    },
+    "geodata_limit": {
+      "kind": "config",
+      "en": "The dataset file is too large or contains too many entries.",
+      "ru": "Файл базы слишком большой или содержит слишком много записей."
+    },
+    "geodata_invalid": {
+      "kind": "config",
+      "en": "The dataset file is damaged or is not a V2Ray geoip.dat or geosite.dat file.",
+      "ru": "Файл базы повреждён или не является файлом geoip.dat или geosite.dat в формате V2Ray."
+    },
+    "geodata_identifier_invalid": {
+      "kind": "config",
+      "en": "Separate group names with commas. A name may contain only Latin letters, digits, hyphens, underscores and exclamation marks.",
+      "ru": "Перечислите названия групп через запятую. Название может содержать только латинские буквы, цифры, дефисы, подчёркивания и восклицательные знаки."
+    },
+    "geodata_group_unknown": {
+      "kind": "config",
+      "en": "The dataset has no group named {group}.",
+      "ru": "В базе нет группы {group}."
+    },
+    "ikev2_invalid_windows_profile": {
+      "kind": "config",
+      "en": "Enter the name of a Windows VPN connection: up to 256 characters, without slashes, square brackets, control characters or spaces at the start or end.",
+      "ru": "Укажите имя VPN-подключения Windows: до 256 символов, без косых черт, квадратных скобок, управляющих символов и пробелов в начале или в конце."
+    },
+    "ikev2_server_name_requires_dns_name": {
+      "kind": "config",
+      "en": "Enter the server's DNS name, for example vpn.example.com. An IP address cannot be used here.",
+      "ru": "Укажите DNS-имя сервера, например vpn.example.com. IP-адрес здесь использовать нельзя."
+    },
+    "ikev2_invalid_server_name": {
+      "kind": "config",
+      "en": "Enter a DNS name made of Latin letters, digits, hyphens and dots, for example vpn.example.com.",
+      "ru": "Укажите DNS-имя из латинских букв, цифр, дефисов и точек, например vpn.example.com."
+    }
+  }
+}

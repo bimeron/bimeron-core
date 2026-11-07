@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/routing"
 )
 
 const sentinel = "Sentinel7secret"
@@ -262,6 +264,8 @@ func TestEveryValidationFailureIsCoded(t *testing.T) {
 }
 
 func TestProblemLocations(t *testing.T) {
+	// rules ends with an empty second [Rule] section at line 11.
+	const rules = "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n\n[Rule]\n"
 	cases := []struct {
 		name, profile, code, section, field, source string
 		line, rule                                  int
@@ -272,6 +276,15 @@ func TestProblemLocations(t *testing.T) {
 		{"uri scheme", "[Profile]\nVersion = 1\n\n[AccessKey]\nVLESS = trojan://x@example.com:443\n", "uri_scheme_invalid", "AccessKey", "", "VLESS", 5, 0},
 		{"missing type", "[Profile]\nVersion = 1\n\n[AccessKey]\nServer = example.com\nPort = 443\n", "value_required", "AccessKey", "Type", "", 4, 0},
 		{"credentials", "[Profile]\nVersion = 1\n\n[AccessKey]\nType = socks5\nServer = example.com\nPort = 1080\nUsername = alice\n", "credentials_incomplete", "AccessKey", "Password", "", 4, 0},
+		{"rule cidr", rules + "CIDR = 10.0.0.0/33\nAction = direct\n", "cidr_invalid", "Rule", "CIDR", "", 12, 2},
+		{"rule domain", rules + "Domain = a b\nAction = direct\n", "domain_invalid", "Rule", "Domain", "", 12, 2},
+		{"rule action", rules + "Domain = example.org\nAction = drop\n", "choice_invalid", "Rule", "Action", "", 13, 2},
+		{"rule matcher", rules + "Action = direct\n", "rule_matcher_count", "Rule", "", "", 11, 2},
+		{"rule two matchers", rules + "Domain = example.org\nCIDR = 10.0.0.0/8\nAction = direct\n", "rule_matcher_count", "Rule", "CIDR", "", 13, 2},
+		{"rule geoip without dataset", rules + "GeoIP = ru\nAction = direct\n", "geodata_required", "Rule", "GeoIP", "", 12, 2},
+		{"routing default", "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Routing]\nDefault = drop\n", "choice_invalid", "Routing", "Default", "", 8, 0},
+		{"ikev2 server name", "[Profile]\nVersion = 1\n\n[IKEv2]\nWindowsProfile = Work\nServerName = 10.0.0.1\n", "ikev2_server_name_requires_dns_name", "IKEv2", "ServerName", "", 6, 0},
+		{"ikev2 windows profile", "[Profile]\nVersion = 1\n\n[IKEv2]\nWindowsProfile = Work/VPN\nServerName = vpn.example.com\n", "ikev2_invalid_windows_profile", "IKEv2", "WindowsProfile", "", 5, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,6 +295,35 @@ func TestProblemLocations(t *testing.T) {
 			}
 			if p.Code != tc.code || p.Section != tc.section || p.Field != tc.field || p.Source != tc.source || p.Line != tc.line || p.Rule != tc.rule {
 				t.Fatalf("problem = %+v", p)
+			}
+		})
+	}
+}
+
+// TestGeoDataFileProblems locates dataset file failures at [GeoData] options.
+func TestGeoDataFileProblems(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profile.conf")
+	base := "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n"
+	for _, tc := range []struct {
+		name, profile, code, field string
+		line                       int
+	}{
+		{"missing file option", base + "[Rule]\nGeoSite = ru\nAction = direct\n", "geodata_required", "GeoSiteFile", 0},
+		{"unreadable file", base + "[GeoData]\nGeoIPFile = missing.dat\n\n[Rule]\nGeoIP = ru\nAction = direct\n", "geodata_unreadable", "GeoIPFile", 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.profile), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			p, ok := problem.As(err)
+			if !ok || p.Code != tc.code || p.Section != "GeoData" || p.Field != tc.field || p.Line != tc.line || p.Rule != 0 {
+				t.Fatalf("problem = %+v (%v)", p, err)
+			}
+			var ge *routing.GeoDataError
+			if !errors.As(err, &ge) || ge.Code != tc.code {
+				t.Fatalf("GeoDataError lost: %v", err)
 			}
 		})
 	}

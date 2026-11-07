@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"bimeron/internal/problem"
 )
 
 var geoDataDocumentID = regexp.MustCompile(`\A[A-Za-z0-9_!-]{1,256}\z`)
@@ -106,14 +108,65 @@ func (d *ConfigDocument) part(index int) (int, error) {
 			n++
 		}
 	}
-	return 0, fmt.Errorf("rule index out of range")
+	return 0, problem.New("rule_index_out_of_range", "rule index out of range").In("Rule")
+}
+
+// atRule records the profile [Rule] index of the row in a problem. Disabled
+// rows are comments to the profile parser and therefore have no index.
+func (d *ConfigDocument) atRule(err error, index int) error {
+	p, ok := problem.As(err)
+	if !ok {
+		return err
+	}
+	active := 0
+	for _, part := range d.parts {
+		if !part.rule {
+			continue
+		}
+		if !part.disabled {
+			active++
+		}
+		if index == 0 {
+			if !part.disabled {
+				p.AtRule(active)
+			}
+			break
+		}
+		index--
+	}
+	return p
+}
+
+// documentRuleFields are the canonical [Rule] options used as problem fields.
+var documentRuleFields = map[string]bool{"CIDR": true, "Domain": true, "GeoIP": true, "GeoSite": true, "Action": true}
+
+// ruleProblem places a problem in [Rule]; only canonical keys become fields.
+func ruleProblem(code, message, field string) *problem.Error {
+	p := problem.New(code, message).In("Rule")
+	if documentRuleFields[field] {
+		p.At(field)
+	}
+	return p
+}
+
+// documentBlocked prefixes a row problem message, keeping its code and location.
+func documentBlocked(prefix string, row error) *problem.Error {
+	p := *problem.Of(row)
+	p.Message = prefix + p.Message
+	return p.Wrap(row)
 }
 
 // Rule returns a detached row snapshot.
 func (d *ConfigDocument) Rule(index int) (*ConfigDocumentRule, error) {
+	r, _, err := d.rule(index)
+	return r, err
+}
+
+// rule also returns the row problem that blocks editing, if any.
+func (d *ConfigDocument) rule(index int) (*ConfigDocumentRule, error, error) {
 	i, err := d.part(index)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	p := d.parts[i]
 	raw := p.raw
@@ -123,13 +176,15 @@ func (d *ConfigDocument) Rule(index int) (*ConfigDocumentRule, error) {
 	r, structural, unknown := documentRule(raw)
 	r.Index = index
 	r.Enabled = !p.disabled
-	r.Editable = structural == nil && unknown == nil
-	if structural != nil {
-		r.Error = structural.Error()
-	} else if unknown != nil {
-		r.Error = unknown.Error()
+	blocked := structural
+	if blocked == nil {
+		blocked = unknown
 	}
-	return &r, nil
+	r.Editable = blocked == nil
+	if blocked != nil {
+		r.Error = blocked.Error()
+	}
+	return &r, blocked, nil
 }
 
 // RulesJSON provides the row array using only gomobile-compatible bridge types.
@@ -159,9 +214,8 @@ func (d *ConfigDocument) SetRuleEnabled(index int, enabled bool) error {
 		return nil
 	}
 	if enabled {
-		r, _ := d.Rule(index)
-		if !r.Editable {
-			return fmt.Errorf("cannot enable rule: %s", r.Error)
+		if _, blocked, _ := d.rule(index); blocked != nil {
+			return d.atRule(documentBlocked("cannot enable rule: ", blocked), index)
 		}
 	}
 	next := p.alternate
@@ -187,19 +241,16 @@ func (d *ConfigDocument) SetRuleEnabled(index int, enabled bool) error {
 // indentation, spacing, line endings, comments and position. Unknown fields or
 // malformed rows block editing rather than silently discarding content.
 func (d *ConfigDocument) SetRule(index int, matcher, value, action string) error {
-	if strings.TrimSpace(value) != value || strings.TrimSpace(action) != action || strings.ContainsAny(value+action, "\r\n") {
-		return fmt.Errorf("invalid rule value")
-	}
-	if err := documentValidate(matcher, value, action); err != nil {
-		return err
+	if err := documentCheck(matcher, value, action); err != nil {
+		return d.atRule(err, index)
 	}
 	i, err := d.part(index)
 	if err != nil {
 		return err
 	}
-	r, _ := d.Rule(index)
-	if !r.Editable {
-		return fmt.Errorf("cannot edit rule: %s", r.Error)
+	r, blocked, _ := d.rule(index)
+	if blocked != nil {
+		return d.atRule(documentBlocked("cannot edit rule: ", blocked), index)
 	}
 	p := &d.parts[i]
 	lines := documentLines(p.raw)
@@ -402,7 +453,7 @@ func documentHeader(line string) (string, bool) {
 func documentRule(raw string) (ConfigDocumentRule, error, error) {
 	r := ConfigDocumentRule{}
 	seen := map[string]bool{}
-	matchers := 0
+	var matchers []string
 	var structural, unknown error
 	lines := documentLines(raw)
 	for _, line := range lines[1:] {
@@ -413,66 +464,97 @@ func documentRule(raw string) (ConfigDocumentRule, error, error) {
 		key, value, ok := strings.Cut(s, "=")
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
-		if !ok || key == "" || seen[key] {
-			structural = fmt.Errorf("malformed or duplicate rule field")
+		if !ok || key == "" {
+			structural = ruleProblem("syntax_invalid", "malformed or duplicate rule field", "")
+			continue
+		}
+		if seen[key] {
+			structural = ruleProblem("option_duplicate", "malformed or duplicate rule field", key)
 			continue
 		}
 		seen[key] = true
 		if strings.HasPrefix(value, `"`) {
 			decoded, err := strconv.Unquote(value)
 			if err != nil {
-				structural = fmt.Errorf("invalid quoted rule value")
+				structural = ruleProblem("syntax_invalid", "invalid quoted rule value", key)
 				continue
 			}
 			value = decoded
 		}
 		switch key {
 		case "CIDR", "Domain", "GeoIP", "GeoSite":
-			matchers++
+			matchers = append(matchers, key)
 			r.Matcher = key
 			r.Value = value
 		case "Action":
 			r.Action = value
 		default:
-			unknown = fmt.Errorf("unknown rule field %q; use raw editing", key)
+			unknown = ruleProblem("option_unknown", fmt.Sprintf("unknown rule field %q; use raw editing", key), "")
 		}
 	}
-	if matchers != 1 {
-		structural = fmt.Errorf("rule requires exactly one matcher")
+	if len(matchers) == 0 {
+		structural = ruleProblem("rule_matcher_count", "rule requires exactly one matcher", "")
+	} else if len(matchers) > 1 {
+		structural = ruleProblem("rule_matcher_count", "rule requires exactly one matcher", matchers[0]).Also(matchers[1:]...)
 	}
 	if err := documentValidate(r.Matcher, r.Value, r.Action); err != nil {
 		structural = err
 	}
 	return r, structural, unknown
 }
+
+// documentCheck validates an edited row before it replaces document text.
+func documentCheck(matcher, value, action string) error {
+	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n") {
+		return ruleProblem("value_has_invalid_characters", "invalid rule value", matcher)
+	}
+	if strings.TrimSpace(action) != action || strings.ContainsAny(action, "\r\n") {
+		return ruleProblem("value_has_invalid_characters", "invalid rule value", "Action")
+	}
+	return documentValidate(matcher, value, action)
+}
+
 func documentValidate(matcher, value, action string) error {
-	if strings.ContainsAny(value+action, "\r\n") {
-		return fmt.Errorf("invalid rule value")
+	if strings.ContainsAny(value, "\r\n") {
+		return ruleProblem("value_has_invalid_characters", "invalid rule value", matcher)
+	}
+	if strings.ContainsAny(action, "\r\n") {
+		return ruleProblem("value_has_invalid_characters", "invalid rule value", "Action")
+	}
+	if action == "" {
+		return ruleProblem("value_required", "invalid rule action", "").On("Action", "")
 	}
 	if action != "direct" && action != "proxy" && action != "block" {
-		return fmt.Errorf("invalid rule action")
+		return ruleProblem("choice_invalid", "invalid rule action", "Action").Arg("allowed", "direct, proxy, block")
+	}
+	// invalid reports an empty matcher value as missing rather than malformed.
+	invalid := func(code, message string) error {
+		if value == "" {
+			code = "value_required"
+		}
+		return ruleProblem(code, message, "").On(matcher, value)
 	}
 	switch matcher {
 	case "CIDR":
 		for _, v := range strings.Split(value, ",") {
 			if _, err := netip.ParsePrefix(strings.TrimSpace(v)); err != nil {
-				return fmt.Errorf("invalid CIDR")
+				return invalid("cidr_invalid", "invalid CIDR")
 			}
 		}
 	case "Domain":
 		v := strings.TrimSuffix(value, ".")
 		if v == "" || strings.ContainsAny(v, " /*:\t\r\n") {
-			return fmt.Errorf("invalid domain")
+			return invalid("domain_invalid", "invalid domain")
 		}
 	case "GeoIP", "GeoSite":
 		for _, v := range strings.Split(value, ",") {
 			v = strings.TrimSpace(v)
 			if !geoDataDocumentID.MatchString(v) {
-				return fmt.Errorf("invalid geodata identifier")
+				return invalid("geodata_identifier_invalid", "invalid geodata identifier")
 			}
 		}
 	default:
-		return fmt.Errorf("invalid matcher")
+		return ruleProblem("choice_invalid", "invalid matcher", "").Arg("allowed", "CIDR, Domain, GeoIP, GeoSite")
 	}
 	return nil
 }
@@ -480,7 +562,11 @@ func documentValidate(matcher, value, action string) error {
 // InsertRule inserts a new block before index, or appends at RuleCount().
 func (d *ConfigDocument) InsertRule(index int, matcher, value, action string, enabled bool) error {
 	if index < 0 || index > d.RuleCount() {
-		return fmt.Errorf("rule index out of range")
+		return problem.New("rule_index_out_of_range", "rule index out of range").In("Rule")
+	}
+	// The new row has no profile index yet, so its problems carry none.
+	if err := documentCheck(matcher, value, action); err != nil {
+		return err
 	}
 	candidate := ParseConfigDocument([]byte("[Rule]\nDomain=example.com\nAction=direct\n"))
 	if err := candidate.SetRule(0, matcher, value, action); err != nil {
@@ -521,8 +607,11 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 	validName := func(s string) bool {
 		return s != "" && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "[]#;=\r\n\x00")
 	}
-	if !validName(section) || section == "Rule" || !validName(key) || strings.ContainsAny(value, "\r\n\x00") {
-		return fmt.Errorf("invalid section field")
+	if !validName(section) || section == "Rule" || !validName(key) {
+		return problem.New("value_invalid", "invalid section field")
+	}
+	if strings.ContainsAny(value, "\r\n\x00") {
+		return problem.New("value_has_invalid_characters", "invalid section field").In(section).On(key, value)
 	}
 	original := string(d.Bytes())
 	// Refuse target fields beyond a disabled rule rather than creating duplicates.
@@ -540,7 +629,7 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 		}
 		value := strings.TrimSpace(line)
 		if activeSection == section && afterDisabled && value != "" && !strings.HasPrefix(value, "#") && !strings.HasPrefix(value, ";") {
-			return fmt.Errorf("ambiguous section fields after disabled rule; use raw editing")
+			return problem.New("section_ambiguous", "ambiguous section fields after disabled rule; use raw editing").In(section).At(key)
 		}
 	}
 	text := strings.TrimPrefix(original, d.prefix)
@@ -557,7 +646,7 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 			inside = name == section && !disabled
 			if inside {
 				if start >= 0 {
-					return fmt.Errorf("duplicate section")
+					return problem.New("section_duplicate", "duplicate section").In(section)
 				}
 				start = i
 			}
@@ -572,8 +661,11 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 		}
 		k, _, ok := strings.Cut(s, "=")
 		k = strings.TrimSpace(k)
-		if !ok || k == "" || seen[k] {
-			return fmt.Errorf("malformed or duplicate section field")
+		if !ok || k == "" {
+			return problem.New("syntax_invalid", "malformed or duplicate section field").In(section)
+		}
+		if seen[k] {
+			return problem.New("option_duplicate", "malformed or duplicate section field").In(section).At(k)
 		}
 		seen[k] = true
 		if k == key {
@@ -646,7 +738,7 @@ func (d *ConfigDocument) FieldsJSON() (string, error) {
 			section = name
 			if name != "Rule" {
 				if sections[name] {
-					return "", fmt.Errorf("duplicate section")
+					return "", problem.New("section_duplicate", "duplicate section").In(name)
 				}
 				sections[name] = true
 			}
@@ -659,16 +751,16 @@ func (d *ConfigDocument) FieldsJSON() (string, error) {
 		key, value, ok := strings.Cut(s, "=")
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 		if !ok || section == "" || key == "" {
-			return "", fmt.Errorf("malformed section field")
+			return "", problem.New("syntax_invalid", "malformed section field").In(section)
 		}
 		id := section + "/" + key
 		if _, exists := fields[id]; exists {
-			return "", fmt.Errorf("duplicate section field")
+			return "", problem.New("option_duplicate", "duplicate section field").In(section).At(key)
 		}
 		if strings.HasPrefix(value, `"`) {
 			decoded, err := strconv.Unquote(value)
 			if err != nil {
-				return "", fmt.Errorf("invalid quoted section field")
+				return "", problem.New("syntax_invalid", "invalid quoted section field").In(section).At(key)
 			}
 			value = decoded
 		}
