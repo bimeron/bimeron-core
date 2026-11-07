@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -280,5 +281,43 @@ func TestStreamCloseDeliversBufferedTail(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for server")
+	}
+}
+
+func TestCloseDoesNotWaitForInFlightConnect(t *testing.T) {
+	// A UDP socket that never answers keeps the QUIC handshake pending.
+	blackhole, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blackhole.Close()
+	client := newLocalClient(t, blackhole.LocalAddr().(*net.UDPAddr).Port, nil)
+	dialed := make(chan error, 1)
+	go func() {
+		_, err := client.DialStream(context.Background(), "example.com:443")
+		dialed <- err
+	}()
+	_ = blackhole.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var b [2048]byte
+	if _, _, err := blackhole.ReadFrom(b[:]); err != nil {
+		t.Fatalf("handshake did not start: %v", err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- client.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked behind an in-flight connect")
+	}
+	select {
+	case err := <-dialed:
+		if err == nil {
+			t.Fatal("DialStream succeeded after Close")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not cancel the in-flight connect")
+	}
+	if _, err := client.ListenPacket(context.Background()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("ListenPacket after Close: %v", err)
 	}
 }
