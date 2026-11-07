@@ -123,6 +123,10 @@ func watchEvents(ctx context.Context, call func(context.Context, control.Request
 			return nil
 		}
 		delay := timing.poll
+		if err != nil && a.Version == 0 && instance == "" {
+			// No daemon was ever reached: report it instead of waiting forever.
+			return err
+		}
 		if err != nil && a.Version == 0 {
 			if retry == 0 {
 				fmt.Fprintln(out, "Daemon unavailable; retrying:", err)

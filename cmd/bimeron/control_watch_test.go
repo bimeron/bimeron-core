@@ -21,7 +21,6 @@ func TestWatchEventsSurvivesDaemonRestart(t *testing.T) {
 	}
 	var cursors []uint64
 	steps := []func() (control.Response, error){
-		func() (control.Response, error) { return control.Response{}, unavailable },
 		func() (control.Response, error) {
 			return control.Response{Version: 1, Instance: "a", Events: event("first"), Cursor: 3}, nil
 		},
@@ -47,7 +46,7 @@ func TestWatchEventsSurvivesDaemonRestart(t *testing.T) {
 	if err := watchEvents(ctx, call, &out, timing); err != nil {
 		t.Fatal("watch ended on an unavailable daemon:", err)
 	}
-	if got, want := cursors, []uint64{0, 0, 3, 3, 3, 0}; !slices.Equal(got, want) {
+	if got, want := cursors, []uint64{0, 3, 3, 3, 0}; !slices.Equal(got, want) {
 		t.Fatalf("cursors %v, want %v", got, want)
 	}
 	for _, want := range []string{"Daemon unavailable", "first", "Daemon restarted; resetting event cursor."} {
@@ -64,5 +63,15 @@ func TestWatchEventsReturnsDaemonErrors(t *testing.T) {
 	}
 	if err := watchEvents(context.Background(), call, &strings.Builder{}, defaultWatchTiming); !errors.Is(err, daemonErr) {
 		t.Fatal("daemon error was not returned:", err)
+	}
+}
+
+func TestWatchEventsFailsWhenDaemonNeverReached(t *testing.T) {
+	unavailable := errors.New("local control unavailable")
+	call := func(context.Context, control.Request) (control.Response, error) {
+		return control.Response{}, unavailable
+	}
+	if err := watchEvents(context.Background(), call, &strings.Builder{}, defaultWatchTiming); !errors.Is(err, unavailable) {
+		t.Fatal("missing daemon was not reported:", err)
 	}
 }
