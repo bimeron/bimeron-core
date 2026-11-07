@@ -72,7 +72,7 @@ func (v VMess) Validate(host string, port int) error {
 		if _, err := hex.DecodeString(v.ShortID); err != nil {
 			return problem.New("value_invalid", "invalid VMess REALITY short ID").At("ShortID")
 		}
-	} else if field := firstSet("PublicKey", v.PublicKey, "ShortID", v.ShortID, "SpiderX", v.SpiderX); field != "" {
+	} else if field := firstNonEmpty("PublicKey", v.PublicKey, "ShortID", v.ShortID, "SpiderX", v.SpiderX); field != "" {
 		return problem.New("option_requires_security", "REALITY options require VMess reality security").At(field).Also("VMessTLS").Arg("security", "REALITY")
 	}
 	if v.ServerName == "" || strings.ContainsAny(v.ServerName, " /\t\r\n") {
@@ -99,7 +99,7 @@ func (v VMess) Validate(host string, port int) error {
 		return problem.New("fingerprint_unsupported", "unsupported VMess fingerprint").At("Fingerprint").Arg("allowed", fingerprints)
 	}
 	if v.Network == "tcp" && (v.WSPath != "" || v.WSHost != "") {
-		return problem.New("option_requires_transport", "VMess HTTP options require ws or httpupgrade").At(firstSet("VMessPath", v.WSPath, "VMessHost", v.WSHost)).Also("VMessNetwork").Arg("transport", "ws, httpupgrade")
+		return problem.New("option_requires_transport", "VMess HTTP options require ws or httpupgrade").At(firstNonEmpty("VMessPath", v.WSPath, "VMessHost", v.WSHost)).Also("VMessNetwork").Arg("transport", "ws, httpupgrade")
 	}
 	if v.Network == "ws" || v.Network == "httpupgrade" {
 		path, err := url.ParseRequestURI(v.WSPath)
@@ -118,7 +118,7 @@ func (v VMess) Validate(host string, port int) error {
 		multi = "multi"
 	}
 	if v.Network != "grpc" && (v.GRPCServiceName != "" || v.GRPCAuthority != "" || v.GRPCMultiMode) {
-		return problem.New("option_requires_transport", "VMess gRPC options require grpc").At(firstSet("VMessPath", v.GRPCServiceName, "VMessHost", v.GRPCAuthority, "VMessMode", multi)).Also("VMessNetwork").Arg("transport", "grpc")
+		return problem.New("option_requires_transport", "VMess gRPC options require grpc").At(firstNonEmpty("VMessPath", v.GRPCServiceName, "VMessHost", v.GRPCAuthority, "VMessMode", multi)).Also("VMessNetwork").Arg("transport", "grpc")
 	}
 	if v.Network == "grpc" {
 		if v.GRPCServiceName == "" || strings.ContainsAny(v.GRPCServiceName, "?\\# \t\r\n") || (strings.Contains(v.GRPCServiceName, "/") && (!strings.HasPrefix(v.GRPCServiceName, "/") || strings.HasSuffix(v.GRPCServiceName, "/") || strings.Contains(v.GRPCServiceName, "//"))) {
@@ -133,7 +133,7 @@ func (v VMess) Validate(host string, port int) error {
 		extra = "set"
 	}
 	if v.Network != "xhttp" && (v.XHTTPPath != "" || v.XHTTPHost != "" || v.XHTTPMode != "" || v.XHTTPOptions != nil) {
-		return problem.New("option_requires_transport", "VMess XHTTP options require xhttp").At(firstSet("VMessPath", v.XHTTPPath, "VMessHost", v.XHTTPHost, "VMessMode", v.XHTTPMode, "VMessExtra", extra)).Also("VMessNetwork").Arg("transport", "xhttp")
+		return problem.New("option_requires_transport", "VMess XHTTP options require xhttp").At(firstNonEmpty("VMessPath", v.XHTTPPath, "VMessHost", v.XHTTPHost, "VMessMode", v.XHTTPMode, "VMessExtra", extra)).Also("VMessNetwork").Arg("transport", "xhttp")
 	}
 	if v.Network == "xhttp" {
 		if v.XHTTPMode != "auto" && v.XHTTPMode != "packet-up" && v.XHTTPMode != "stream-up" && v.XHTTPMode != "stream-one" {
@@ -165,8 +165,8 @@ func (v VMess) Validate(host string, port int) error {
 	return nil
 }
 
-// firstSet takes name, value pairs and returns the first name with a value.
-func firstSet(pairs ...string) string {
+// firstNonEmpty takes name, value pairs and returns the first name with a value.
+func firstNonEmpty(pairs ...string) string {
 	for i := 0; i+1 < len(pairs); i += 2 {
 		if pairs[i+1] != "" {
 			return pairs[i]
