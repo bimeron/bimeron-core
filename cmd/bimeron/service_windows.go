@@ -4,12 +4,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"bimeron/core"
@@ -87,7 +90,8 @@ func protectServiceDir(path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	data, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || data.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return fmt.Errorf("unsafe service directory")
 	}
 	sd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)")
@@ -100,6 +104,55 @@ func protectServiceDir(path string) error {
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
+func serviceInstallDir() (string, error) {
+	root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "Bimeron Core"), nil
+}
+
+// uninstallWindowsService removes the service and its artifacts. It also
+// resumes an interrupted uninstall after the registration is already gone.
+func uninstallWindowsService(m *mgr.Mgr) error {
+	var deleteService func() error
+	s, err := m.OpenService(serviceName)
+	switch {
+	case err == nil:
+		defer s.Close()
+		status, err := s.Query()
+		if err != nil {
+			return err
+		}
+		if status.State != svc.Stopped {
+			return fmt.Errorf("stop service before uninstall")
+		}
+		deleteService = func() error {
+			if err := s.Delete(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
+				return err
+			}
+			return nil
+		}
+	case errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST):
+		fmt.Println("Service is not registered; removing remaining files.")
+	default:
+		return err
+	}
+	return uninstallServiceArtifacts(deleteService, func() error { return eventlog.Remove(serviceName) }, func() error {
+		dir, err := serviceInstallDir()
+		if err != nil {
+			return err
+		}
+		if err = protectServiceDir(dir); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		return removeServiceFiles(dir)
+	})
+}
+
 func copyServiceFile(source, destination string) error {
 	in, err := os.Open(source)
 	if err != nil {
@@ -222,16 +275,23 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 		if err != nil {
 			return err
 		}
-		root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+		dir, err := serviceInstallDir()
 		if err != nil {
 			return err
 		}
-		dir := filepath.Join(root, "Bimeron Core")
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 		if err = protectServiceDir(dir); err != nil {
 			return err
+		}
+		// No service is registered, so installed files and the event source
+		// can only be leftovers of an interrupted install or uninstall.
+		if err = removeServiceFiles(dir); err != nil {
+			return fmt.Errorf("cannot remove files left by a previous installation: %w", err)
+		}
+		if err = eventlog.Remove(serviceName); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("cannot remove event log source left by a previous installation: %w", err)
 		}
 		executable, err := os.Executable()
 		if err != nil {
@@ -282,6 +342,9 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 		fmt.Println("Service installed. Start it with bimeron service start. VPN stays disconnected until start <config>.")
 		return nil
 	}
+	if args[0] == "uninstall" {
+		return uninstallWindowsService(m)
+	}
 	s, err := m.OpenService(serviceName)
 	if err != nil {
 		return err
@@ -323,34 +386,6 @@ func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 			time.Sleep(250 * time.Millisecond)
 		}
 		return fmt.Errorf("service stop timed out; cleanup may still be running")
-	case "uninstall":
-		status, err := s.Query()
-		if err != nil {
-			return err
-		}
-		if status.State != svc.Stopped {
-			return fmt.Errorf("stop service before uninstall")
-		}
-		if err = s.Delete(); err != nil {
-			return err
-		}
-		if err = eventlog.Remove(serviceName); err != nil {
-			return err
-		}
-		root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
-		if err != nil {
-			return err
-		}
-		dir := filepath.Join(root, "Bimeron Core")
-		if err = protectServiceDir(dir); err != nil {
-			return err
-		}
-		for _, name := range []string{"bimeron.exe", "wintun.dll", "WINTUN-LICENSE.txt"} {
-			if err = os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-		return nil
 	default:
 		return fmt.Errorf("unknown service command")
 	}
