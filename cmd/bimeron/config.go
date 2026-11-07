@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bimeron/core"
 	"bimeron/internal/accesskey"
 	"bimeron/internal/config"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -59,6 +61,19 @@ func validateConfig(args []string) error {
 	}
 	fmt.Println("Configuration valid. No network requests or system changes performed.")
 	return nil
+}
+
+// errorCatalog prints the embedded catalog of human-readable error texts.
+func errorCatalog(args []string, out io.Writer) error {
+	if len(args) != 1 || args[0] != "--json" {
+		return fmt.Errorf("usage: bimeron errors --json")
+	}
+	b, err := core.ErrorCatalog()
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(append(b, '\n'))
+	return err
 }
 func runConfig(args []string) error {
 	if len(args) != 1 {

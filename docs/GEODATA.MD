@@ -95,7 +95,8 @@ Group enumeration returns `{"groups":["github"],"error":null}`; an empty result
 is `[]`. Validation returns `{"groups":null,"error":null}` on success. Failures
 return an `error` string and, for typed geodata failures, a `details` object
 with the fields above; groups must not be used after an error. Generic errors
-omit `details`. Capabilities
+omit `details`. Every failure also adds `problems`, a list of structured problems
+described in [ERRORS.MD](ERRORS.MD); success responses omit `problems`. Capabilities
 returns the embedded Android packet backend's capability JSON.
 
 ## Apple C ABI
@@ -110,6 +111,7 @@ char *RLGeoDataGroups(char *kind, void *data, int size);
 char *RLValidateConfigWithGeoData(void *profile, int profileSize,
     void *geoIP, int geoIPSize, void *geoSite, int geoSiteSize);
 char *RLCapabilities(void);
+char *RLErrorCatalog(void);
 void RLFree(void *ptr);
 ```
 

@@ -59,6 +59,8 @@ func run(args []string) error {
 		return runConfig(args[1:])
 	case "validate":
 		return validateConfig(args[1:])
+	case "errors":
+		return errorCatalog(args[1:], os.Stdout)
 	case "check":
 		return check(args[1:])
 	case "connect":

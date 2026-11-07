@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protowire"
+
+	"bimeron/internal/problem"
 )
 
 // Decoder limits bound allocations and work on untrusted local dataset bytes.
@@ -47,6 +49,29 @@ func (e *GeoDataError) Error() string {
 	return location + ": " + e.Err.Error()
 }
 func (e *GeoDataError) Unwrap() error { return e.Err }
+
+// Problem locates the failure in the profile: the GeoIP or GeoSite field of a
+// [Rule] when Rule is set, otherwise the [GeoData] file option of the dataset.
+// Group identifiers are dataset IDs and safe to pass as the "group" argument.
+func (e *GeoDataError) Problem() *problem.Error {
+	p := problem.New(e.Code, e.Error()).Wrap(e)
+	field := map[string]string{"geoip": "GeoIP", "geosite": "GeoSite"}[strings.ToLower(e.Kind)]
+	if e.Rule > 0 {
+		p.In("Rule").AtRule(e.Rule)
+	} else {
+		p.In("GeoData")
+		if field != "" {
+			field += "File"
+		}
+	}
+	if field != "" {
+		p.At(field)
+	}
+	if e.Group != "" {
+		p.Arg("group", e.Group)
+	}
+	return p
+}
 
 // GeoData is an immutable decoded V2Ray GeoIPList/GeoSiteList snapshot.
 // Schemas: https://github.com/v2fly/v2ray-core/blob/v4.45.2/app/router/config.proto

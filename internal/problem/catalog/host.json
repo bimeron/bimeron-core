@@ -1,0 +1,19 @@
+{
+  "codes": {
+    "embedded_requires_vpn_mode": {
+      "kind": "config",
+      "en": "This device supports only VPN mode. Switch the profile to VPN mode.",
+      "ru": "На этом устройстве доступен только режим VPN. Переключите профиль в режим VPN."
+    },
+    "embedded_kill_switch_unsupported": {
+      "kind": "config",
+      "en": "The kill switch is not available on this device. Use the system's own setting to block connections without VPN.",
+      "ru": "Блокировка трафика вне VPN на этом устройстве недоступна. Используйте системную настройку блокировки подключений без VPN."
+    },
+    "embedded_ikev2_unsupported": {
+      "kind": "config",
+      "en": "IKEv2 profiles are not supported on this device.",
+      "ru": "Профили IKEv2 на этом устройстве не поддерживаются."
+    }
+  }
+}

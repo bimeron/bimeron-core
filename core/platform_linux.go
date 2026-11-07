@@ -23,7 +23,7 @@ func newPlatform(c SessionConfig) platform {
 }
 func (p *linuxPlatform) Acquire(ctx context.Context) (func(), error) {
 	if err := linuxnet.Requirements(p.killSwitch); err != nil {
-		return nil, fault(err.Error(), false)
+		return nil, requirementsFault(err)
 	}
 	release, err := linuxnet.Lock("vpn.lock")
 	if err != nil {
@@ -38,14 +38,17 @@ func (p *linuxPlatform) Acquire(ctx context.Context) (func(), error) {
 	}
 	if err != nil {
 		release()
-		return nil, fault("linux_recovery_failed: "+err.Error(), false)
+		return nil, codeFault(err, "linux_recovery_failed", false)
 	}
 	return release, nil
 }
 func (p *linuxPlatform) Inspect(ctx context.Context, name string, startup bool) (networkPath, error) {
 	s, err := p.manager.Observe(ctx, name, startup)
 	if err != nil {
-		return networkPath{}, fault(err.Error(), errors.Is(err, linuxnet.ErrNetworkUnavailable))
+		if errors.Is(err, linuxnet.ErrTunnelNameInUse) {
+			return networkPath{}, fault("adapter_name_in_use", false)
+		}
+		return networkPath{}, codeFault(err, "network_inspect_failed", errors.Is(err, linuxnet.ErrNetworkUnavailable))
 	}
 	identity, _ := json.Marshal(s)
 	return networkPath{identity: string(identity), dns: s.DNS, dialer: net.Dialer{Timeout: 15 * time.Second, Control: linuxnet.BoundDialer(s.Device)}}, nil
@@ -78,7 +81,7 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 	})
 	report("network_setup", "Configuring Linux policy routes and tunnel DNS")
 	if err = p.manager.Configure(ctx, d.Name(), c.MTU, c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
-		return nil, fault("linux_network_setup_failed: "+err.Error(), false)
+		return nil, codeFault(err, "linux_network_setup_failed", false)
 	}
 	if c.KillSwitch {
 		report("kill_switch_active", "nftables kill switch active; protection survives process termination")

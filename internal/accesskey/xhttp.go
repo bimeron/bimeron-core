@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"bimeron/internal/problem"
 )
 
 // XHTTPRange accepts Xray's integer or "from-to" JSON representation.
@@ -24,7 +26,7 @@ func (r *XHTTPRange) UnmarshalJSON(b []byte) error {
 	}
 	var s string
 	if json.Unmarshal(b, &s) != nil {
-		return fmt.Errorf("invalid XHTTP range")
+		return problem.New("xhttp_extra_invalid", "invalid XHTTP range")
 	}
 	if n, err := strconv.Atoi(s); err == nil {
 		r.From, r.To = n, n
@@ -32,12 +34,12 @@ func (r *XHTTPRange) UnmarshalJSON(b []byte) error {
 	}
 	a, z, ok := strings.Cut(s, "-")
 	if !ok {
-		return fmt.Errorf("invalid XHTTP range")
+		return problem.New("xhttp_extra_invalid", "invalid XHTTP range")
 	}
 	first, e1 := strconv.Atoi(a)
 	last, e2 := strconv.Atoi(z)
 	if e1 != nil || e2 != nil {
-		return fmt.Errorf("invalid XHTTP range")
+		return problem.New("xhttp_extra_invalid", "invalid XHTTP range")
 	}
 	r.From, r.To = min(first, last), max(first, last)
 	return nil
@@ -98,14 +100,14 @@ func (d *XHTTPDownloadSettings) UnmarshalJSON(data []byte) error {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return fmt.Errorf("invalid XHTTP download settings")
+		return problem.New("xhttp_extra_invalid", "invalid XHTTP download settings")
 	}
 	*d = XHTTPDownloadSettings{Address: wire.Address, Port: wire.Port, Network: wire.Network, Security: wire.Security}
 	if wire.TLSSettings != nil {
 		d.ServerName = wire.TLSSettings.ServerName
 		d.Fingerprint = wire.TLSSettings.Fingerprint
 		if len(wire.TLSSettings.ALPN) > 1 {
-			return fmt.Errorf("unsupported XHTTP download ALPN")
+			return problem.New("xhttp_extra_invalid", "unsupported XHTTP download ALPN")
 		}
 		if len(wire.TLSSettings.ALPN) == 1 {
 			d.ALPN = wire.TLSSettings.ALPN[0]
@@ -113,7 +115,7 @@ func (d *XHTTPDownloadSettings) UnmarshalJSON(data []byte) error {
 	}
 	if wire.RealitySettings != nil {
 		if wire.TLSSettings != nil || wire.Security != "reality" {
-			return fmt.Errorf("invalid XHTTP download security settings")
+			return problem.New("xhttp_extra_invalid", "invalid XHTTP download security settings")
 		}
 		d.ServerName, d.PublicKey, d.ShortID, d.Fingerprint = wire.RealitySettings.ServerName, wire.RealitySettings.PublicKey, wire.RealitySettings.ShortID, wire.RealitySettings.Fingerprint
 	}
@@ -148,20 +150,32 @@ type XHTTPOptions struct {
 	ServerMaxHeaderBytes int                    `json:"serverMaxHeaderBytes"`
 	Xmux                 *XHTTPXmux             `json:"xmux"`
 	DownloadSettings     *XHTTPDownloadSettings `json:"downloadSettings"`
+
+	// separate records that the options came from separate XHTTP* .conf
+	// options rather than one XHTTPExtra JSON value.
+	separate bool
+}
+
+// field names the canonical option that holds the named setting.
+func (o *XHTTPOptions) field(name string) string {
+	if o.separate {
+		return "XHTTP" + name
+	}
+	return "XHTTPExtra"
 }
 
 func ParseXHTTPExtra(raw string) (*XHTTPOptions, error) {
 	if len(raw) > 16*1024 {
-		return nil, fmt.Errorf("XHTTP extra is too large")
+		return nil, problem.New("value_too_long", "XHTTP extra is too large").At("XHTTPExtra").Arg("max", "16384")
 	}
 	if err := xhttpCheckJSONKeys(json.NewDecoder(strings.NewReader(raw))); err != nil {
-		return nil, fmt.Errorf("invalid or duplicate XHTTP extra key")
+		return nil, problem.New("xhttp_extra_invalid", "invalid or duplicate XHTTP extra key").At("XHTTPExtra")
 	}
 	var options XHTTPOptions
 	d := json.NewDecoder(strings.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&options) != nil || d.Decode(new(any)) != io.EOF || !strings.HasPrefix(strings.TrimSpace(raw), "{") {
-		return nil, fmt.Errorf("invalid or unsupported XHTTP extra")
+		return nil, problem.New("xhttp_extra_invalid", "invalid or unsupported XHTTP extra").At("XHTTPExtra")
 	}
 	return &options, nil
 }
@@ -216,124 +230,157 @@ func xhttpCheckJSONKeys(d *json.Decoder) error {
 
 var xhttpToken = regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+.^_` + "`" + `|~-]+$`)
 
+// Validate checks the options against the XHTTP mode, security and ALPN.
+// Problems name XHTTPExtra or the separate XHTTP* option, with XHTTPMode,
+// Security and ALPN as related fields.
 func (o *XHTTPOptions) Validate(mode, security, alpn string) error {
 	if o == nil {
 		return nil
 	}
 	for name, value := range o.Headers {
 		if !xhttpToken.MatchString(name) || strings.EqualFold(name, "host") || strings.ContainsAny(value, "\r\n") || len(value) > 4096 {
-			return fmt.Errorf("invalid XHTTP header")
+			return problem.New("xhttp_header_invalid", "invalid XHTTP header").At(o.field("Headers"))
 		}
 	}
-	for _, r := range []XHTTPRange{o.XPaddingBytes, o.UplinkChunkSize, o.ScMaxEachPostBytes, o.ScMinPostsIntervalMs, o.ScStreamUpServerSecs} {
-		if r != (XHTTPRange{}) && !r.valid(1, 1<<20) {
-			return fmt.Errorf("invalid XHTTP range")
+	for _, r := range []struct {
+		name  string
+		value XHTTPRange
+	}{{"XPaddingBytes", o.XPaddingBytes}, {"UplinkChunkSize", o.UplinkChunkSize}, {"ScMaxEachPostBytes", o.ScMaxEachPostBytes}, {"ScMinPostsIntervalMs", o.ScMinPostsIntervalMs}, {"ScStreamUpServerSecs", o.ScStreamUpServerSecs}} {
+		if r.value != (XHTTPRange{}) && !r.value.valid(1, 1<<20) {
+			return problem.New("xhttp_range_invalid", "invalid XHTTP range").At(o.field(r.name)).Arg("min", "1").Arg("max", "1048576")
 		}
 	}
-	if o.ScMaxBufferedPosts < 0 || o.ScMaxBufferedPosts > 1024 || o.ServerMaxHeaderBytes < 0 || o.ServerMaxHeaderBytes > 1<<20 {
-		return fmt.Errorf("invalid XHTTP limit")
+	if o.ScMaxBufferedPosts < 0 || o.ScMaxBufferedPosts > 1024 {
+		return problem.New("number_out_of_range", "invalid XHTTP limit").At(o.field("ScMaxBufferedPosts")).Arg("min", "0").Arg("max", "1024")
+	}
+	if o.ServerMaxHeaderBytes < 0 || o.ServerMaxHeaderBytes > 1<<20 {
+		return problem.New("number_out_of_range", "invalid XHTTP limit").At(o.field("ServerMaxHeaderBytes")).Arg("min", "0").Arg("max", "1048576")
 	}
 	if o.XPaddingPlacement != "" && o.XPaddingPlacement != "queryInHeader" && o.XPaddingPlacement != "query" && o.XPaddingPlacement != "header" && o.XPaddingPlacement != "cookie" {
-		return fmt.Errorf("invalid XHTTP padding placement")
+		return problem.New("choice_invalid", "invalid XHTTP padding placement").At(o.field("XPaddingPlacement")).Arg("allowed", "queryInHeader, query, header, cookie")
 	}
 	if o.XPaddingMethod != "" && o.XPaddingMethod != "repeat-x" && o.XPaddingMethod != "tokenish" {
-		return fmt.Errorf("invalid XHTTP padding method")
+		return problem.New("choice_invalid", "invalid XHTTP padding method").At(o.field("XPaddingMethod")).Arg("allowed", "repeat-x, tokenish")
 	}
-	for _, key := range []string{o.XPaddingKey, o.XPaddingHeader, o.SessionKey, o.SeqKey, o.UplinkDataKey} {
-		if key != "" && !xhttpToken.MatchString(key) {
-			return fmt.Errorf("invalid XHTTP key")
+	for _, key := range []struct{ name, value string }{{"XPaddingKey", o.XPaddingKey}, {"XPaddingHeader", o.XPaddingHeader}, {"SessionKey", o.SessionKey}, {"SeqKey", o.SeqKey}, {"UplinkDataKey", o.UplinkDataKey}} {
+		if key.value != "" && !xhttpToken.MatchString(key.value) {
+			return problem.New("value_has_invalid_characters", "invalid XHTTP key").At(o.field(key.name))
 		}
 	}
-	for _, placement := range []string{o.SessionPlacement, o.SeqPlacement} {
-		if placement != "" && placement != "path" && placement != "query" && placement != "header" && placement != "cookie" {
-			return fmt.Errorf("invalid XHTTP metadata placement")
+	for _, placement := range []struct{ name, value string }{{"SessionPlacement", o.SessionPlacement}, {"SeqPlacement", o.SeqPlacement}} {
+		if placement.value != "" && placement.value != "path" && placement.value != "query" && placement.value != "header" && placement.value != "cookie" {
+			return problem.New("choice_invalid", "invalid XHTTP metadata placement").At(o.field(placement.name)).Arg("allowed", "path, query, header, cookie")
 		}
 	}
 	if o.UplinkDataPlacement != "" && o.UplinkDataPlacement != "auto" && o.UplinkDataPlacement != "body" && o.UplinkDataPlacement != "header" && o.UplinkDataPlacement != "cookie" {
-		return fmt.Errorf("invalid XHTTP uplink data placement")
+		return problem.New("choice_invalid", "invalid XHTTP uplink data placement").At(o.field("UplinkDataPlacement")).Arg("allowed", "auto, body, header, cookie")
 	}
 	if (o.UplinkDataPlacement == "header" || o.UplinkDataPlacement == "cookie") && mode != "packet-up" {
-		return fmt.Errorf("XHTTP uplink placement requires packet-up")
+		return problem.New("option_requires_mode", "XHTTP uplink placement requires packet-up").At(o.field("UplinkDataPlacement")).Also("XHTTPMode").Arg("mode", "packet-up")
 	}
-	if o.UplinkHTTPMethod != "" && o.UplinkHTTPMethod != "POST" && (o.UplinkHTTPMethod != "GET" || mode != "packet-up") {
-		return fmt.Errorf("invalid XHTTP uplink method")
+	if o.UplinkHTTPMethod != "" && o.UplinkHTTPMethod != "POST" && o.UplinkHTTPMethod != "GET" {
+		return problem.New("choice_invalid", "invalid XHTTP uplink method").At(o.field("UplinkHTTPMethod")).Arg("allowed", "POST, GET")
+	}
+	if o.UplinkHTTPMethod == "GET" && mode != "packet-up" {
+		return problem.New("option_requires_mode", "invalid XHTTP uplink method").At(o.field("UplinkHTTPMethod")).Also("XHTTPMode").Arg("mode", "packet-up")
 	}
 	if o.Xmux != nil {
 		m := o.Xmux
 		for _, r := range []XHTTPRange{m.MaxConcurrency, m.MaxConnections, m.CMaxReuseTimes, m.HMaxRequestTimes, m.HMaxReusableSecs} {
 			if r != (XHTTPRange{}) && !r.valid(1, 100000) {
-				return fmt.Errorf("invalid XHTTP xmux range")
+				return problem.New("xhttp_range_invalid", "invalid XHTTP xmux range").At(o.field("Xmux")).Arg("min", "1").Arg("max", "100000")
 			}
 		}
-		if (m.MaxConcurrency != (XHTTPRange{}) && m.MaxConnections != (XHTTPRange{})) || m.HKeepAlivePeriod < 0 || m.HKeepAlivePeriod > 86400 || alpn == "h3" {
-			return fmt.Errorf("unsupported XHTTP xmux settings")
+		if m.MaxConcurrency != (XHTTPRange{}) && m.MaxConnections != (XHTTPRange{}) {
+			return problem.New("combination_unsupported", "unsupported XHTTP xmux settings").At(o.field("Xmux"))
+		}
+		if m.HKeepAlivePeriod < 0 || m.HKeepAlivePeriod > 86400 {
+			return problem.New("number_out_of_range", "unsupported XHTTP xmux settings").At(o.field("Xmux")).Arg("min", "0").Arg("max", "86400")
+		}
+		if alpn == "h3" {
+			return problem.New("combination_unsupported", "unsupported XHTTP xmux settings").At(o.field("Xmux")).Also("ALPN")
 		}
 	}
 	if d := o.DownloadSettings; d != nil {
-		if mode == "stream-one" || (mode == "auto" && security == "reality") || d.Address == "" || d.Port < 1 || d.Port > 65535 || d.Network != "xhttp" || (d.Security != "tls" && d.Security != "reality") {
-			return fmt.Errorf("invalid XHTTP download settings")
+		field := o.field("DownloadSettings")
+		if mode == "stream-one" {
+			return problem.New("combination_unsupported", "invalid XHTTP download settings").At(field).Also("XHTTPMode")
+		}
+		if mode == "auto" && security == "reality" {
+			return problem.New("combination_unsupported", "invalid XHTTP download settings").At(field).Also("XHTTPMode", "Security")
+		}
+		if d.Address == "" || d.Port < 1 || d.Port > 65535 || d.Network != "xhttp" || (d.Security != "tls" && d.Security != "reality") {
+			return problem.New("xhttp_download_invalid", "invalid XHTTP download settings").At(field)
 		}
 		if strings.ContainsAny(d.Address, " /\\@?#\t\r\n") || strings.ContainsAny(d.ServerName, " /\\@?#\t\r\n") || strings.ContainsAny(d.Host, "\r\n") || strings.ContainsAny(d.Path, "\r\n") {
-			return fmt.Errorf("invalid XHTTP download endpoint")
+			return problem.New("xhttp_download_invalid", "invalid XHTTP download endpoint").At(field)
 		}
 		if d.Security == "reality" {
 			if d.ServerName == "" || d.Fingerprint == "" || d.PublicKey == "" || d.ALPN == "h3" {
-				return fmt.Errorf("invalid XHTTP download REALITY settings")
+				return problem.New("xhttp_download_invalid", "invalid XHTTP download REALITY settings").At(field)
 			}
 			key, err := base64.RawURLEncoding.DecodeString(d.PublicKey)
 			if err != nil || len(key) != 32 || len(d.ShortID) > 16 || len(d.ShortID)%2 != 0 {
-				return fmt.Errorf("invalid XHTTP download REALITY key")
+				return problem.New("xhttp_download_invalid", "invalid XHTTP download REALITY key").At(field)
 			}
 			if _, err := hex.DecodeString(d.ShortID); err != nil {
-				return fmt.Errorf("invalid XHTTP download REALITY short ID")
+				return problem.New("xhttp_download_invalid", "invalid XHTTP download REALITY short ID").At(field)
 			}
-			switch d.Fingerprint {
-			case "chrome", "firefox", "safari", "ios", "android", "edge":
-			default:
-				return fmt.Errorf("unsupported XHTTP download fingerprint")
+			if !supportedFingerprint(d.Fingerprint) {
+				return problem.New("fingerprint_unsupported", "unsupported XHTTP download fingerprint").At(field).Arg("allowed", fingerprints)
 			}
 		} else if d.PublicKey != "" || d.ShortID != "" {
-			return fmt.Errorf("REALITY options require download security=reality")
+			return problem.New("xhttp_download_invalid", "REALITY options require download security=reality").At(field)
 		}
-		if d.ALPN != "" && d.ALPN != "h2" && d.ALPN != "h3" || d.ALPN == "h3" && d.Fingerprint != "" {
-			return fmt.Errorf("invalid XHTTP download ALPN")
+		if d.ALPN != "" && d.ALPN != "h2" && d.ALPN != "h3" {
+			return problem.New("alpn_invalid", "invalid XHTTP download ALPN").At(field).Arg("allowed", "h2, h3")
 		}
-		if d.Fingerprint != "" {
-			switch d.Fingerprint {
-			case "chrome", "firefox", "safari", "ios", "android", "edge":
-			default:
-				return fmt.Errorf("unsupported XHTTP download fingerprint")
-			}
+		if d.ALPN == "h3" && d.Fingerprint != "" {
+			return problem.New("combination_unsupported", "invalid XHTTP download ALPN").At(field)
+		}
+		if d.Fingerprint != "" && !supportedFingerprint(d.Fingerprint) {
+			return problem.New("fingerprint_unsupported", "unsupported XHTTP download fingerprint").At(field).Arg("allowed", fingerprints)
 		}
 		if d.Host != "" {
 			host, err := url.Parse("https://" + d.Host)
 			if err != nil || host.Hostname() == "" || host.User != nil || host.Path != "" || host.RawQuery != "" || host.Fragment != "" || strings.ContainsAny(d.Host, " /\\@?#\t\r\n") {
-				return fmt.Errorf("invalid XHTTP download host")
+				return problem.New("host_invalid", "invalid XHTTP download host").At(field)
 			}
 		}
 		if d.Path != "" && (!strings.HasPrefix(d.Path, "/") || strings.ContainsAny(d.Path, "#\\")) {
-			return fmt.Errorf("invalid XHTTP download path")
+			return problem.New("path_invalid", "invalid XHTTP download path").At(field)
 		}
 	}
 	return nil
+}
+
+// fingerprints lists the supported TLS fingerprints for problem arguments.
+const fingerprints = "chrome, firefox, safari, ios, android, edge"
+
+func supportedFingerprint(name string) bool {
+	switch name {
+	case "chrome", "firefox", "safari", "ios", "android", "edge":
+		return true
+	}
+	return false
 }
 
 // SetXHTTPConfField maps simple .conf fields to the same model as link extra.
 func (o *XHTTPOptions) SetXHTTPConfField(key, value string) error {
 	field := strings.TrimPrefix(key, "XHTTP")
 	if field == "" {
-		return fmt.Errorf("unknown XHTTP option")
+		return problem.New("option_unknown", "unknown XHTTP option").At(key)
 	}
 	name := strings.ToLower(field[:1]) + field[1:]
 	target := reflect.ValueOf(o).Elem().FieldByName(field)
 	if !target.IsValid() || !target.CanSet() {
-		return fmt.Errorf("unknown XHTTP option")
+		return problem.New("option_unknown", "unknown XHTTP option").At(key)
 	}
 	var raw json.RawMessage
 	switch {
 	case target.Kind() == reflect.Bool:
 		if value != "true" && value != "false" {
-			return fmt.Errorf("invalid XHTTP boolean")
+			return problem.New("boolean_invalid", "invalid XHTTP boolean").At(key)
 		}
 		raw = []byte(value)
 	case target.Kind() == reflect.Int || target.Type() == reflect.TypeOf(XHTTPRange{}):
@@ -350,8 +397,12 @@ func (o *XHTTPOptions) SetXHTTPConfField(key, value string) error {
 	data, _ := json.Marshal(map[string]json.RawMessage{name: raw})
 	parsed, err := ParseXHTTPExtra(string(data))
 	if err != nil {
+		if p, ok := problem.As(err); ok {
+			p.At(key)
+		}
 		return err
 	}
 	target.Set(reflect.ValueOf(parsed).Elem().FieldByName(field))
+	o.separate = true
 	return nil
 }

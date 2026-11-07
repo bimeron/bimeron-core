@@ -1,12 +1,13 @@
 package control
 
 import (
+	core "bimeron/core"
+	"bimeron/internal/problem"
+	"bimeron/internal/telemetry"
 	"context"
 	"errors"
 	"net"
 	"path/filepath"
-	core "bimeron/core"
-	"bimeron/internal/telemetry"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,33 @@ func (e *fakeEngine) Status() core.Status {
 }
 func (e *fakeEngine) Events() <-chan core.Event { return e.events }
 func (e *fakeEngine) Stats() telemetry.Snapshot { return telemetry.Snapshot{} }
+
+func TestStartReportsConfigurationProblems(t *testing.T) {
+	e := &fakeEngine{state: core.Disconnected, events: make(chan core.Event)}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) {
+		return core.SessionConfig{}, problem.New("interface_name_invalid", "bad name").In("Interface").At("Name").AtLine(7)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Serve(ctx, l)
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	callCtx, end := context.WithTimeout(context.Background(), 3*time.Second)
+	defer end()
+	path, _ := filepath.Abs("test.conf")
+	a, err := exchange(callCtx, c, Request{Command: "start", Config: path})
+	if err == nil || err.Error() != "invalid_configuration" || len(a.Problems) != 1 || a.Problems[0].Code != "interface_name_invalid" || a.Problems[0].Line != 7 {
+		t.Fatalf("%+v", a)
+	}
+}
 
 func TestStopKeepsDaemonAndShutdownExits(t *testing.T) {
 	e := &fakeEngine{state: core.Disconnected, events: make(chan core.Event)}

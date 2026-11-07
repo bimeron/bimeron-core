@@ -100,7 +100,7 @@ func TestValidateJSONBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := validateJSONBridge(path, &out); err != nil || out.String() != "{\"version\":1}\n" {
+	if err := validateJSONBridge(path, &out); err != nil || out.String() != "{\"version\":1,\"problems\":[]}\n" {
 		t.Fatalf("%s %v", out.String(), err)
 	}
 	profile += "[GeoData]\nGeoIPFile=missing.dat\n[Rule]\nGeoIP=zz\nAction=direct\n"
@@ -112,5 +112,49 @@ func TestValidateJSONBridge(t *testing.T) {
 	var r bridgeResponse
 	if json.Unmarshal(out.Bytes(), &r) != nil || r.Error == "" || r.Details == nil || r.Details.Code != "geodata_unreadable" || strings.Contains(out.String(), "secret") {
 		t.Fatal(out.String())
+	}
+	if r.Problems == nil || len(*r.Problems) != 1 || (*r.Problems)[0].Code != "geodata_unreadable" {
+		t.Fatal(out.String())
+	}
+}
+
+func TestValidateJSONBridgeLocatesProblems(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "draft.conf")
+	profile := "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:secret@127.0.0.1:8388\n\n[Interface]\nName = 1bad\n"
+	if err := os.WriteFile(path, []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := validateJSONBridge(path, &out); err != nil {
+		t.Fatal(err)
+	}
+	var r bridgeResponse
+	if json.Unmarshal(out.Bytes(), &r) != nil || r.Problems == nil || len(*r.Problems) != 1 || strings.Contains(out.String(), "secret") {
+		t.Fatal(out.String())
+	}
+	p := (*r.Problems)[0]
+	if p.Code != "interface_name_invalid" || p.Section != "Interface" || p.Field != "Name" || p.Line != 8 || p.Value != "present" || p.Args["max"] != "32" {
+		t.Fatalf("%+v", p)
+	}
+	out.Reset()
+	if err := validateJSONBridge("relative.conf", &out); err != nil || !strings.Contains(out.String(), `"code":"invalid_request"`) {
+		t.Fatal(out.String(), err)
+	}
+}
+
+func TestErrorCatalogCommand(t *testing.T) {
+	var out bytes.Buffer
+	if err := errorCatalog([]string{"--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Version int
+		Codes   map[string]struct{ Kind, EN, RU string }
+	}
+	if err := json.Unmarshal(out.Bytes(), &c); err != nil || c.Version != 1 || c.Codes["interface_name_invalid"].RU == "" {
+		t.Fatal(out.String(), err)
+	}
+	if errorCatalog(nil, &out) == nil || errorCatalog([]string{"--text"}, &out) == nil {
+		t.Fatal("errors accepted invalid arguments")
 	}
 }

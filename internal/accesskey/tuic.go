@@ -2,10 +2,11 @@ package accesskey
 
 import (
 	"encoding/hex"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"bimeron/internal/problem"
 )
 
 // TUIC holds the TUIC v5 credentials and TLS settings.
@@ -14,20 +15,29 @@ type TUIC struct {
 }
 
 func (t TUIC) Validate(host string, port int) error {
-	if host == "" || strings.ContainsAny(host, " /\t\r\n") || port < 1 || port > 65535 {
-		return fmt.Errorf("invalid TUIC server endpoint")
+	if host == "" || strings.ContainsAny(host, " /\t\r\n") {
+		return problem.New("host_invalid", "invalid TUIC server endpoint").At("Server")
+	}
+	if port < 1 || port > 65535 {
+		return problem.New("port_invalid", "invalid TUIC server endpoint").At("Port")
 	}
 	if !uuidPattern.MatchString(t.ID) {
-		return fmt.Errorf("invalid TUIC user ID")
+		return problem.New("uuid_invalid", "invalid TUIC user ID").On("ID", t.ID)
 	}
-	if t.Password == "" || strings.ContainsAny(t.Password, "\r\n") {
-		return fmt.Errorf("invalid TUIC password")
+	if t.Password == "" {
+		return problem.New("value_required", "invalid TUIC password").On("Password", "")
+	}
+	if strings.ContainsAny(t.Password, "\r\n") {
+		return problem.New("value_has_invalid_characters", "invalid TUIC password").On("Password", t.Password)
 	}
 	if t.ServerName == "" || strings.ContainsAny(t.ServerName, " /\t\r\n") {
-		return fmt.Errorf("invalid TUIC server name")
+		return problem.New("server_name_invalid", "invalid TUIC server name").At("ServerName")
 	}
-	if t.ALPN == "" || strings.ContainsAny(t.ALPN, " ,\t\r\n") {
-		return fmt.Errorf("invalid TUIC ALPN")
+	if t.ALPN == "" {
+		return problem.New("value_required", "invalid TUIC ALPN").On("ALPN", "")
+	}
+	if strings.ContainsAny(t.ALPN, " ,\t\r\n") {
+		return problem.New("value_has_invalid_characters", "invalid TUIC ALPN").At("ALPN")
 	}
 	return nil
 }
@@ -43,27 +53,27 @@ func (t TUIC) UUID() [16]byte {
 func ParseTUIC(raw string) (Profile, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "tuic" || u.User == nil || u.Hostname() == "" || u.Path != "" {
-		return Profile{}, fmt.Errorf("invalid TUIC URI")
+		return Profile{}, problem.New("uri_invalid", "invalid TUIC URI")
 	}
 	password, ok := u.User.Password()
 	if !ok {
-		return Profile{}, fmt.Errorf("invalid TUIC credentials")
+		return Profile{}, problem.New("value_required", "invalid TUIC credentials").On("Password", "")
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil {
-		return Profile{}, fmt.Errorf("invalid TUIC port")
+		return Profile{}, problem.New("port_invalid", "invalid TUIC port").At("Port")
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return Profile{}, fmt.Errorf("invalid TUIC options")
+		return Profile{}, problem.New("uri_invalid", "invalid TUIC options")
 	}
 	for key, values := range q {
 		if (key != "sni" && key != "alpn" && key != "udp_relay_mode") || len(values) != 1 {
-			return Profile{}, fmt.Errorf("unsupported or duplicate TUIC option")
+			return Profile{}, problem.New("uri_option_unsupported", "unsupported or duplicate TUIC option")
 		}
 	}
 	if q.Has("udp_relay_mode") && q.Get("udp_relay_mode") != "quic" {
-		return Profile{}, fmt.Errorf("unsupported TUIC UDP relay mode")
+		return Profile{}, problem.New("choice_invalid", "unsupported TUIC UDP relay mode").At("UDPRelayMode").Arg("allowed", "quic")
 	}
 	t := TUIC{ID: u.User.Username(), Password: password, ServerName: q.Get("sni"), ALPN: q.Get("alpn")}
 	if !q.Has("sni") {
