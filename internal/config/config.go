@@ -609,7 +609,7 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 		if c.profile != nil {
 			p, err := c.withShadowTLS(*c.profile, nil)
 			if err != nil {
-				return nil, c.locate(shadowTLSProblem(err))
+				return nil, c.locate(wrappedProblem(err))
 			}
 			c.profile = &p
 		}
@@ -624,6 +624,17 @@ func shadowTLSProblem(err error) error {
 		p.In("ShadowTLS")
 	}
 	return p
+}
+
+// wrappedProblem places failures of the access key combined with ShadowTLS:
+// inner protocol fields stay in [AccessKey], wrapper-level failures without a
+// field belong to [ShadowTLS].
+func wrappedProblem(err error) error {
+	p := problem.Of(err)
+	if p.Section == "" && p.Field != "" {
+		p.In("AccessKey")
+	}
+	return shadowTLSProblem(p)
 }
 
 func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
