@@ -5,6 +5,7 @@ package linuxnet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
@@ -154,11 +155,47 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 		if verdictPackets(t, ctx, m, "drop") != before {
 			t.Fatal("marked core traffic blocked during recovery")
 		}
-		// Replacing protection must be one nftables transaction.
 		d, err = OpenTUN("Bimeron", 1420)
 		if err != nil {
 			t.Fatal(err)
 		}
+		// A failed setup after a crash must roll back routing but keep the
+		// retained protection.
+		next := m.Run
+		m.Run = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
+			if name == "ip" && strings.Join(args, " ") == "-4 rule add pref "+TunnelInputPriority+" iif Bimeron lookup "+Table+" protocol "+Protocol {
+				return nil, errors.New("injected setup failure")
+			}
+			return next(ctx, name, input, args...)
+		}
+		err = m.Configure(ctx, "Bimeron", 1420, nil, true, true)
+		m.Run = next
+		if err == nil {
+			t.Fatal("injected setup failure ignored")
+		}
+		if present, err := m.guardPresent(ctx); err != nil || !present {
+			t.Fatal("failed setup released retained guard", err)
+		}
+		for _, family := range []string{"-4", "-6"} {
+			rs, _ := m.rules(ctx, family)
+			for _, r := range rs {
+				if ownedRule(r) {
+					t.Fatal("failed setup left a route rule", r)
+				}
+			}
+		}
+		before = verdictPackets(t, ctx, m, "drop")
+		writeUDP(t, ctx, nil, "203.0.113.9:9")
+		if verdictPackets(t, ctx, m, "drop") <= before {
+			t.Fatal("traffic was not blocked after failed setup")
+		}
+		// Like Open cleanup, discard the partially configured device.
+		d.Close()
+		d, err = OpenTUN("Bimeron", 1420)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Replacing protection must be one nftables transaction.
 		policy, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "203.0.113.10/32", Action: routing.Direct}}})
 		if err != nil {
 			t.Fatal(err)

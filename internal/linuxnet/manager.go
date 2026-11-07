@@ -246,11 +246,13 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 		return err
 	}
 	// Rollback also handles partial command failures; owned flags are saved first.
+	// A guard retained from a crashed session must survive a failed setup.
+	preserveGuard := old != nil && old.Guard
 	defer func() {
 		if err != nil {
 			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			err = errors.Join(err, m.Recover(cleanCtx, false))
+			err = errors.Join(err, m.Recover(cleanCtx, preserveGuard))
 		}
 	}()
 	if _, err = m.command(ctx, "ip", "address", "add", "198.18.0.1/30", "dev", name); err != nil {

@@ -174,6 +174,34 @@ func TestRollbackAfterPartialSetup(t *testing.T) {
 		t.Fatal("partial setup not rolled back", f.calls)
 	}
 }
+func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
+	m, f, original := testManager(t)
+	ctx := context.Background()
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err != nil {
+		t.Fatal(err)
+	}
+	// Crash, then the next session's Acquire retains the kill switch.
+	if err := m.Recover(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	f.fail = "-6 rule add pref 10901"
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err == nil {
+		t.Fatal("expected setup failure")
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "delete table inet bimeron_core") {
+			t.Fatal("rollback removed retained protection", f.calls)
+		}
+	}
+	b, _ := os.ReadFile(m.Resolver)
+	if string(b) != string(original) || !f.guard || len(f.rules["-4"]) != 0 || len(f.rules["-6"]) != 0 {
+		t.Fatal("rollback lost protection or left routing", f.calls)
+	}
+	if s, err := m.Load(); err != nil || s == nil || !s.Guard || s.Routing {
+		t.Fatal("journal must keep only the guard", s, err)
+	}
+}
 func TestExternalDNSChangeKeepsProtection(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()
