@@ -202,6 +202,27 @@ func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
 		t.Fatal("journal must keep only the guard", s, err)
 	}
 }
+func TestDisabledIPv6DirectPrefixesStayInTunnel(t *testing.T) {
+	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "2001:db8::/32", Action: routing.Direct}, {CIDR: "192.168.1.0/24", Action: routing.Direct}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, disable := range []bool{true, false} {
+		m, f, _ := testManager(t)
+		if err := m.Configure(context.Background(), "Bimeron", 1420, p, disable, false); err != nil {
+			t.Fatal(err)
+		}
+		throw6 := false
+		for _, call := range f.calls {
+			if strings.Contains(call, "-6 route add throw 2001:db8::/32") {
+				throw6 = true
+			}
+		}
+		if throw6 == disable || len(f.routes["-4"]) != 2 {
+			t.Fatal("unexpected IPv6 bypass", disable, f.calls)
+		}
+	}
+}
 func TestExternalDNSChangeKeepsProtection(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()
