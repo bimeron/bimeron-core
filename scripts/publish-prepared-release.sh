@@ -98,7 +98,7 @@ prerelease=()
 if [[ "$tag" == *-* ]]; then prerelease=(--prerelease); fi
 paths=()
 for name in "${assets[@]}"; do paths+=("$dir/$name"); done
-gh release create "$tag" "${paths[@]}" --repo "$repo" --title "Bimeron Core $tag" --notes-file "$tmp/notes.md" --draft --verify-tag "${prerelease[@]}"
+gh release create "$tag" "${paths[@]}" --repo "$repo" --title "Bimeron Core $tag" --notes-file "$tmp/notes.md" --draft --verify-tag ${prerelease[@]+"${prerelease[@]}"}
 
 expected_remote=$(for name in "${assets[@]}"; do
   printf '%s\t%s\tsha256:%s\n' "$name" "$(wc -c < "$dir/$name" | tr -d ' ')" "$(sha256sum "$dir/$name" | cut -d ' ' -f1)"
