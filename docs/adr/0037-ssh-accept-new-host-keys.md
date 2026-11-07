@@ -1,4 +1,4 @@
-# ADR 0035: Opt-in accept-new SSH host keys
+# ADR 0037: Opt-in accept-new SSH host keys
 
 Status: accepted, November 7, 2026, amended after security review and
 re-review the same day. Targets Bimeron v1.9. Amends the last tradeoff of ADR 0013 for opted-in
