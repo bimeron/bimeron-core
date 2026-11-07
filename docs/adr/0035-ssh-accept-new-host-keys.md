@@ -1,7 +1,8 @@
 # ADR 0035: Opt-in accept-new SSH host keys
 
-Status: accepted, November 7, 2026. Targets Bimeron v1.9. Amends the last
-tradeoff of ADR 0013 for opted-in hosts only.
+Status: accepted, November 7, 2026, amended after security review the same
+day. Targets Bimeron v1.9. Amends the last tradeoff of ADR 0013 for opted-in
+hosts only. ADR 0036 removes every home-directory fallback on Android.
 
 ## Context
 
@@ -27,16 +28,38 @@ For an opted-in connection:
   `AcceptNewHostKeys`. Those bytes accept only plain `host[,host] type base64
   [comment]` lines with literal hosts. Without a `KnownHostsFile`, no default
   `~/.ssh/known_hosts` is read.
+- Host names match case-insensitively, as in OpenSSH. Core lowercases ASCII
+  letters of the dialed host before every lookup in both sources, and in the
+  offer's `host` and `knownHostsLine`. App-owned lines are lowercased when
+  parsed. x/crypto `knownhosts` compares bytes, so without this a changed key
+  behind `LOCALHOST` would look like a new host instead of a mismatch. The
+  file is also asked with the host as dialed, so an entry written in that
+  exact case still matches.
 - A match in either source connects without an offer.
 - A host known in either source with no matching key, or a key marked
   `@revoked` in the file, is refused without an offer. The fault is
   `ssh_host_key_mismatch`. No path accepts a changed key.
+- A `KnownHostsFile` with any `@cert-authority` line never produces an offer.
+  A plain key that matches no entry fails with `ssh_host_key_ca_required`.
+  x/crypto `knownhosts` matches a CA pattern only on its exact port: `*` and
+  `[10.0.0.*]:*` never cover port 2222. Such a host would otherwise look
+  unknown, and an attacker presenting a plain key would get an offer.
+- A `KnownHostsFile` with an unhashed host pattern containing an uppercase
+  letter never produces an offer either: `knownhosts` cannot match it against
+  another case, so the file cannot prove a host unknown. The fault is
+  `ssh_host_key_unknown`. OpenSSH writes lowercase names, so this affects only
+  hand-edited files.
 - An unknown host produces one `host_key` offer through the existing bridge.
   It uses the same per-prompt 60-second limit, eight-round limit, paused
   network budget, generation binding and Stop/network invalidation as other
   prompts.
 - `ReplyAuth(sessionId, requestId, '["accept"]')` is the only acceptance.
-  Any other answer is rejected without consuming the offer. `CancelAuth`
+  Any other answer is rejected without consuming the offer. A `ReplyAuth`
+  that returns success is final: the offer resolves as accepted even if its
+  60-second limit, the deadline, a network change or Stop arrives right
+  after. If the offer had already expired or been withdrawn, `ReplyAuth`
+  returns an error and the outcome is `ssh_host_key_unanswered`. The app
+  persists `knownHostsLine` exactly when `ReplyAuth` succeeded. `CancelAuth`
   declines and fails with `ssh_host_key_rejected`. Timeout, withdrawal, Stop,
   network change, deadline or connection loss fails with
   `ssh_host_key_unanswered`. If no offer can be made, the fault is
@@ -47,8 +70,11 @@ For an opted-in connection:
   the stored lines to the next Session.
 - Host-key algorithms for key types already trusted for the host are
   preferred, as in OpenSSH. Otherwise a server with an additional key type
-  that the library prefers would look like a changed key. A `KnownHostsFile`
-  with `@cert-authority` lines keeps the library order.
+  that the library prefers would look like a changed key. On first contact
+  the order is Ed25519, ECDSA, RSA (SHA-512, SHA-256, SHA-1), then
+  certificates, so a new host is not pinned to RSA because the library lists
+  RSA first. A `KnownHostsFile` with `@cert-authority` lines keeps the
+  library order (certificates first).
 
 The offer is a new `kind` in the same pendingAuth JSON. Existing kinds keep
 byte-identical output:
@@ -57,10 +83,11 @@ byte-identical output:
 {"sessionId":"<48 hex>","requestId":"<48 hex>","kind":"host_key","host":"ssh.example.com:22","keyType":"ssh-ed25519","fingerprint":"SHA256:<43 base64 chars, no padding>","knownHostsLine":"ssh.example.com ssh-ed25519 AAAAC3Nza..."}
 ```
 
-`host` is `host:port` as dialed (IPv6 in brackets). `knownHostsLine` uses
-OpenSSH normalization: the bare host for port 22, `[host]:port` otherwise. It is
-exactly three space-separated printable ASCII fields, at most 12 KiB, with no
-newline. The offer has no `prompts` or `echo` field.
+`host` is `host:port` as dialed, with the host lowercased (IPv6 in brackets).
+`knownHostsLine` uses OpenSSH normalization: the bare host for port 22,
+`[host]:port` otherwise. It is exactly three space-separated printable ASCII
+fields, at most 12 KiB, with no newline. The offer has no `prompts` or `echo`
+field.
 
 ## Alternatives
 
@@ -90,9 +117,15 @@ newline. The offer has no `prompts` or `echo` field.
   `accept-new`.
 - `ssh_host_key_unanswered` also covers connection loss during the offer.
   The app's own reply history separates a user cancel from a timeout.
-- A host that is trusted only by a `@cert-authority` line but presents a
-  plain key is treated as known with no matching key. The fault is
-  `ssh_host_key_mismatch`, the existing knownhosts semantics.
+- A host whose name and port match a `@cert-authority` line but that
+  presents a plain key is known with no matching key: `ssh_host_key_mismatch`.
+  A plain key from a host that no CA line matches (for example `*` on a non-22
+  port) is `ssh_host_key_ca_required`, never an offer. A file that uses CAs
+  therefore disables accept-new for every host it does not list.
+- A certificate that the file cannot verify fails without a host-key code,
+  as `ssh_connection_failed`: a certificate signed by an unrelated CA, or one
+  whose CA line does not match the port (the same exact-port rule applies to
+  certificates). Use an exact `[host]:port` CA line for non-22 ports.
 - In opt-in mode the preferred-algorithm list omits `ssh-dss`.
 - Android apps whose parser does not know `host_key` must not call
   `AcceptNewHostKeys`; an unrendered offer would time out after 60 seconds.
