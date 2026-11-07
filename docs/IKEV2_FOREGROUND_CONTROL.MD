@@ -51,6 +51,29 @@ DNS deadlines and synchronous provisioning rollback remain unchanged. See
 
 ## Native MSI invocation procedure
 
+**Step 4 status:** the [consumer lifecycle proposal](IKEV2_INSTALLATION_CONTRACT.MD#step-4-status-conditional-consumer-lifecycle-proposal)
+conditionally recommends reusing foreground/provisioning owners with offline
+payload servicing and Core runtime recovery, without a new resident broker by
+default. This is not acceptance or enablement. Cached maintenance triggered by
+ordinary users remains in scope; terminal `close_owner` alone does not prove
+RAS/DNS/WFP cleanup. The pre-arm protection interval and missing RAS crash recovery
+require a scope decision and bounded feasibility evidence. The Step 2/3 rationale
+below is preserved, not the selected implementation milestone for proposed B.
+
+The [unified installation proposal](IKEV2_INSTALLATION_CONTRACT.MD) now proposes
+Core owning-thread control instead of the historical procedure below. Its status
+is **REVIEW PENDING**, not user/security acceptance. Existing foreground APIs and
+mutex primitives remain unchanged; they do not already implement durable host
+admission, authenticated package/action gates or installation settlement.
+
+Its Step 3 appendices select a separate ProgramData authority, prelaunch durable
+leases and bounded installation wire for engineering review. The proposed enrolled
+lease holds connect ownership through cleanup/close; today's foreground marker
+does not implement that owning-thread adapter. Keep current foreground wire and
+profile preview semantics distinct from the proposed installation protocol.
+Action/session proof, historical route prevention and surviving restoration remain
+blocked; neither Ready nor model Clean enables GUI native support.
+
 The [selected enrollment procedure](NATIVE_ENROLLMENT_SPEC.MD#selected-trusted-invocation-procedure)
 reconciles Desktop's trusted already-fully-elevated, same-user interactive MSI
 invocation with independent effective-context and exact protected preload/package

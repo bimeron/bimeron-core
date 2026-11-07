@@ -84,24 +84,30 @@ type statsSnapshotProvider interface {
 }
 
 type Server struct {
-	installation       string
-	build              func() core.BuildDetails
-	foreground         bool
-	owner              *ProcessIdentity
-	endpoint           string
-	authorize          func(net.Conn) (func(), error)
-	foregroundDispatch func(context.Context, Request) Response
-	instance           string
-	engine             Engine
-	command            sync.Mutex
-	mu                 sync.Mutex
-	history            []LoggedEvent
-	sequence           uint64
-	load               func(string) (core.SessionConfig, error)
-	shutdown           context.CancelFunc
-	closing            bool // protected by command
-	authMu             sync.Mutex
-	pending            *pendingAuth
+	ikeGeneration         uint64
+	ikeDisabled           bool
+	ikeOwner              context.Context
+	ikeProfile, ikeServer string
+	ikeMu                 sync.Mutex
+	ikePending            *ikeAuth
+	installation          string
+	build                 func() core.BuildDetails
+	foreground            bool
+	owner                 *ProcessIdentity
+	endpoint              string
+	authorize             func(net.Conn) (func(), error)
+	foregroundDispatch    func(context.Context, Request) Response
+	instance              string
+	engine                Engine
+	command               sync.Mutex
+	mu                    sync.Mutex
+	history               []LoggedEvent
+	sequence              uint64
+	load                  func(string) (core.SessionConfig, error)
+	shutdown              context.CancelFunc
+	closing               bool // protected by command
+	authMu                sync.Mutex
+	pending               *pendingAuth
 }
 type pendingAuth struct {
 	challenge AuthChallenge
@@ -411,6 +417,9 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 			return
 		}
 		defer release()
+		var retire func()
+		ctx, retire = s.ikeAuthority(ctx)
+		defer retire()
 	}
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()

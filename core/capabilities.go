@@ -25,16 +25,21 @@ type Capabilities struct {
 // their existing packet-backend meaning. Supported is build support, not a
 // successful native profile/credential/permission probe.
 type IKEv2Capabilities struct {
-	AdministratorRequired bool `json:"administrator_required"`
-	Supported             bool `json:"supported"`
-	ForegroundOnly        bool `json:"foreground_only"`
-	PreconfiguredProfile  bool `json:"preconfigured_profile"`
-	Proxy                 bool `json:"proxy"`
-	IPSplit               bool `json:"ip_split"`
-	DomainSplit           bool `json:"domain_split"`
-	KillSwitch            bool `json:"kill_switch"`
-	DNSProtection         bool `json:"dns_protection"`
-	Stats                 bool `json:"stats"`
+	AuthSubmission           bool `json:"auth_submission"`
+	AuthAttemptOnly          bool `json:"auth_attempt_only"`
+	AuthWindowsPersistence   bool `json:"auth_windows_persistence"`
+	AuthCertificateSelection bool `json:"auth_certificate_selection"`
+	AuthSmartCardInteraction bool `json:"auth_smart_card_interaction"`
+	AdministratorRequired    bool `json:"administrator_required"`
+	Supported                bool `json:"supported"`
+	ForegroundOnly           bool `json:"foreground_only"`
+	PreconfiguredProfile     bool `json:"preconfigured_profile"`
+	Proxy                    bool `json:"proxy"`
+	IPSplit                  bool `json:"ip_split"`
+	DomainSplit              bool `json:"domain_split"`
+	KillSwitch               bool `json:"kill_switch"`
+	DNSProtection            bool `json:"dns_protection"`
+	Stats                    bool `json:"stats"`
 }
 
 // PlatformCapabilities reports static build-time support. Application split is

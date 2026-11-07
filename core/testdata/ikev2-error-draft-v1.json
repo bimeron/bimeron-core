@@ -1,0 +1,22 @@
+{
+  "draft": "ikev2-offline-error-v1",
+  "valid": [
+    {"name":"absent_unknown","attempt":1},
+    {"name":"operation_775_unknown_cause","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":775,"stage":"dial","attempt":1}}},
+    {"name":"cleanup_only_668","attempt":2,"native_failure":{"version":1,"cleanup":{"domain":"windows_ras","code":668,"stage":"cleanup_hangup","attempt":2}}},
+    {"name":"operation_and_cleanup","attempt":3,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":775,"stage":"connection_status","attempt":3},"cleanup":{"domain":"windows_ras","code":668,"stage":"cleanup_status","attempt":3}}},
+    {"name":"unknown_uint32_max","attempt":2147483647,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":4294967295,"stage":"profile_inspection","attempt":2147483647}}}
+  ],
+  "invalid": [
+    {"name":"empty","attempt":1,"native_failure":{"version":1}},
+    {"name":"null","attempt":1,"native_failure":null},
+    {"name":"version_unknown","attempt":1,"native_failure":{"version":2,"operation":{"domain":"windows_ras","code":775,"stage":"dial","attempt":1}}},
+    {"name":"late_attempt","attempt":2,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":775,"stage":"dial","attempt":1}}},
+    {"name":"wrong_slot","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":668,"stage":"cleanup_status","attempt":1}}},
+    {"name":"zero_code","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":0,"stage":"dial","attempt":1}}},
+    {"name":"overflow_code","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":4294967296,"stage":"dial","attempt":1}}},
+    {"name":"unknown_domain","attempt":1,"native_failure":{"version":1,"operation":{"domain":"other","code":775,"stage":"dial","attempt":1}}},
+    {"name":"unknown_stage","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":775,"stage":"other","attempt":1}}},
+    {"name":"raw_text","attempt":1,"native_failure":{"version":1,"operation":{"domain":"windows_ras","code":775,"stage":"dial","attempt":1,"message":"SECRET_SENTINEL"}}}
+  ]
+}

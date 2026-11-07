@@ -2,6 +2,39 @@
 
 Status: accepted product boundary; proposed offline implementation contract, 2026-10-30. Enrollment and protected-install support remain DISABLED. See [ADR 0029](adr/0029-disabled-native-enrollment-primitives.md) and [acceptance and implementer brief](NATIVE_ENROLLMENT_ACCEPTANCE.MD).
 
+## Proposed controller reconciliation (2026-11-03)
+
+**Step 4 status:** see the [conditional consumer lifecycle proposal](IKEV2_INSTALLATION_CONTRACT.MD#step-4-status-conditional-consumer-lifecycle-proposal)
+and its canonical Desktop decision reference. Proposed B separates offline MSI
+payload servicing from Core runtime enrollment/provisioning/RAS/recovery and reuses
+existing owners before considering a broker. It removes exact deferred-action
+attestation from runtime authority, subject to product/security acceptance; it
+does not relax ordinary-user cached-maintenance protection or accept a pre-arm
+leak exception. RAS crash reconciliation and cleanup before recovery-payload
+deletion remain unproved. Native stays disabled; the next proposed milestone is
+bounded lifecycle feasibility after the scope decision, not codec implementation.
+The earlier Step 2/3 proposals and accepted offline boundaries below are preserved.
+
+The [unified installation contract](IKEV2_INSTALLATION_CONTRACT.MD) preserves Step 2
+and adds Step 3 concrete storage/admission/wire appendices, **REVIEW PENDING**, inspected on Core master
+`6af5d72bd7e1e98461e78f437509a1994f395fab`. It proposes Core owning-thread
+installation, durable participating admission and terminal settlement in place of
+the historical trusted-invocation/callback-settlement direction below. It is not
+user/security acceptance and does not authorize implementation or enrollment.
+Earlier offline boundaries and evidence retain their exact scope. In particular,
+the 64-byte observer is not a writer, journal or runtime grant, and Desktop LPF48
+remains distinct. Read the new proposal for unresolved historical-package bypass,
+action/preload proof, surviving restoration and closure requirements; the old
+procedure does not satisfy them.
+
+Step 3 selects a separate ProgramData authority, immutable provisioned anchor,
+bounded append-only journal and durable prelaunch leases for engineering review.
+It does not extend BIMNENR1 or this reader into a writer/admission grant. MSI
+action/session authentication, historical package exclusion and surviving
+restoration remain explicit blockers. The only recommended next implementation
+slice is a separately authorized disconnected codec/replay model; native adapters,
+bootstrap/policy work and enablement require further acceptance.
+
 ## Provenance and bounded review
 
 Actual Core base: `83683e4b5c1a673f0d29d667c09b116f5805027b`. `git diff --quiet` against reviewed master `66d84d8f4dcfc6ada625eb11894b19feea51b7ba` returned zero. This establishes tree equivalence, not ancestry from 66d84d8f. No historical executable evidence is reassigned to this base.

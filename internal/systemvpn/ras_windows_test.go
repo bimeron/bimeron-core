@@ -126,3 +126,78 @@ func TestNativeDefaultEntryReadOnly(t *testing.T) {
 		t.Fatal("unexpected native RAS entry size", e.Size)
 	}
 }
+
+// Acceptance 6: pure HangUp classification, no native calls.
+func TestClassifyHangup(t *testing.T) {
+	terminal := map[string]func() *rasAttempt{
+		"callback error": func() *rasAttempt { return &rasAttempt{closing: true, latest: connectionState{code: 775}} },
+		"disconnected": func() *rasAttempt {
+			return &rasAttempt{closing: true, latest: connectionState{state: stateDisconnected}}
+		},
+		"was connected": func() *rasAttempt { return &rasAttempt{closing: true, connected: true} },
+	}
+	for _, code := range []uint32{6, 668} {
+		for name, attempt := range terminal {
+			a := attempt()
+			err := classifyHangup(code, a)
+			if !errors.Is(err, errHangupNoConnection) || errors.Is(err, errInvalidHandle) || a.hangupAccepted {
+				t.Fatal(code, name, err, a.hangupAccepted)
+			}
+		}
+		for name, a := range map[string]*rasAttempt{"pending": {closing: true, latest: connectionState{state: 1}}, "untracked": nil} {
+			if err := classifyHangup(code, a); !errors.Is(err, errDialPending) {
+				t.Fatal(code, name, err)
+			}
+		}
+	}
+	a := &rasAttempt{closing: true, latest: connectionState{code: 775}}
+	if err := classifyHangup(0, a); err != nil || !a.hangupAccepted {
+		t.Fatal("HangUp 0 not accepted", err)
+	}
+	for _, code := range []uint32{5, 87, 603, 632, 775} {
+		err := classifyHangup(code, &rasAttempt{latest: connectionState{code: 775}})
+		if err == nil || errors.Is(err, errInvalidHandle) || errors.Is(err, errHangupNoConnection) || errors.Is(err, errDialPending) {
+			t.Fatal(code, err)
+		}
+	}
+}
+
+// Acceptance 7: pure enumeration classification, no native calls.
+func TestOwnedIn(t *testing.T) {
+	const owned = 196608
+	buffer := func(handles ...uintptr) []rasConnection {
+		c := make([]rasConnection, ownedEnumCapacity)
+		for i, h := range handles {
+			c[i].Handle.set(h)
+		}
+		return c
+	}
+	if present, err := ownedIn(0, buffer(), 0, owned); present || err != nil {
+		t.Fatal("empty list", present, err)
+	}
+	if present, err := ownedIn(0, buffer(1, 2, 3), 3, owned); present || err != nil {
+		t.Fatal("unrelated handles", present, err)
+	}
+	// A stale entry beyond count must not count as present.
+	if present, err := ownedIn(0, buffer(1, owned), 1, owned); present || err != nil {
+		t.Fatal("entry beyond count", present, err)
+	}
+	for i := 0; i < ownedEnumCapacity; i++ {
+		handles := make([]uintptr, ownedEnumCapacity)
+		for j := range handles {
+			handles[j] = uintptr(j + 1)
+		}
+		handles[i] = owned
+		if present, err := ownedIn(0, buffer(handles...), ownedEnumCapacity, owned); !present || err != nil {
+			t.Fatal("owned at index", i, present, err)
+		}
+	}
+	for _, code := range []uint32{603, 87, 5} {
+		if _, err := ownedIn(code, buffer(owned), 1, owned); err == nil {
+			t.Fatal("accepted enumeration error", code)
+		}
+	}
+	if _, err := ownedIn(0, buffer(1), ownedEnumCapacity+1, owned); err == nil {
+		t.Fatal("accepted count beyond buffer")
+	}
+}

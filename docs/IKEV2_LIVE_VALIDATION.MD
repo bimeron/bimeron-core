@@ -55,6 +55,11 @@ cleanup deadline. EAP memory and callback tracking remain owned until handle
 invalidation confirms cleanup. Late callbacks for released attempts are ignored.
 Unit/race tests cover these transitions alongside the repeated live checks.
 
+A later lab run (L7) showed `RasHangUp` returning 668 after a terminal dial
+error. The cleanup predicate for that case is specified in
+[RAS 668 positive cleanup](IKEV2_RAS_668_CLEANUP.MD); it has offline test
+coverage only and awaits native confirmation.
+
 ## Initial IPv6 limitation
 
 The server assigned an IPv6 address and negotiated IPv6 selectors. On this

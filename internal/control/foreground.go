@@ -56,6 +56,7 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 		}
 		return answer
 	case "stop":
+		s.disableIKEAuth()
 		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := s.engine.Stop(wait); err != nil {
@@ -78,6 +79,28 @@ func (s *Server) foregroundDispatcher(ctx context.Context, r Request) Response {
 
 func (server *Server) bindForegroundSession(ctx context.Context, cfg core.SessionConfig) {
 	server.foreground = true
+	server.ikeMu.Lock()
+	server.disableIKEAuthLocked()
+	server.ikeGeneration++
+	generation := server.ikeGeneration
+	server.ikeOwner = ctx
+	server.ikeProfile, server.ikeServer = "", ""
+	if cfg.IKEv2 != nil {
+		copy := *cfg.IKEv2
+		cfg.IKEv2 = &copy
+		if copy.Validate() == nil {
+			server.ikeProfile, server.ikeServer = copy.WindowsProfile, copy.ServerName
+		}
+	}
+	server.ikeDisabled = false
+	server.ikeMu.Unlock()
+	context.AfterFunc(ctx, func() {
+		server.ikeMu.Lock()
+		defer server.ikeMu.Unlock()
+		if server.ikeGeneration == generation {
+			server.disableIKEAuthLocked()
+		}
+	})
 	var launchMu sync.Mutex
 	var launched, cancelled, closing bool
 	var launchErr error
@@ -120,6 +143,7 @@ func (server *Server) bindForegroundSession(ctx context.Context, cfg core.Sessio
 				}
 			}
 		case "stop":
+			server.disableIKEAuth()
 			if !launched {
 				cancelled = true
 			}
@@ -127,6 +151,7 @@ func (server *Server) bindForegroundSession(ctx context.Context, cfg core.Sessio
 			if (a.Status.State != core.Disconnected && a.Status.State != core.Failed) || (a.Status.Session != nil && a.Status.Session.Active) {
 				a.Error = "session_not_terminal"
 			} else {
+				server.disableIKEAuth()
 				closing = true
 				a.closeAccepted = true
 			}

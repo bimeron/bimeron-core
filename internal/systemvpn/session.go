@@ -12,6 +12,12 @@ const (
 	stateDisconnected = 0x2001
 )
 
+// Production timings. Tests shorten them to exercise deadlines quickly.
+var (
+	pollInterval   = 100 * time.Millisecond
+	cleanupTimeout = 30 * time.Second
+)
+
 type connectionState struct{ state, code uint32 }
 
 // driver separates native calls from lifecycle tests. A nonzero handle belongs
@@ -21,6 +27,10 @@ type driver interface {
 	dial(Config) (uintptr, error)
 	status(uintptr) (connectionState, error)
 	hangup(uintptr) error
+	// owned reports whether the exact owned handle is still listed by a
+	// read-only, bounded connection enumeration. It never adopts, disconnects
+	// or inspects unrelated connections.
+	owned(uintptr) (bool, error)
 	release()
 }
 
@@ -52,7 +62,7 @@ func connectObserved(ctx context.Context, cfg Config, d driver, observe func(str
 		return nil, err
 	}
 	h, err := d.dial(cfg)
-	s := &Session{driver: d, handle: h, interval: 100 * time.Millisecond, cleanupTimeout: 30 * time.Second, cleanupObserver: observe}
+	s := &Session{driver: d, handle: h, interval: pollInterval, cleanupTimeout: cleanupTimeout, cleanupObserver: observe}
 	if err == nil && h == 0 {
 		err = errors.New("ikev2_invalid_connection_handle")
 	}
@@ -61,12 +71,20 @@ func connectObserved(ctx context.Context, cfg Config, d driver, observe func(str
 	}
 	if err != nil {
 		if cleanupErr := s.Close(); cleanupErr != nil {
-			return nil, cleanupErr
+			return nil, &startupCleanupError{cleanup: cleanupErr, startup: err}
 		}
 		return nil, err
 	}
 	return s, nil
 }
+
+// startupCleanupError reports a failed rollback of a failed startup. Error()
+// is exactly the cleanup error so callers matching public strings are
+// unaffected, while errors.Is still reaches the startup cause.
+type startupCleanupError struct{ cleanup, startup error }
+
+func (e *startupCleanupError) Error() string   { return e.cleanup.Error() }
+func (e *startupCleanupError) Unwrap() []error { return []error{e.cleanup, e.startup} }
 
 func (s *Session) Wait(ctx context.Context) error { return s.wait(ctx, false) }
 
@@ -121,9 +139,18 @@ func (s *Session) Close() error {
 		defer cancel()
 		ticker := time.NewTicker(s.interval)
 		defer ticker.Stop()
+		accepted := true
 		for {
 			err := s.driver.hangup(s.handle)
-			if err == nil || errors.Is(err, errInvalidHandle) {
+			if err == nil {
+				break
+			}
+			// HangUp gave no acknowledgement. The hangup classifier never returns
+			// errInvalidHandle; should a driver still do so, it is handled as the
+			// stricter not-accepted path, which requires corroboration before
+			// release, rather than as an acknowledged hangup.
+			if errors.Is(err, errHangupNoConnection) || errors.Is(err, errInvalidHandle) {
+				accepted = false
 				break
 			}
 			if !errors.Is(err, errDialPending) {
@@ -137,13 +164,26 @@ func (s *Session) Close() error {
 			case <-ticker.C:
 			}
 		}
+		// Only status observed after HangUp counts. Without a HangUp
+		// acknowledgement, the owned handle must also be absent from a fresh
+		// enumeration in the same probe iteration.
 		for {
 			_, err := s.driver.status(s.handle)
 			if errors.Is(err, errInvalidHandle) {
-				s.driver.release()
-				return
-			}
-			if err != nil {
+				if accepted {
+					s.driver.release()
+					return
+				}
+				present, enumErr := s.driver.owned(s.handle)
+				if enumErr != nil {
+					s.closeErr = errors.New("ikev2_cleanup_failed")
+					return
+				}
+				if !present {
+					s.driver.release()
+					return
+				}
+			} else if err != nil {
 				s.closeErr = errors.New("ikev2_cleanup_failed")
 				return
 			}
@@ -160,6 +200,10 @@ func (s *Session) Close() error {
 
 var errInvalidHandle = errors.New("ikev2_connection_handle_invalid")
 var errDialPending = errors.New("ikev2_dial_pending")
+
+// errHangupNoConnection means RasHangUp returned 6 or 668 after terminal dial
+// evidence. It is not an acknowledgement and never implies an invalid handle.
+var errHangupNoConnection = errors.New("ikev2_hangup_no_connection")
 
 // Return only bounded codes, never native error strings containing identities.
 func rasError(code uint32) error {
