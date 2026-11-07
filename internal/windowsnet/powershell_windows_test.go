@@ -76,3 +76,26 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 		t.Fatal("user module executed")
 	}
 }
+
+// OEM console code pages (for example CP866 or CP437) cannot represent these
+// characters; output must be decoded as UTF-8 regardless of the system locale.
+// Host startup may add CLIXML progress records to stderr, so only containment
+// is required there.
+func TestPowerShellCommandPreservesUnicodeOutput(t *testing.T) {
+	const want = "адаптер-雪-é"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := PowerShellCommand(ctx, `[Console]::Out.Write('`+want+`'); [Console]::Error.Write('`+want+`')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != want || !strings.Contains(stderr.String(), want) {
+		t.Fatalf("unicode output changed: stdout=%q stderr=%q", out, stderr.String())
+	}
+}
