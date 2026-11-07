@@ -141,6 +141,10 @@ The embedded Android Session can opt in to OpenSSH-style `accept-new` (ADR
 a fingerprint offer, and the app stores accepted keys itself. A changed key is
 still refused, now with the distinct fault `ssh_host_key_mismatch`. The CLI,
 daemon and desktop/Apple consumers do not opt in and behave as described above.
+On Android, Bimeron never uses the home directory (ADR 0036): no default
+identities, no `~/.ssh/known_hosts`, no `~` paths and no agent. A profile needs
+a selected `KnownHostsFile` or accept-new, otherwise it fails with
+`ssh_known_hosts_missing`.
 
 The identity and `known_hosts` files must be readable by the Bimeron process.
 On Windows, the installed service runs as `LocalSystem`; mapped drives and
