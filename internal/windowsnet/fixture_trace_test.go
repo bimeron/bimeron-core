@@ -34,6 +34,7 @@ func (d *fixtureTrace) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+//lint:ignore ST1008 the trailing string is a diagnostic trace kept beside the error.
 func runFixture(ctx context.Context, cmd *exec.Cmd, onFixture func()) ([]byte, error, string) {
 	trace := &fixtureTrace{onFixture: onFixture}
 	cmd.Stderr = trace

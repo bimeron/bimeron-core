@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestTrojanSources(t *testing.T) {
 	for _, source := range []string{
@@ -12,7 +15,7 @@ func TestTrojanSources(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		profile, err := file.Resolve(nil)
+		profile, err := file.Resolve(context.Background())
 		if err != nil || profile.Type != "trojan" || profile.Trojan.ServerName != "front.example.com" {
 			t.Fatalf("invalid profile: %+v, %v", profile, err)
 		}
@@ -26,7 +29,7 @@ func TestTrojanTransportParameters(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := file.Resolve(nil)
+		p, err := file.Resolve(context.Background())
 		if err != nil || p.Trojan.Network == "" {
 			t.Fatalf("invalid transport: %v", err)
 		}

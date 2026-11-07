@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/base64"
 	"testing"
 )
@@ -12,7 +13,7 @@ func TestVMessConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := c.Resolve(nil)
+		p, err := c.Resolve(context.Background())
 		if err != nil || p.Type != "vmess" {
 			t.Fatalf("VMess config resolution: %#v, %v", p, err)
 		}
