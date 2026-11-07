@@ -287,7 +287,8 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 	}
 	for _, family := range []string{"-4", "-6"} {
 		for _, prefix := range p.DirectPrefixes() {
-			if (family == "-4") != prefix.Addr().Is4() {
+			// With IPv6 disabled the TUN handler blocks IPv6; never bypass it.
+			if (family == "-4") != prefix.Addr().Is4() || disableIPv6 && prefix.Addr().Is6() {
 				continue
 			}
 			if _, err = m.command(ctx, "ip", family, "route", "add", "throw", prefix.String(), "table", Table, "proto", Protocol); err != nil {
