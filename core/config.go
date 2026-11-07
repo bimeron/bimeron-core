@@ -56,6 +56,12 @@ type SessionConfig struct {
 	// distinct ssh_host_key_* faults. Nil keeps known_hosts-only verification
 	// and the single ssh_connection_failed fault.
 	SSHHostKeys *sshtunnel.HostKeys
+	// SSHProfileOnly restricts SSH to the files the profile names: no user
+	// home lookup, "~" path, default identity, default known_hosts or SSH
+	// agent; SSHDefaultKeys is ignored. Without a KnownHostsFile or
+	// SSHHostKeys the session fails with ssh_known_hosts_missing. The Android
+	// embedding always sets it.
+	SSHProfileOnly bool
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters

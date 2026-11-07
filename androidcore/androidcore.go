@@ -59,10 +59,17 @@ func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProte
 	return newSession(c, protector)
 }
 
+// newSession is the only constructor of a startable Session; every exported
+// constructor goes through it.
 func newSession(c core.SessionConfig, protector SocketProtector) (*Session, error) {
 	if c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
 		return nil, errors.New("Android packet VPN requires vpn mode without core kill switch or IKEv2")
 	}
+	// SSH on Android uses only files the app imported and named in the
+	// profile: no default identity scan, no ~/.ssh/known_hosts fallback, no
+	// "~" paths and no SSH agent. A profile needs a KnownHostsFile or
+	// AcceptNewHostKeys, otherwise LastError is ssh_known_hosts_missing.
+	c.SSHDefaultKeys, c.SSHProfileOnly = false, true
 	s := &Session{config: c, protector: protector}
 	s.auth.id = opaqueID()
 	var err error
@@ -143,7 +150,9 @@ func (s *Session) Start() error {
 // Call it at most once, before Start. trustedKnownHosts holds the app-owned
 // known_hosts lines for this profile (empty or nil for none); only plain
 // "host[,host] type base64 [comment]" lines are accepted. The profile's
-// KnownHostsFile, if set, is still trusted; without it no default file is read.
+// KnownHostsFile, if set, is still trusted. No default file is ever read on
+// Android; without KnownHostsFile and without this call, an SSH profile fails
+// with ssh_known_hosts_missing.
 //
 // An unknown host then produces a pendingAuth offer of kind "host_key"; a host
 // known from either source with a different key fails with fault

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"bimeron/internal/sshtunnel"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var errAuth = errors.New("SSH authentication request unavailable")
@@ -82,8 +83,10 @@ func validOffer(o *sshtunnel.HostKeyOffer) bool {
 	if raw, err := base64.RawStdEncoding.DecodeString(sum); !ok || err != nil || len(raw) != 32 {
 		return false
 	}
+	// Core emits lowercase hosts; the persisted line must name exactly the
+	// rendered host in OpenSSH normalized form.
 	fields := strings.Split(o.KnownHostsLine, " ")
-	if len(o.KnownHostsLine) > 12288 || len(fields) != 3 || fields[1] != o.KeyType {
+	if len(o.KnownHostsLine) > 12288 || len(fields) != 3 || fields[1] != o.KeyType || o.Host != strings.ToLower(o.Host) || fields[0] != knownhosts.Normalize(o.Host) {
 		return false
 	}
 	for _, f := range fields {
@@ -143,17 +146,24 @@ func (b *authBridge) prompt(g uint64) sshtunnel.Prompt {
 			}
 			b.mu.Unlock()
 		}()
+		// ReplyAuth delivers under b.mu only while ctx is live, so an answer it
+		// reported as consumed is always returned, even if ctx ends before or
+		// while this select runs. After the drain below, ReplyAuth fails.
 		select {
 		case answers := <-r.result:
-			if ctx.Err() != nil {
-				return nil, errAuth
-			}
 			return answers, nil
 		case <-ctx.Done():
 			b.mu.Lock()
-			declined := r.declined
-			b.mu.Unlock()
-			if declined && r.Kind == sshtunnel.HostKeyKind {
+			defer b.mu.Unlock()
+			select {
+			case answers := <-r.result:
+				return answers, nil
+			default:
+			}
+			if b.pending == r {
+				b.pending = nil
+			}
+			if r.declined && r.Kind == sshtunnel.HostKeyKind {
 				return nil, sshtunnel.ErrHostKeyDeclined
 			}
 			return nil, errAuth

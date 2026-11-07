@@ -14,5 +14,6 @@ func dialAgent(ctx context.Context) (net.Conn, error) {
 	if path == "" {
 		return nil, fmt.Errorf("SSH agent unavailable")
 	}
+	trace("agent", path)
 	return (&net.Dialer{}).DialContext(ctx, "unix", path)
 }
