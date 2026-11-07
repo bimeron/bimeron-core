@@ -15,6 +15,7 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/config"
 	"bimeron/internal/dnsconfig"
+	"bimeron/internal/problem"
 	"bimeron/internal/routing"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
@@ -149,7 +150,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 		ike := *copy.IKEv2
 		cfg := SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, IKEv2: &ike}
 		if copy.ShadowTLS != nil || copy.Access != (config.Access{}) || copy.Tunnel != (config.Tunnel{Mode: "vpn", IPv6: "system"}) || copy.Routing.Default != routing.Proxy || len(copy.Routing.Rules) != 0 {
-			return SessionConfig{}, fmt.Errorf("invalid IKEv2 configuration")
+			return SessionConfig{}, problem.New("ikev2_exclusive", "invalid IKEv2 configuration").In("IKEv2")
 		}
 		return cfg, cfg.validate()
 	}
@@ -163,7 +164,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	}
 	dns, err := dnsconfig.Parse(copy.Tunnel.DNS)
 	if err != nil {
-		return SessionConfig{}, err
+		return SessionConfig{}, problem.Of(err).In("Interface").At("DNS")
 	}
 	if copy.Tunnel.Mode == "vpn" {
 		p, err = copy.VPNPolicy()
@@ -202,42 +203,52 @@ func (c SessionConfig) validate() error {
 		}
 		policy := c.Policy.Config()
 		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
-			return fmt.Errorf("ikev2_unsupported_session_options")
+			return problem.New("ikev2_exclusive", "ikev2_unsupported_session_options").In("IKEv2")
 		}
 		return nil
 	}
 	if c.KillSwitch {
 		for i, r := range c.Policy.Config().Rules {
 			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
-				return fmt.Errorf("rule %d: kill switch supports CIDR rules only", i+1)
+				field := "Domain"
+				if r.GeoIP != "" {
+					field = "GeoIP"
+				} else if r.GeoSite != "" {
+					field = "GeoSite"
+				}
+				// Compiled rules split CIDR lists, so i is not a profile [Rule]
+				// index; profiles are rejected earlier with the exact index.
+				return problem.New("kill_switch_cidr_only", fmt.Sprintf("rule %d: kill switch supports CIDR rules only", i+1)).In("Rule").At(field)
 			}
 		}
 	}
 	if c.Resolve == nil {
-		return fmt.Errorf("missing access key resolver")
+		return problem.New("access_key_missing", "missing access key resolver").In("AccessKey")
 	}
 	if c.Mode != "vpn" && c.Mode != "proxy" {
-		return fmt.Errorf("mode must be vpn or proxy")
+		return problem.New("choice_invalid", "mode must be vpn or proxy").In("Interface").At("Mode").Arg("allowed", "vpn, proxy")
 	}
 	if c.Mode == "proxy" {
 		if c.KillSwitch {
-			return fmt.Errorf("KillSwitch requires VPN mode")
+			return problem.New("kill_switch_requires_vpn", "KillSwitch requires VPN mode").In("Interface").At("KillSwitch").Also("Mode")
 		}
 		a, e := netip.ParseAddrPort(c.Listen)
 		if e != nil || !a.Addr().IsLoopback() || a.Port() == 0 {
-			return fmt.Errorf("SOCKS listener must use loopback")
+			return problem.New("listen_invalid", "SOCKS listener must use loopback").In("Interface").At("Listen")
 		}
 		if c.DisableIPv6 {
-			return fmt.Errorf("IPv6 disable requires VPN mode")
+			return problem.New("ipv6_disable_requires_vpn", "IPv6 disable requires VPN mode").In("Interface").At("IPv6").Also("Mode")
 		}
 		return nil
 	}
 	if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`).MatchString(c.Name) {
-		return fmt.Errorf("invalid tunnel name")
+		return problem.New("interface_name_invalid", "invalid tunnel name").In("Interface").On("Name", c.Name).Arg("max", "32")
 	}
 	if c.MTU < 1280 || c.MTU > 1500 {
-		return fmt.Errorf("MTU must be between 1280 and 1500")
+		return problem.New("number_out_of_range", "MTU must be between 1280 and 1500").In("Interface").At("MTU").Arg("min", "1280").Arg("max", "1500")
 	}
-	_, err := dnsconfig.Parse(strings.Join(c.DNS, ","))
-	return err
+	if _, err := dnsconfig.Parse(strings.Join(c.DNS, ",")); err != nil {
+		return problem.Of(err).In("Interface").At("DNS")
+	}
+	return nil
 }

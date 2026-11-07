@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"bimeron/internal/problem"
 )
 
 type Action string
@@ -78,7 +80,33 @@ func (p *Policy) DirectPrefixes() []netip.Prefix {
 	return prefixes
 }
 
-func valid(a Action) bool       { return a == Direct || a == Proxy || a == Block }
+// actions lists the permitted actions for choice_invalid problems.
+const actions = "direct, proxy, block"
+
+func valid(a Action) bool { return a == Direct || a == Proxy || a == Block }
+
+// checkRule requires one matcher and a valid action. rule is the one-based
+// [Rule] index; every failure keeps the historical "invalid rule N" message.
+func checkRule(r Rule, rule int) error {
+	var matchers []string
+	for _, m := range []struct{ field, value string }{{"CIDR", r.CIDR}, {"Domain", r.Domain}, {"GeoIP", r.GeoIP}, {"GeoSite", r.GeoSite}} {
+		if m.value != "" {
+			matchers = append(matchers, m.field)
+		}
+	}
+	message := fmt.Sprintf("invalid rule %d", rule)
+	switch {
+	case len(matchers) == 0:
+		return problem.New("rule_matcher_count", message).In("Rule").AtRule(rule)
+	case len(matchers) > 1:
+		return problem.New("rule_matcher_count", message).In("Rule").At(matchers[0]).Also(matchers[1:]...).AtRule(rule)
+	case r.Action == "":
+		return problem.New("value_required", message).In("Rule").On("Action", "").AtRule(rule)
+	case !valid(r.Action):
+		return problem.New("choice_invalid", message).In("Rule").At("Action").Arg("allowed", actions).AtRule(rule)
+	}
+	return nil
+}
 func normalize(s string) string { return strings.ToLower(strings.TrimSuffix(s, ".")) }
 func matchesDomain(domain, rule string) bool {
 	return domain == rule || strings.HasSuffix(domain, "."+rule)
@@ -88,18 +116,12 @@ func Compile(c Config) (*Policy, error) { return CompileWithGeoData(c, nil) }
 // CompileWithGeoData compiles ordered rules against an immutable dataset snapshot.
 func CompileWithGeoData(c Config, data *GeoData) (*Policy, error) {
 	if !valid(c.Default) {
-		return nil, fmt.Errorf("invalid default action")
+		return nil, problem.New("choice_invalid", "invalid default action").In("Routing").At("Default").Arg("allowed", actions)
 	}
 	p := &Policy{fallback: c.Default}
 	for i, r := range c.Rules {
-		count := 0
-		for _, v := range []string{r.CIDR, r.Domain, r.GeoIP, r.GeoSite} {
-			if v != "" {
-				count++
-			}
-		}
-		if !valid(r.Action) || count != 1 {
-			return nil, fmt.Errorf("invalid rule %d", i+1)
+		if err := checkRule(r, i+1); err != nil {
+			return nil, err
 		}
 		cr := compiledRule{action: r.Action}
 		if r.GeoIP != "" || r.GeoSite != "" {
@@ -137,7 +159,7 @@ func CompileWithGeoData(c Config, data *GeoData) (*Policy, error) {
 			for _, value := range strings.Split(r.CIDR, ",") {
 				prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 				if err != nil {
-					return nil, fmt.Errorf("invalid CIDR in rule %d", i+1)
+					return nil, problem.New("cidr_invalid", fmt.Sprintf("invalid CIDR in rule %d", i+1)).In("Rule").At("CIDR").AtRule(i + 1)
 				}
 				p.rules = append(p.rules, compiledRule{prefix: prefix.Masked(), action: r.Action})
 			}
@@ -145,7 +167,7 @@ func CompileWithGeoData(c Config, data *GeoData) (*Policy, error) {
 		} else {
 			cr.domain = normalize(r.Domain)
 			if cr.domain == "" || strings.ContainsAny(cr.domain, " /*:\t\r\n") {
-				return nil, fmt.Errorf("invalid domain in rule %d", i+1)
+				return nil, problem.New("domain_invalid", fmt.Sprintf("invalid domain in rule %d", i+1)).In("Rule").At("Domain").AtRule(i + 1)
 			}
 		}
 		p.rules = append(p.rules, cr)
