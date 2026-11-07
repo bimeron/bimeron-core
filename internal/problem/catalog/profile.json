@@ -1,0 +1,114 @@
+{
+  "codes": {
+    "file_unreadable": {
+      "kind": "config",
+      "en": "The profile or key file cannot be read. Check that it exists and that you have access to it.",
+      "ru": "Не удалось прочитать файл профиля или ключа. Проверьте, что он существует и доступен."
+    },
+    "file_too_large": {
+      "kind": "config",
+      "en": "The file is too large. The limit is {limit}.",
+      "ru": "Файл слишком большой. Максимальный размер — {limit}."
+    },
+    "file_not_utf8": {
+      "kind": "config",
+      "en": "The profile must be saved in UTF-8 encoding.",
+      "ru": "Профиль должен быть сохранён в кодировке UTF-8."
+    },
+    "syntax_invalid": {
+      "kind": "config",
+      "en": "This line is not a valid section header or \"Option = value\" pair.",
+      "ru": "Строка не похожа ни на заголовок секции, ни на пару «Параметр = значение»."
+    },
+    "section_duplicate": {
+      "kind": "config",
+      "en": "This section appears more than once. Keep only one.",
+      "ru": "Эта секция встречается больше одного раза. Оставьте только одну."
+    },
+    "section_unknown": {
+      "kind": "config",
+      "en": "Unknown section. Check the spelling of the section name.",
+      "ru": "Неизвестная секция. Проверьте написание её названия."
+    },
+    "option_duplicate": {
+      "kind": "config",
+      "en": "This option is set more than once in the section. Keep only one.",
+      "ru": "Параметр указан в секции больше одного раза. Оставьте только один."
+    },
+    "option_unknown": {
+      "kind": "config",
+      "en": "Unknown option for this section. Check the spelling or remove it.",
+      "ru": "Неизвестный для этой секции параметр. Проверьте написание или удалите его."
+    },
+    "profile_version_unsupported": {
+      "kind": "config",
+      "en": "Unsupported profile version. Set it to {version}.",
+      "ru": "Неподдерживаемая версия профиля. Укажите {version}."
+    },
+    "ikev2_exclusive": {
+      "kind": "config",
+      "en": "An IKEv2 profile cannot contain an access key, interface settings or routing rules.",
+      "ru": "Профиль IKEv2 не может содержать ключ доступа, настройки интерфейса и правила маршрутизации."
+    },
+    "kill_switch_requires_vpn": {
+      "kind": "config",
+      "en": "The kill switch is only available in system VPN mode.",
+      "ru": "Блокировка трафика вне VPN доступна только в режиме системного VPN."
+    },
+    "ipv6_disable_requires_vpn": {
+      "kind": "config",
+      "en": "IPv6 can only be disabled in system VPN mode.",
+      "ru": "Отключить IPv6 можно только в режиме системного VPN."
+    },
+    "interface_name_invalid": {
+      "kind": "config",
+      "en": "Must start with a Latin letter and contain up to {max} Latin letters, digits, underscores or hyphens.",
+      "ru": "Должно начинаться с латинской буквы и содержать до {max} латинских букв, цифр, знаков «_» или «-»."
+    },
+    "listen_invalid": {
+      "kind": "config",
+      "en": "Enter a local address and port, for example 127.0.0.1:1080.",
+      "ru": "Укажите локальный адрес и порт, например 127.0.0.1:1080."
+    },
+    "dns_too_many": {
+      "kind": "config",
+      "en": "Specify at most {max} DNS servers.",
+      "ru": "Укажите не больше {max} DNS-серверов."
+    },
+    "dns_invalid": {
+      "kind": "config",
+      "en": "Enter public IPv4 addresses separated by commas, for example 1.1.1.1, 8.8.8.8.",
+      "ru": "Укажите публичные IPv4-адреса через запятую, например 1.1.1.1, 8.8.8.8."
+    },
+    "dns_duplicate": {
+      "kind": "config",
+      "en": "The same DNS server is listed twice.",
+      "ru": "Один и тот же DNS-сервер указан дважды."
+    },
+    "kill_switch_cidr_only": {
+      "kind": "config",
+      "en": "With the kill switch on, only IP address range (CIDR) rules are allowed. Disable this rule or the kill switch.",
+      "ru": "При включённой блокировке трафика вне VPN допустимы только правила по диапазонам IP-адресов (CIDR). Отключите это правило или блокировку."
+    },
+    "key_file_unavailable": {
+      "kind": "config",
+      "en": "A key file cannot be used here. Paste the key into the profile instead.",
+      "ru": "Здесь нельзя использовать файл ключа. Вставьте сам ключ в профиль."
+    },
+    "xhttp_extra_conflict": {
+      "kind": "config",
+      "en": "Use either the combined XHTTP settings or the separate XHTTP options, not both.",
+      "ru": "Используйте либо общий блок настроек XHTTP, либо отдельные параметры XHTTP, но не одновременно."
+    },
+    "access_key_missing": {
+      "kind": "config",
+      "en": "The profile has no access key. Add a key or server parameters.",
+      "ru": "В профиле нет ключа доступа. Добавьте ключ или параметры сервера."
+    },
+    "access_key_multiple_sources": {
+      "kind": "config",
+      "en": "The profile has more than one access key. Keep only one key or one set of server parameters.",
+      "ru": "В профиле больше одного ключа доступа. Оставьте один ключ или один набор параметров сервера."
+    }
+  }
+}

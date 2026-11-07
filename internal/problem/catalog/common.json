@@ -1,0 +1,140 @@
+{
+  "secret_fields": [
+    "Password", "ID", "Key", "PluginOpts",
+    "SS", "SSConf", "SOCKS5", "HTTP", "VLESS", "VMess", "Trojan", "Naive",
+    "Hysteria2", "AnyTLS", "SSH", "TUIC", "MASQUE"
+  ],
+  "uri_fields": {},
+  "codes": {
+    "unclassified": {
+      "kind": "config",
+      "en": "The core rejected this profile. See details.",
+      "ru": "Ядро отклонило профиль. Подробности ниже."
+    },
+    "value_required": {
+      "kind": "config",
+      "en": "This value is required.",
+      "ru": "Укажите значение."
+    },
+    "value_invalid": {
+      "kind": "config",
+      "en": "This value is not valid.",
+      "ru": "Недопустимое значение."
+    },
+    "value_too_long": {
+      "kind": "config",
+      "en": "The value is too long. The maximum is {max} characters.",
+      "ru": "Слишком длинное значение: не больше {max} символов."
+    },
+    "value_has_invalid_characters": {
+      "kind": "config",
+      "en": "The value contains characters that are not allowed here.",
+      "ru": "Значение содержит недопустимые символы."
+    },
+    "choice_invalid": {
+      "kind": "config",
+      "en": "Choose one of: {allowed}.",
+      "ru": "Выберите одно из значений: {allowed}."
+    },
+    "boolean_invalid": {
+      "kind": "config",
+      "en": "Use true or false.",
+      "ru": "Допустимы только значения true или false."
+    },
+    "number_invalid": {
+      "kind": "config",
+      "en": "Enter a whole number.",
+      "ru": "Введите целое число."
+    },
+    "number_out_of_range": {
+      "kind": "config",
+      "en": "Enter a number from {min} to {max}.",
+      "ru": "Введите число от {min} до {max}."
+    },
+    "port_invalid": {
+      "kind": "config",
+      "en": "Enter a port number from 1 to 65535.",
+      "ru": "Укажите номер порта от 1 до 65535."
+    },
+    "host_invalid": {
+      "kind": "config",
+      "en": "Enter a host name or IP address without spaces, slashes or other extra characters.",
+      "ru": "Укажите имя хоста или IP-адрес без пробелов, косых черт и других лишних символов."
+    },
+    "server_name_invalid": {
+      "kind": "config",
+      "en": "Enter a domain name without spaces or slashes.",
+      "ru": "Укажите доменное имя без пробелов и косых черт."
+    },
+    "uuid_invalid": {
+      "kind": "config",
+      "en": "Enter a UUID such as 123e4567-e89b-12d3-a456-426614174000.",
+      "ru": "Укажите UUID, например 123e4567-e89b-12d3-a456-426614174000."
+    },
+    "path_invalid": {
+      "kind": "config",
+      "en": "Enter a path that starts with / and has no #, backslashes or line breaks.",
+      "ru": "Укажите путь, который начинается с / и не содержит #, обратных косых черт и переводов строки."
+    },
+    "path_must_be_absolute": {
+      "kind": "config",
+      "en": "Use a full (absolute) file path.",
+      "ru": "Укажите полный (абсолютный) путь к файлу."
+    },
+    "alpn_invalid": {
+      "kind": "config",
+      "en": "This ALPN is not supported here. Allowed: {allowed}.",
+      "ru": "Этот ALPN здесь не поддерживается. Допустимо: {allowed}."
+    },
+    "fingerprint_unsupported": {
+      "kind": "config",
+      "en": "This TLS fingerprint is not supported. Allowed: {allowed}.",
+      "ru": "Этот TLS-отпечаток не поддерживается. Допустимо: {allowed}."
+    },
+    "credentials_incomplete": {
+      "kind": "config",
+      "en": "Set both the user name and the password, or neither.",
+      "ru": "Укажите и имя пользователя, и пароль — или не указывайте ни то, ни другое."
+    },
+    "option_not_supported": {
+      "kind": "config",
+      "en": "This option is not used by the {type} protocol. Clear it.",
+      "ru": "Этот параметр не используется протоколом {type}. Очистите его."
+    },
+    "option_requires_type": {
+      "kind": "config",
+      "en": "This option is only available for the {type} protocol.",
+      "ru": "Этот параметр доступен только для протокола {type}."
+    },
+    "option_requires_transport": {
+      "kind": "config",
+      "en": "This option is only available with the {transport} transport.",
+      "ru": "Этот параметр доступен только с транспортом {transport}."
+    },
+    "option_requires_security": {
+      "kind": "config",
+      "en": "This option is only available with {security} security.",
+      "ru": "Этот параметр доступен только с защитой {security}."
+    },
+    "combination_unsupported": {
+      "kind": "config",
+      "en": "This combination of settings is not supported.",
+      "ru": "Такое сочетание параметров не поддерживается."
+    },
+    "uri_invalid": {
+      "kind": "config",
+      "en": "The link is malformed. Copy it again from the provider.",
+      "ru": "Ссылка повреждена. Скопируйте её у провайдера ещё раз."
+    },
+    "uri_option_unsupported": {
+      "kind": "config",
+      "en": "The link contains an unsupported or repeated option.",
+      "ru": "Ссылка содержит неподдерживаемый или повторяющийся параметр."
+    },
+    "uri_scheme_invalid": {
+      "kind": "config",
+      "en": "The link must start with {schemes}.",
+      "ru": "Ссылка должна начинаться с {schemes}."
+    }
+  }
+}
