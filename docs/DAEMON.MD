@@ -32,7 +32,7 @@ dist\windows-amd64\bimeron.exe shutdown
 | `status` | Shows session state, the last error, and active TCP/UDP transport endpoints. |
 | `stats` | Session counters: TCP/UDP flows, DNS, bytes, and routing decisions. No addresses or keys. |
 | `capabilities` | Platform capabilities: VPN, kill switch, split routing. The GUI reads this instead of assuming parity. Runs locally without a daemon; also available through IPC. |
-| `watch` | Shows events. Ctrl+C stops only the viewer. |
+| `watch` | Shows events and keeps waiting while the daemon is unavailable or restarting. Ctrl+C stops only the viewer. |
 | `stop` | Disconnects the session and waits for route, DNS, and kill-switch cleanup. The daemon keeps running and accepts another `start`. Repeated `stop` is safe. |
 | `shutdown` | Stops the session, then exits the daemon. If cleanup fails, returns an error and keeps the daemon available. |
 
