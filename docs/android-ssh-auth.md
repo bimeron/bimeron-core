@@ -88,7 +88,8 @@ default `~/.ssh/known_hosts` is read.
 Host names match case-insensitively, as in OpenSSH. Core lowercases the ASCII
 letters of the dialed host for every lookup, and app-owned lines are
 lowercased when parsed. Dialing `SSH.Example.com` therefore finds a key stored
-for `ssh.example.com`.
+for `ssh.example.com`. IP literals are compared in canonical form, so
+`[0:0:0:0:0:0:0:1]:2222` and `[::1]:2222` are the same host in both sources.
 
 Verification, in order:
 
@@ -102,9 +103,13 @@ Verification, in order:
    known_hosts matches only its exact port (`*` covers port 22 only), so Core
    cannot tell an unlisted host from one the CA was meant to cover. Use an
    exact `@cert-authority [host]:port` line for non-22 ports.
-5. If `KnownHostsFile` has an unhashed host pattern with an uppercase letter,
-   the key is refused with `ssh_host_key_unknown` and no offer. Such patterns
-   can only match the exact case. OpenSSH never writes them.
+5. If `KnownHostsFile` has an unhashed wildcard pattern with an uppercase
+   letter (`*.Example.COM`) whose lowercase form covers the dialed host
+   (ports are ignored), the key is refused with `ssh_host_key_unknown` and no
+   offer. Other hosts in the file are not affected. A literal pattern with
+   uppercase letters or a non-canonical IP (`SSH.Example.com`,
+   `[0:0:0:0:0:0:0:1]:2222`) is matched by its own spelling in steps 1-3, so
+   it gives a match or a mismatch. OpenSSH never writes such patterns.
 6. Otherwise the host is unknown, and `PendingAuth` returns one offer.
 
 A host certificate that `KnownHostsFile` cannot verify, for example one signed
@@ -121,8 +126,9 @@ An offer has exactly these seven string fields, in this order:
 {"sessionId":"<48 hex>","requestId":"<48 hex>","kind":"host_key","host":"ssh.example.com:2222","keyType":"ssh-ed25519","fingerprint":"SHA256:<base64>","knownHostsLine":"[ssh.example.com]:2222 ssh-ed25519 AAAAC3Nza..."}
 ```
 
-- `host` is the dialed `host:port` with the host in lowercase. An IPv6
-  literal is bracketed. Only `a-z 0-9 . - _ : % [ ]` appear in it.
+- `host` is the dialed `host:port` with the host in lowercase and an IP
+  literal in canonical form (`[::1]:2222`, not `[0:0:0:0:0:0:0:1]:2222`). An
+  IPv6 literal is bracketed. Only `a-z 0-9 . - _ : % [ ]` appear in it.
 - `keyType` is the SSH public-key type, such as `ssh-ed25519`,
   `ecdsa-sha2-nistp256` or `ssh-rsa`. It has at most 128 bytes and no space
   or comma.
@@ -169,10 +175,12 @@ failures stay `ssh_connection_failed`, except `ssh_known_hosts_missing` (see
 | `ssh_host_key_mismatch` | Known host with no matching key, or a revoked key. No offer was made. | `HOST_KEY_MISMATCH` |
 | `ssh_host_key_rejected` | The user declined the offer with `CancelAuth`. | `AUTH_CANCELLED` |
 | `ssh_host_key_unanswered` | The offer timed out (60 s), the round limit was hit, or the offer was withdrawn by a network change, Stop, deadline or connection loss. | `AUTH_UNANSWERED` |
-| `ssh_host_key_unknown` | The host is unknown and no offer could be made, for example because the host is not a literal name or the imported file has mixed-case host patterns. | `SSH_CONNECTION_FAILED` |
+| `ssh_host_key_unknown` | The host is unknown and no offer could be made, for example because the host is not a literal name or a mixed-case wildcard pattern in the imported file covers it. | `SSH_CONNECTION_FAILED` |
 | `ssh_host_key_ca_required` | The imported `KnownHostsFile` uses `@cert-authority`, and the server's key matched no entry. No offer was made. | `HOST_KEY_MISMATCH` |
 | `ssh_known_hosts_missing` | No `KnownHostsFile` and no `AcceptNewHostKeys`. Nothing was dialed. Reported with or without opt-in. | `KNOWN_HOSTS_MISSING` |
 
-All of these faults are terminal: Core does not retry them. An app whose
+All of these faults are terminal: Core does not retry them. Each has an
+English and Russian text of kind `connection` in `ErrorCatalog()`
+(docs/ERRORS.MD). An app whose
 pendingAuth parser does not know `host_key` must not opt in, because an
 unrendered offer only expires after 60 seconds.

@@ -1,7 +1,7 @@
 # ADR 0036: Android SSH uses only profile-selected files
 
-Status: accepted, November 7, 2026 (user decision 8). Targets Bimeron v1.9.
-Complements ADR 0035.
+Status: accepted, November 7, 2026 (user decision 8), amended after re-review
+the same day. Targets Bimeron v1.9. Complements ADR 0035.
 
 ## Context
 
@@ -33,6 +33,24 @@ Only the files the profile names (paths into app storage) and the app-owned
 trusted lines passed to `AcceptNewHostKeys` are used. CLI, daemon, desktop and
 Apple consumers do not set `SSHProfileOnly` and keep their behaviour and
 error text.
+
+### Late prompt answers
+
+For the Android bridge, a `ReplyAuth` that returned success is final (ADR
+0035). The SSH attempt therefore uses every answer a `Prompt` returns without
+an error, even if the prompt's 60-second limit or the attempt deadline ended
+meanwhile. It no longer discards such answers itself. A `Prompt` that cannot
+stop a blocking read when its context ends must discard a late answer and
+return an error.
+
+- CLI (`bimeron connect`, `bimeron check`): `term.ReadPassword` cannot be
+  interrupted, so the terminal prompt checks the context after each read and
+  refuses an answer typed after the limit, as before. The prompt still waits
+  for Enter; restoring echo after an abandoned read would need its own
+  terminal handling.
+- Desktop (control daemon): the prompt returns as soon as its context ends.
+  The only difference is a reply that the daemon received at the same moment
+  as the expiry: it is now used instead of being dropped.
 
 ## Alternatives
 

@@ -1,7 +1,7 @@
 # ADR 0035: Opt-in accept-new SSH host keys
 
-Status: accepted, November 7, 2026, amended after security review the same
-day. Targets Bimeron v1.9. Amends the last tradeoff of ADR 0013 for opted-in
+Status: accepted, November 7, 2026, amended after security review and
+re-review the same day. Targets Bimeron v1.9. Amends the last tradeoff of ADR 0013 for opted-in
 hosts only. ADR 0036 removes every home-directory fallback on Android.
 
 ## Context
@@ -35,6 +35,10 @@ For an opted-in connection:
   behind `LOCALHOST` would look like a new host instead of a mismatch. The
   file is also asked with the host as dialed, so an entry written in that
   exact case still matches.
+- An IP literal host is compared in `net/netip` canonical form in both
+  sources, in the offer and in app-owned lines, so `[0:0:0:0:0:0:0:1]:2222`
+  and `[::1]:2222` are one host and a changed key behind either spelling is a
+  mismatch.
 - A match in either source connects without an offer.
 - A host known in either source with no matching key, or a key marked
   `@revoked` in the file, is refused without an offer. The fault is
@@ -44,10 +48,15 @@ For an opted-in connection:
   x/crypto `knownhosts` matches a CA pattern only on its exact port: `*` and
   `[10.0.0.*]:*` never cover port 2222. Such a host would otherwise look
   unknown, and an attacker presenting a plain key would get an offer.
-- A `KnownHostsFile` with an unhashed host pattern containing an uppercase
-  letter never produces an offer either: `knownhosts` cannot match it against
-  another case, so the file cannot prove a host unknown. The fault is
-  `ssh_host_key_unknown`. OpenSSH writes lowercase names, so this affects only
+- `knownhosts` compares file patterns byte-wise, so an unhashed pattern with
+  an uppercase letter, or a non-canonical IP literal, would not match another
+  spelling of the same host. Core lists such patterns when it reads the file.
+  A literal one (`SSH.Example.com`, `[0:0:0:0:0:0:0:1]:2222`) is asked for by
+  its own spelling whenever it names the dialed host, so it still yields a
+  match or a mismatch. A wildcard one (`*.Example.COM`) cannot be asked for:
+  if its lowercase form covers the dialed host, ignoring ports, no offer is
+  made and the fault is `ssh_host_key_unknown`. Other hosts in the same file
+  keep their offers. OpenSSH writes lowercase names, so this affects only
   hand-edited files.
 - An unknown host produces one `host_key` offer through the existing bridge.
   It uses the same per-prompt 60-second limit, eight-round limit, paused
@@ -83,7 +92,8 @@ byte-identical output:
 {"sessionId":"<48 hex>","requestId":"<48 hex>","kind":"host_key","host":"ssh.example.com:22","keyType":"ssh-ed25519","fingerprint":"SHA256:<43 base64 chars, no padding>","knownHostsLine":"ssh.example.com ssh-ed25519 AAAAC3Nza..."}
 ```
 
-`host` is `host:port` as dialed, with the host lowercased (IPv6 in brackets).
+`host` is `host:port` as dialed, with the host lowercased and an IP literal in
+canonical form (IPv6 in brackets).
 `knownHostsLine` uses OpenSSH normalization: the bare host for port 22,
 `[host]:port` otherwise. It is exactly three space-separated printable ASCII
 fields, at most 12 KiB, with no newline. The offer has no `prompts` or `echo`
@@ -126,6 +136,9 @@ field.
   as `ssh_connection_failed`: a certificate signed by an unrelated CA, or one
   whose CA line does not match the port (the same exact-port rule applies to
   certificates). Use an exact `[host]:port` CA line for non-22 ports.
+- A hashed (`|1|`) entry made for a non-canonical IP spelling cannot be
+  recognised and does not stop an offer for the canonical spelling. This
+  affects only hosts saved under a non-canonical IP spelling.
 - In opt-in mode the preferred-algorithm list omits `ssh-dss`.
 - Android apps whose parser does not know `host_key` must not call
   `AcceptNewHostKeys`; an unrendered offer would time out after 60 seconds.
