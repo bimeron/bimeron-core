@@ -137,7 +137,7 @@ causes connection failure until investigated and corrected. Do not remove an
 old entry solely to silence that failure.
 
 The embedded Android Session can opt in to OpenSSH-style `accept-new` (ADR
-0035, `docs/android-ssh-auth.md`). An unknown host is then shown to the user as
+0037, `docs/android-ssh-auth.md`). An unknown host is then shown to the user as
 a fingerprint offer, and the app stores accepted keys itself. A changed key is
 still refused, now with the distinct fault `ssh_host_key_mismatch`. The CLI,
 daemon and desktop/Apple consumers do not opt in and behave as described above.

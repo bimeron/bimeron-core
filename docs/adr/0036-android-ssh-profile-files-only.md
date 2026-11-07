@@ -1,7 +1,7 @@
 # ADR 0036: Android SSH uses only profile-selected files
 
 Status: accepted, November 7, 2026 (user decision 8), amended after re-review
-the same day. Targets Bimeron v1.9. Complements ADR 0035.
+the same day. Targets Bimeron v1.9. Complements ADR 0037.
 
 ## Context
 
@@ -37,7 +37,7 @@ error text.
 ### Late prompt answers
 
 For the Android bridge, a `ReplyAuth` that returned success is final (ADR
-0035). The SSH attempt therefore uses every answer a `Prompt` returns without
+0037). The SSH attempt therefore uses every answer a `Prompt` returns without
 an error, even if the prompt's 60-second limit or the attempt deadline ended
 meanwhile. It no longer discards such answers itself. A `Prompt` that cannot
 stop a blocking read when its context ends must discard a late answer and

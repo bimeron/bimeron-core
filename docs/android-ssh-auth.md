@@ -2,7 +2,7 @@
 
 Issue #96. SSH identities and the user-imported known_hosts remain filesystem
 paths. App-owned trusted host keys are passed as bytes (see "Host-key offers"
-below, ADR 0035). No in-memory identity import or protocol capability flag is
+below, ADR 0037). No in-memory identity import or protocol capability flag is
 provided.
 
 ## Files Core uses on Android
