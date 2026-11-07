@@ -63,7 +63,7 @@ func TestMacOSStopDuringNetworkSetup(t *testing.T) {
 					} else {
 						err = m.Configure(ctx, "utun3", 1420)
 					}
-					return nil, macosFault(err, "macos_network_setup_failed: "+err.Error(), false)
+					return nil, macosFault(err, "macos_network_setup_failed", false)
 				}})
 				ctx := testDeadline(t)
 				defer e.Stop(context.Background())

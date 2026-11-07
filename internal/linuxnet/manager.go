@@ -15,6 +15,9 @@ import (
 	"time"
 )
 
+// ErrTunnelNameInUse reports that another interface already has the tunnel name.
+var ErrTunnelNameInUse = errors.New("tunnel name is already in use")
+
 type Runner func(context.Context, string, string, ...string) ([]byte, error)
 type Manager struct {
 	Dir      string
@@ -158,7 +161,7 @@ func (m *Manager) Preflight(ctx context.Context, name string) error {
 	}
 	for _, l := range links {
 		if l.Name == name {
-			return fmt.Errorf("tunnel name is already in use")
+			return ErrTunnelNameInUse
 		}
 	}
 	return nil

@@ -1,0 +1,514 @@
+{
+  "codes": {
+    "access_key_resolve_failed": {
+      "kind": "connection",
+      "en": "Could not get the access key from your provider. Check your internet connection and try again.",
+      "ru": "Не удалось получить ключ доступа у провайдера. Проверьте подключение к интернету и повторите попытку."
+    },
+    "access_key_unavailable": {
+      "kind": "connection",
+      "en": "Your provider did not return a working access key. The key may have expired or been revoked; get a new one from your provider.",
+      "ru": "Провайдер не выдал рабочий ключ доступа. Возможно, срок действия ключа истёк или его отозвали — получите новый ключ у провайдера."
+    },
+    "adapter_create_failed": {
+      "kind": "connection",
+      "en": "Could not create the VPN network adapter. Restart the application; if this repeats, restart the computer.",
+      "ru": "Не удалось создать сетевой адаптер VPN. Перезапустите приложение, а если ошибка повторится — компьютер."
+    },
+    "adapter_lookup_failed": {
+      "kind": "connection",
+      "en": "The VPN network adapter was created, but the system cannot find it. Try connecting again.",
+      "ru": "Сетевой адаптер VPN создан, но система его не находит. Попробуйте подключиться ещё раз."
+    },
+    "adapter_name_in_use": {
+      "kind": "connection",
+      "en": "Another network adapter already uses the tunnel name from this profile. Change the interface name in the profile or turn off the other VPN.",
+      "ru": "Имя туннеля из профиля уже занято другим сетевым адаптером. Измените имя интерфейса в профиле или отключите другой VPN."
+    },
+    "administrator_required": {
+      "kind": "connection",
+      "en": "Administrator rights are required. Run the application as an administrator (as root on Linux and macOS).",
+      "ru": "Нужны права администратора. Запустите приложение от имени администратора (в Linux и macOS — от root)."
+    },
+    "bootstrap_dns_invalid": {
+      "kind": "connection",
+      "en": "The DNS server of your network cannot be used to find the VPN server. Set an IPv4 DNS server in the profile or check your network settings.",
+      "ru": "DNS-сервер вашей сети не подходит для поиска VPN-сервера. Укажите в профиле DNS-сервер IPv4 или проверьте настройки сети."
+    },
+    "bootstrap_dns_unavailable": {
+      "kind": "connection",
+      "en": "No DNS server is available to find the VPN server. Check your internet connection or set a DNS server in the profile.",
+      "ru": "Нет DNS-сервера, через который можно найти VPN-сервер. Проверьте подключение к интернету или укажите DNS-сервер в профиле."
+    },
+    "cleanup_failed_run_recover": {
+      "kind": "connection",
+      "en": "Network settings were not fully restored after disconnecting. Run network recovery to get your internet access back.",
+      "ru": "После отключения сетевые настройки восстановились не полностью. Запустите восстановление сети, чтобы вернуть доступ в интернет."
+    },
+    "conflicting_dns_policy": {
+      "kind": "connection",
+      "en": "DNS rules from another VPN or a company policy conflict with this connection. Turn off the other VPN or remove those rules, then try again.",
+      "ru": "Правила DNS другого VPN или корпоративной политики мешают подключению. Отключите другой VPN или уберите эти правила и повторите попытку."
+    },
+    "connection_failed": {
+      "kind": "connection",
+      "en": "The connection failed for an unexpected reason. Try again. If it keeps happening, collect diagnostics and report the problem.",
+      "ru": "Подключение не удалось по непредвиденной причине. Попробуйте ещё раз. Если ошибка повторяется, соберите диагностику и сообщите о проблеме."
+    },
+    "dns_recovery_failed": {
+      "kind": "connection",
+      "en": "DNS settings left over from a previous session could not be restored. Run network recovery, then connect again.",
+      "ru": "Не удалось вернуть настройки DNS, оставшиеся от прошлого сеанса. Запустите восстановление сети и подключитесь снова."
+    },
+    "endpoint_dns_failed": {
+      "kind": "connection",
+      "en": "Cannot find the server address. Check the server name in the profile and your internet connection.",
+      "ru": "Не удаётся определить адрес сервера. Проверьте имя сервера в профиле и подключение к интернету."
+    },
+    "executable_path_failed": {
+      "kind": "connection",
+      "en": "The application cannot locate its own files. Reinstall the application.",
+      "ru": "Приложение не может найти собственные файлы. Переустановите приложение."
+    },
+    "hysteria2_auth_rejected": {
+      "kind": "connection",
+      "en": "The server rejected the password. Check the password in the profile.",
+      "ru": "Сервер не принял пароль. Проверьте пароль в профиле."
+    },
+    "hysteria2_invalid_config": {
+      "kind": "connection",
+      "en": "The Hysteria2 settings in this profile cannot be used. Check the profile.",
+      "ru": "С настройками Hysteria2 из этого профиля подключиться нельзя. Проверьте профиль."
+    },
+    "hysteria2_network_failed": {
+      "kind": "connection",
+      "en": "Cannot reach the server. Check your internet connection and the server address.",
+      "ru": "Не удаётся связаться с сервером. Проверьте подключение к интернету и адрес сервера."
+    },
+    "hysteria2_network_timeout": {
+      "kind": "connection",
+      "en": "The server is not responding. Check the server address and port, and make sure your network does not block UDP.",
+      "ru": "Сервер не отвечает. Проверьте адрес и порт сервера и убедитесь, что ваша сеть не блокирует UDP."
+    },
+    "hysteria2_outbound_socket_failed": {
+      "kind": "connection",
+      "en": "Could not open a network connection to the server. Check your network and try again.",
+      "ru": "Не удалось открыть сетевое соединение с сервером. Проверьте сеть и повторите попытку."
+    },
+    "hysteria2_tls_failed": {
+      "kind": "connection",
+      "en": "The secure connection to the server failed. Check the server name, the certificate settings and the date and time on this device.",
+      "ru": "Не удалось установить защищённое соединение с сервером. Проверьте имя сервера, настройки сертификата, а также дату и время на устройстве."
+    },
+    "hysteria2_udp_disabled": {
+      "kind": "connection",
+      "en": "The server does not allow UDP traffic. Ask your provider to enable it.",
+      "ru": "Сервер не пропускает UDP-трафик. Попросите провайдера включить его."
+    },
+    "hysteria2_unknown": {
+      "kind": "connection",
+      "en": "The Hysteria2 connection failed. Check the profile and try again.",
+      "ru": "Не удалось подключиться по Hysteria2. Проверьте профиль и повторите попытку."
+    },
+    "ikev2_access_denied": {
+      "kind": "connection",
+      "en": "Windows denied access to the VPN connection. Make sure your Windows account may use this VPN profile.",
+      "ru": "Windows запретила доступ к VPN-подключению. Убедитесь, что вашей учётной записи Windows разрешено использовать этот профиль VPN."
+    },
+    "ikev2_authentication_failed": {
+      "kind": "connection",
+      "en": "The server rejected the user name or password. Check the credentials saved in the Windows VPN profile.",
+      "ru": "Сервер не принял имя пользователя или пароль. Проверьте учётные данные, сохранённые в профиле VPN Windows."
+    },
+    "ikev2_certificate_or_authentication_failed": {
+      "kind": "connection",
+      "en": "Sign-in failed: the server certificate is not trusted or the credentials are wrong. Check the server certificate and the saved credentials.",
+      "ru": "Вход не выполнен: сертификат сервера не считается доверенным или учётные данные неверны. Проверьте сертификат сервера и сохранённые учётные данные."
+    },
+    "ikev2_cleanup_failed": {
+      "kind": "connection",
+      "en": "The VPN connection could not be closed cleanly. Disconnect it in the Windows network settings.",
+      "ru": "Не удалось корректно закрыть VPN-подключение. Отключите его в сетевых параметрах Windows."
+    },
+    "ikev2_cleanup_timeout": {
+      "kind": "connection",
+      "en": "Closing the VPN connection took too long. If it is still active in the Windows network settings, disconnect it there.",
+      "ru": "Закрытие VPN-подключения заняло слишком много времени. Если в сетевых параметрах Windows оно ещё активно, отключите его там."
+    },
+    "ikev2_conflicting_dns_policy_run_recover": {
+      "kind": "connection",
+      "en": "DNS rules from another VPN or a previous session block traffic protection. Run network recovery, then try again.",
+      "ru": "Правила DNS другого VPN или прошлого сеанса мешают защите трафика. Запустите восстановление сети и повторите попытку."
+    },
+    "ikev2_connect_timeout": {
+      "kind": "connection",
+      "en": "The VPN server did not respond in time. Check your internet connection and the server address.",
+      "ru": "VPN-сервер не ответил вовремя. Проверьте подключение к интернету и адрес сервера."
+    },
+    "ikev2_connection_enumeration_failed": {
+      "kind": "connection",
+      "en": "Could not read the list of Windows VPN connections. Try again.",
+      "ru": "Не удалось получить список VPN-подключений Windows. Повторите попытку."
+    },
+    "ikev2_connection_handle_invalid": {
+      "kind": "connection",
+      "en": "Windows lost the VPN connection. Connect again.",
+      "ru": "Windows потеряла VPN-подключение. Подключитесь снова."
+    },
+    "ikev2_connection_not_ready": {
+      "kind": "connection",
+      "en": "The VPN connection is not ready yet. Try again.",
+      "ru": "VPN-подключение ещё не готово. Повторите попытку."
+    },
+    "ikev2_connection_ownership_changed": {
+      "kind": "connection",
+      "en": "Another program took over the VPN connection. Disconnect it in Windows and try again.",
+      "ru": "VPN-подключение перехватила другая программа. Отключите его в Windows и повторите попытку."
+    },
+    "ikev2_dial_pending": {
+      "kind": "connection",
+      "en": "Windows is still setting up the VPN connection. Wait a moment and try again.",
+      "ru": "Windows ещё устанавливает VPN-подключение. Подождите немного и повторите попытку."
+    },
+    "ikev2_disconnected": {
+      "kind": "connection",
+      "en": "Windows or the server closed the VPN connection. Connect again.",
+      "ru": "Windows или сервер закрыли VPN-подключение. Подключитесь снова."
+    },
+    "ikev2_dns_cleanup_failed_run_recover": {
+      "kind": "connection",
+      "en": "DNS settings were not restored after disconnecting, and traffic protection is still on. Run network recovery to get your internet access back.",
+      "ru": "После отключения не удалось вернуть настройки DNS, а защита трафика всё ещё включена. Запустите восстановление сети, чтобы вернуть доступ в интернет."
+    },
+    "ikev2_dns_protection_install_failed": {
+      "kind": "connection",
+      "en": "Could not set up protected DNS for the VPN. Turn off other VPNs or DNS rules and try again.",
+      "ru": "Не удалось настроить защищённый DNS для VPN. Отключите другие VPN или правила DNS и повторите попытку."
+    },
+    "ikev2_endpoint_unavailable": {
+      "kind": "connection",
+      "en": "Could not determine the VPN server address needed for traffic protection. Try again.",
+      "ru": "Не удалось определить адрес VPN-сервера, нужный для защиты трафика. Повторите попытку."
+    },
+    "ikev2_existing_kill_switch_requires_recovery": {
+      "kind": "connection",
+      "en": "Traffic protection from a previous session is still on. Run network recovery, then try again.",
+      "ru": "Защита трафика от прошлого сеанса всё ещё включена. Запустите восстановление сети и повторите попытку."
+    },
+    "ikev2_existing_ras_connection": {
+      "kind": "connection",
+      "en": "Another VPN connection is already active in Windows. Disconnect it and try again.",
+      "ru": "В Windows уже активно другое VPN-подключение. Отключите его и повторите попытку."
+    },
+    "ikev2_hangup_no_connection": {
+      "kind": "connection",
+      "en": "Windows reported no active VPN connection to close. Check the Windows network settings.",
+      "ru": "Windows сообщила, что активного VPN-подключения для закрытия нет. Проверьте сетевые параметры Windows."
+    },
+    "ikev2_invalid_connection_handle": {
+      "kind": "connection",
+      "en": "Windows did not return a usable VPN connection. Try again.",
+      "ru": "Windows не вернула пригодное VPN-подключение. Повторите попытку."
+    },
+    "ikev2_invalid_eap_identity": {
+      "kind": "connection",
+      "en": "The user name saved in the Windows VPN profile is not valid. Enter it again in the Windows VPN settings.",
+      "ru": "Имя пользователя, сохранённое в профиле VPN Windows, недопустимо. Введите его заново в параметрах VPN Windows."
+    },
+    "ikev2_native_operation_failed": {
+      "kind": "connection",
+      "en": "The Windows VPN connection failed. Check the Windows VPN profile and try again.",
+      "ru": "Не удалось установить VPN-подключение Windows. Проверьте профиль VPN Windows и повторите попытку."
+    },
+    "ikev2_owned_dns_policy_modified": {
+      "kind": "connection",
+      "en": "Another program changed the DNS rules set by this application. Run network recovery.",
+      "ru": "Другая программа изменила правила DNS, установленные приложением. Запустите восстановление сети."
+    },
+    "ikev2_platform_unsupported": {
+      "kind": "connection",
+      "en": "IKEv2 profiles are supported only on Windows.",
+      "ru": "Профили IKEv2 поддерживаются только в Windows."
+    },
+    "ikev2_profile_contains_unsupported_dial_hooks": {
+      "kind": "connection",
+      "en": "The Windows VPN profile runs its own scripts or programs when connecting, which is not supported. Remove them or create the profile again in the application.",
+      "ru": "Профиль VPN Windows запускает при подключении свои скрипты или программы, а это не поддерживается. Уберите их или создайте профиль заново в приложении."
+    },
+    "ikev2_profile_requires_encrypted_dual_stack_default_routes": {
+      "kind": "connection",
+      "en": "The Windows VPN profile must require encryption and send all IPv4 and IPv6 traffic through the VPN. Change it or create the profile again in the application.",
+      "ru": "Профиль VPN Windows должен требовать шифрование и направлять весь трафик IPv4 и IPv6 через VPN. Измените его или создайте профиль заново в приложении."
+    },
+    "ikev2_profile_requires_ikev2_eap_mschapv2": {
+      "kind": "connection",
+      "en": "The Windows VPN profile must use IKEv2 with user name and password sign-in (EAP-MSCHAPv2). Change it or create the profile again in the application.",
+      "ru": "Профиль VPN Windows должен использовать IKEv2 со входом по имени пользователя и паролю (EAP-MSCHAPv2). Измените его или создайте профиль заново в приложении."
+    },
+    "ikev2_protection_cleanup_failed_run_recover": {
+      "kind": "connection",
+      "en": "Traffic protection could not be removed after disconnecting. Run network recovery to get your internet access back.",
+      "ru": "После отключения не удалось снять защиту трафика. Запустите восстановление сети, чтобы вернуть доступ в интернет."
+    },
+    "ikev2_protection_install_failed": {
+      "kind": "connection",
+      "en": "Could not turn on traffic protection, so the VPN was disconnected. Try again.",
+      "ru": "Не удалось включить защиту трафика, поэтому VPN отключён. Повторите попытку."
+    },
+    "ikev2_protection_network_failed": {
+      "kind": "connection",
+      "en": "Could not read the VPN network settings needed for traffic protection. Try again.",
+      "ru": "Не удалось получить сетевые настройки VPN, нужные для защиты трафика. Повторите попытку."
+    },
+    "ikev2_protection_pending_run_recover": {
+      "kind": "connection",
+      "en": "Traffic protection from a previous IKEv2 session is still on. Run network recovery, then try again.",
+      "ru": "Защита трафика от прошлого сеанса IKEv2 всё ещё включена. Запустите восстановление сети и повторите попытку."
+    },
+    "ikev2_protection_retained_run_recover": {
+      "kind": "connection",
+      "en": "The VPN disconnected unexpectedly, so traffic protection stays on to prevent leaks. Run network recovery to get your internet access back.",
+      "ru": "VPN неожиданно отключился, поэтому защита трафика осталась включённой, чтобы не допустить утечек. Запустите восстановление сети, чтобы вернуть доступ в интернет."
+    },
+    "ikev2_ras_unavailable": {
+      "kind": "connection",
+      "en": "The Windows VPN service is not available. Make sure the Remote Access Connection Manager service is running, then try again.",
+      "ru": "Служба VPN Windows недоступна. Убедитесь, что служба «Диспетчер подключений удалённого доступа» запущена, и повторите попытку."
+    },
+    "ikev2_requires_foreground_user_session": {
+      "kind": "connection",
+      "en": "IKEv2 profiles must be started from the application window, not by the background service.",
+      "ru": "Профили IKEv2 нужно запускать из окна приложения, а не через фоновую службу."
+    },
+    "ikev2_requires_native_host_backend": {
+      "kind": "connection",
+      "en": "IKEv2 profiles are not supported on this device.",
+      "ru": "Профили IKEv2 на этом устройстве не поддерживаются."
+    },
+    "ikev2_saved_credentials_required": {
+      "kind": "connection",
+      "en": "The Windows VPN profile has no saved user name and password. Connect once from the Windows VPN settings and save the credentials.",
+      "ru": "В профиле VPN Windows нет сохранённых имени пользователя и пароля. Подключитесь один раз через параметры VPN Windows и сохраните учётные данные."
+    },
+    "ikev2_saved_eap_identity_required": {
+      "kind": "connection",
+      "en": "The Windows VPN profile has no saved user name. Connect once from the Windows VPN settings and save the credentials.",
+      "ru": "В профиле VPN Windows не сохранено имя пользователя. Подключитесь один раз через параметры VPN Windows и сохраните учётные данные."
+    },
+    "ikev2_server_identity_mismatch": {
+      "kind": "connection",
+      "en": "The server in the Windows VPN profile differs from the server in this profile. Check the server name.",
+      "ru": "Сервер в профиле VPN Windows не совпадает с сервером в этом профиле. Проверьте имя сервера."
+    },
+    "ikev2_server_unreachable": {
+      "kind": "connection",
+      "en": "Cannot reach the VPN server. Check your internet connection and the server address.",
+      "ru": "Не удаётся связаться с VPN-сервером. Проверьте подключение к интернету и адрес сервера."
+    },
+    "ikev2_unsafe_or_unsupported_windows_profile": {
+      "kind": "connection",
+      "en": "The Windows VPN profile has unsafe or unsupported settings. Create the profile again in the application.",
+      "ru": "В профиле VPN Windows есть небезопасные или неподдерживаемые настройки. Создайте профиль заново в приложении."
+    },
+    "ikev2_user_phonebook_unavailable": {
+      "kind": "connection",
+      "en": "Could not read your Windows VPN profiles. Sign in to Windows as the user who owns the profile and try again.",
+      "ru": "Не удалось прочитать ваши профили VPN Windows. Войдите в Windows под пользователем, которому принадлежит профиль, и повторите попытку."
+    },
+    "ikev2_windows_profile_not_found": {
+      "kind": "connection",
+      "en": "The Windows VPN profile was not found. Create it in the application or check its name.",
+      "ru": "Профиль VPN Windows не найден. Создайте его в приложении или проверьте имя профиля."
+    },
+    "invalid_masque_transport": {
+      "kind": "connection",
+      "en": "The MASQUE settings in this profile cannot be used. Check the profile.",
+      "ru": "С настройками MASQUE из этого профиля подключиться нельзя. Проверьте профиль."
+    },
+    "invalid_packet_backend_config": {
+      "kind": "connection",
+      "en": "This profile cannot be used with the VPN on this device. Use VPN mode and keep the default MTU.",
+      "ru": "Этот профиль нельзя использовать с VPN на этом устройстве. Выберите режим VPN и оставьте MTU по умолчанию."
+    },
+    "invalid_tcp_transport": {
+      "kind": "connection",
+      "en": "The connection settings in this profile cannot be used. Check the protocol options in the profile.",
+      "ru": "С параметрами подключения из этого профиля подключиться нельзя. Проверьте настройки протокола в профиле."
+    },
+    "invalid_udp_transport": {
+      "kind": "connection",
+      "en": "The UDP settings in this profile cannot be used. Check the profile.",
+      "ru": "С параметрами UDP из этого профиля подключиться нельзя. Проверьте профиль."
+    },
+    "kill_switch_arm_failed_run_recover": {
+      "kind": "connection",
+      "en": "Could not turn on the kill switch, and network settings may be left half-configured. Run network recovery, then try again.",
+      "ru": "Не удалось включить kill switch, и сетевые настройки могли остаться частично изменёнными. Запустите восстановление сети и повторите попытку."
+    },
+    "kill_switch_inspect_failed": {
+      "kind": "connection",
+      "en": "Could not check the kill switch state. Restart the application and try again.",
+      "ru": "Не удалось проверить состояние kill switch. Перезапустите приложение и повторите попытку."
+    },
+    "kill_switch_pending_run_recover": {
+      "kind": "connection",
+      "en": "The kill switch from a previous session is still blocking traffic. Run network recovery, or connect with a profile that has the kill switch turned on.",
+      "ru": "Kill switch от прошлого сеанса всё ещё блокирует трафик. Запустите восстановление сети или подключитесь с профилем, в котором kill switch включён."
+    },
+    "kill_switch_unsupported_on_macos": {
+      "kind": "connection",
+      "en": "The kill switch is not available on macOS. Turn it off in the profile.",
+      "ru": "Kill switch недоступен в macOS. Отключите его в профиле."
+    },
+    "linux_network_setup_failed": {
+      "kind": "connection",
+      "en": "Could not set up routes and DNS for the VPN. Make sure no other VPN is running and try again.",
+      "ru": "Не удалось настроить маршруты и DNS для VPN. Убедитесь, что другой VPN не запущен, и повторите попытку."
+    },
+    "linux_recovery_failed": {
+      "kind": "connection",
+      "en": "Network settings left over from a previous session could not be cleaned up. Run network recovery, then try again.",
+      "ru": "Не удалось убрать сетевые настройки, оставшиеся от прошлого сеанса. Запустите восстановление сети и повторите попытку."
+    },
+    "macos_bypass_route_setup_failed": {
+      "kind": "connection",
+      "en": "Could not update the route to the VPN server after a network change. The application will try again.",
+      "ru": "Не удалось обновить маршрут к VPN-серверу после смены сети. Приложение повторит попытку."
+    },
+    "macos_capture_route_already_in_use": {
+      "kind": "connection",
+      "en": "Another VPN is already routing all traffic. Turn it off and try again.",
+      "ru": "Весь трафик уже направляет другой VPN. Отключите его и повторите попытку."
+    },
+    "macos_dns_changed_externally": {
+      "kind": "connection",
+      "en": "Another program changed the DNS settings while the VPN was on. Disconnect, then connect again.",
+      "ru": "Другая программа изменила настройки DNS во время работы VPN. Отключитесь и подключитесь снова."
+    },
+    "macos_network_setup_failed": {
+      "kind": "connection",
+      "en": "Could not set up routes and DNS for the VPN. Make sure no other VPN is running and try again.",
+      "ru": "Не удалось настроить маршруты и DNS для VPN. Убедитесь, что другой VPN не запущен, и повторите попытку."
+    },
+    "macos_recovery_failed_run_recover": {
+      "kind": "connection",
+      "en": "Network settings left over from a previous session could not be restored. Run network recovery, then try again.",
+      "ru": "Не удалось вернуть сетевые настройки, оставшиеся от прошлого сеанса. Запустите восстановление сети и повторите попытку."
+    },
+    "macos_tunnel_dns_already_in_use_run_recover": {
+      "kind": "connection",
+      "en": "DNS settings from a previous session are still active. Run network recovery, then try again.",
+      "ru": "Настройки DNS от прошлого сеанса всё ещё действуют. Запустите восстановление сети и повторите попытку."
+    },
+    "maintenance_pending": {
+      "kind": "connection",
+      "en": "The application is being updated or repaired. Wait until it finishes, then connect again.",
+      "ru": "Приложение обновляется или восстанавливается. Дождитесь окончания и подключитесь снова."
+    },
+    "network_changed": {
+      "kind": "connection",
+      "en": "Your network connection changed. Reconnecting.",
+      "ru": "Сетевое подключение изменилось. Переподключаемся."
+    },
+    "network_inspect_failed": {
+      "kind": "connection",
+      "en": "Could not read the network settings of this device. Check your network connection and try again.",
+      "ru": "Не удалось прочитать сетевые настройки устройства. Проверьте подключение к сети и повторите попытку."
+    },
+    "network_setup_failed": {
+      "kind": "connection",
+      "en": "Could not set up routes and DNS for the VPN. Make sure no other VPN is running and try again.",
+      "ru": "Не удалось настроить маршруты и DNS для VPN. Убедитесь, что другой VPN не запущен, и повторите попытку."
+    },
+    "network_unavailable": {
+      "kind": "connection",
+      "en": "No network connection. Connect to a network; the VPN will reconnect automatically.",
+      "ru": "Нет подключения к сети. Подключитесь к сети — VPN переподключится автоматически."
+    },
+    "packet_backend_already_used": {
+      "kind": "connection",
+      "en": "This VPN session has already been used. Restart the VPN.",
+      "ru": "Этот сеанс VPN уже использован. Перезапустите VPN."
+    },
+    "packet_backend_kill_switch_requires_host_support": {
+      "kind": "connection",
+      "en": "The kill switch is not supported on this device. Turn it off in the profile and use the system's always-on VPN setting instead.",
+      "ru": "Kill switch на этом устройстве не поддерживается. Отключите его в профиле и используйте системную настройку постоянного VPN."
+    },
+    "packet_outbound_unavailable": {
+      "kind": "connection",
+      "en": "No network connection. Connect to a network; the VPN will reconnect automatically.",
+      "ru": "Нет подключения к сети. Подключитесь к сети — VPN переподключится автоматически."
+    },
+    "packet_stack_failed": {
+      "kind": "connection",
+      "en": "Could not start VPN traffic processing. Restart the application.",
+      "ru": "Не удалось запустить обработку трафика VPN. Перезапустите приложение."
+    },
+    "proxy_listener_failed": {
+      "kind": "connection",
+      "en": "Could not start the local proxy. Another program may be using the port; change the Listen address in the profile.",
+      "ru": "Не удалось запустить локальный прокси. Возможно, порт занят другой программой — измените адрес Listen в профиле."
+    },
+    "resume_detected": {
+      "kind": "connection",
+      "en": "The device woke from sleep. Reconnecting.",
+      "ru": "Устройство вышло из спящего режима. Переподключаемся."
+    },
+    "session_id_failed": {
+      "kind": "connection",
+      "en": "Could not start a VPN session. Try again.",
+      "ru": "Не удалось начать сеанс VPN. Повторите попытку."
+    },
+    "session_identity_failed": {
+      "kind": "connection",
+      "en": "Could not start a VPN session. Try again.",
+      "ru": "Не удалось начать сеанс VPN. Повторите попытку."
+    },
+    "session_lock_failed": {
+      "kind": "connection",
+      "en": "Another VPN session is already running on this device, possibly in another copy of the application. Close it and try again.",
+      "ru": "На устройстве уже работает другой сеанс VPN — возможно, в другой копии приложения. Завершите его и повторите попытку."
+    },
+    "session_stopped_unexpectedly": {
+      "kind": "connection",
+      "en": "The VPN session ended unexpectedly. Connect again.",
+      "ru": "Сеанс VPN неожиданно завершился. Подключитесь снова."
+    },
+    "ssh_connection_failed": {
+      "kind": "connection",
+      "en": "Could not connect to the SSH server. Check the server address, the user name, the key or password, and the server's host key.",
+      "ru": "Не удалось подключиться к SSH-серверу. Проверьте адрес сервера, имя пользователя, ключ или пароль, а также ключ хоста сервера."
+    },
+    "transport_check_failed": {
+      "kind": "connection",
+      "en": "The server did not pass the connection test. Check the server address, port and key, and your internet connection.",
+      "ru": "Сервер не прошёл проверку подключения. Проверьте адрес, порт и ключ сервера, а также подключение к интернету."
+    },
+    "transport_unavailable": {
+      "kind": "connection",
+      "en": "Cannot reach the server. Check your internet connection and the server address.",
+      "ru": "Не удаётся связаться с сервером. Проверьте подключение к интернету и адрес сервера."
+    },
+    "tunnel_adapter_lost": {
+      "kind": "connection",
+      "en": "The VPN network adapter disappeared, possibly removed by another program. Connect again.",
+      "ru": "Сетевой адаптер VPN пропал — возможно, его удалила другая программа. Подключитесь снова."
+    },
+    "vpn_platform_unsupported": {
+      "kind": "connection",
+      "en": "VPN mode is not supported on this system. Use proxy mode.",
+      "ru": "Режим VPN в этой системе не поддерживается. Используйте режим прокси."
+    },
+    "vpn_requirements_missing": {
+      "kind": "connection",
+      "en": "System components needed for VPN mode are missing, such as the ip or nft tools or the TUN device. Install them and try again.",
+      "ru": "Не хватает системных компонентов для режима VPN, например утилит ip или nft либо устройства TUN. Установите их и повторите попытку."
+    },
+    "wintun_dll_missing": {
+      "kind": "connection",
+      "en": "A required application file is missing. Reinstall the application.",
+      "ru": "Не хватает необходимого файла приложения. Переустановите приложение."
+    }
+  }
+}

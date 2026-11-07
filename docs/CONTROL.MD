@@ -75,6 +75,13 @@ Check the code, not console text. Connection-failure details are available throu
 Status.LastError and events; display a generic message for an unknown diagnostic
 code. Responses do not contain secrets or configuration contents.
 
+Response `error` values are catalog codes of kind `control`. `Status.LastError`
+and event `LastError` values are catalog codes, usually of kind `connection`;
+a failure without a specific code is reported as `connection_failed`, never as
+free text. English and Russian texts come from the catalog described in
+[ERRORS.MD](ERRORS.MD). `ErrorStage` and progress event codes are not catalog
+codes.
+
 Changes to required fields or existing command semantics require a new version.
 
 ### Optional session-bound statistics

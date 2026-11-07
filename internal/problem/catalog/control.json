@@ -1,0 +1,279 @@
+{
+  "codes": {
+    "absolute_config_path_required": {
+      "kind": "control",
+      "en": "The profile must be passed as a full file path.",
+      "ru": "Профиль нужно передать полным путём к файлу."
+    },
+    "activation_cancelled": {
+      "kind": "control",
+      "en": "The connection was cancelled before it started.",
+      "ru": "Подключение отменено до запуска."
+    },
+    "cleanup_pending": {
+      "kind": "control",
+      "en": "The VPN is still disconnecting. Wait until it finishes.",
+      "ru": "VPN ещё отключается. Дождитесь окончания."
+    },
+    "core_identity_mismatch": {
+      "kind": "control",
+      "en": "The VPN core does not match this version of the application. Reinstall the application.",
+      "ru": "Ядро VPN не соответствует этой версии приложения. Переустановите приложение."
+    },
+    "daemon_shutting_down": {
+      "kind": "control",
+      "en": "The background service is shutting down. Wait a moment and try again.",
+      "ru": "Фоновая служба завершает работу. Подождите немного и повторите попытку."
+    },
+    "foreground_client_closed": {
+      "kind": "control",
+      "en": "The application window that started the VPN was closed. Start the connection again.",
+      "ru": "Окно приложения, которое запустило VPN, закрыто. Начните подключение заново."
+    },
+    "foreground_configuration_changed": {
+      "kind": "control",
+      "en": "The profile changed after you confirmed it. Check it and connect again.",
+      "ru": "Профиль изменился после подтверждения. Проверьте его и подключитесь снова."
+    },
+    "foreground_configuration_rejected": {
+      "kind": "control",
+      "en": "This profile cannot be used for this connection. Check the profile and try again.",
+      "ru": "Этот профиль нельзя использовать для такого подключения. Проверьте профиль и повторите попытку."
+    },
+    "foreground_identity_rejected": {
+      "kind": "control",
+      "en": "The VPN process could not verify the application that started it. Restart the application and try again.",
+      "ru": "Процесс VPN не смог проверить запустившее его приложение. Перезапустите приложение и повторите попытку."
+    },
+    "foreground_installation_policy_rejected": {
+      "kind": "control",
+      "en": "The application installation is damaged or was modified. Reinstall the application.",
+      "ru": "Установка приложения повреждена или изменена. Переустановите приложение."
+    },
+    "foreground_owner_unavailable": {
+      "kind": "control",
+      "en": "Could not start the VPN process. Restart the application and try again.",
+      "ru": "Не удалось запустить процесс VPN. Перезапустите приложение и повторите попытку."
+    },
+    "history_full": {
+      "kind": "control",
+      "en": "Another maintenance operation is already in progress. Wait until it finishes.",
+      "ru": "Уже выполняется другая служебная операция. Дождитесь её окончания."
+    },
+    "ikev2_created_profile_identity_missing": {
+      "kind": "control",
+      "en": "Windows created the VPN profile but did not report its identity. The change was undone; try again.",
+      "ru": "Windows создала профиль VPN, но не сообщила его идентификатор. Изменение отменено, повторите попытку."
+    },
+    "ikev2_created_profile_missing": {
+      "kind": "control",
+      "en": "The new Windows VPN profile disappeared right after it was created. Try again.",
+      "ru": "Новый профиль VPN Windows исчез сразу после создания. Повторите попытку."
+    },
+    "ikev2_owned_profile_modified_or_missing": {
+      "kind": "control",
+      "en": "The Windows VPN profile created by this application was changed or removed outside the application. Check it in the Windows VPN settings.",
+      "ru": "Профиль VPN Windows, созданный приложением, изменён или удалён вне приложения. Проверьте его в параметрах VPN Windows."
+    },
+    "ikev2_profile_conflicting_actions": {
+      "kind": "control",
+      "en": "A profile cannot be created and removed at the same time. Choose one action.",
+      "ru": "Нельзя одновременно создать и удалить профиль. Выберите одно действие."
+    },
+    "ikev2_profile_creation_failed_rolled_back": {
+      "kind": "control",
+      "en": "The Windows VPN profile could not be created. All changes were undone; try again.",
+      "ru": "Не удалось создать профиль VPN Windows. Все изменения отменены, повторите попытку."
+    },
+    "ikev2_profile_identity_changed": {
+      "kind": "control",
+      "en": "Another program replaced the Windows VPN profile during the operation. Check it and try again.",
+      "ru": "Во время операции профиль VPN Windows заменила другая программа. Проверьте его и повторите попытку."
+    },
+    "ikev2_profile_incomplete_transaction_manual_review_required": {
+      "kind": "control",
+      "en": "A previous change to this Windows VPN profile was interrupted. Check the profile in the Windows VPN settings and fix or remove it manually.",
+      "ru": "Предыдущее изменение этого профиля VPN Windows было прервано. Проверьте профиль в параметрах VPN Windows и исправьте или удалите его вручную."
+    },
+    "ikev2_profile_journal_write_failed": {
+      "kind": "control",
+      "en": "Could not save the record of the profile change. Check free disk space and try again.",
+      "ru": "Не удалось сохранить запись об изменении профиля. Проверьте свободное место на диске и повторите попытку."
+    },
+    "ikev2_profile_manifest_conflict": {
+      "kind": "control",
+      "en": "The application's record of this Windows VPN profile does not match its name or server. Check the profile name and server.",
+      "ru": "Сохранённые приложением сведения о профиле VPN Windows не совпадают с его именем или сервером. Проверьте имя профиля и сервер."
+    },
+    "ikev2_profile_manifest_invalid": {
+      "kind": "control",
+      "en": "The application's record of this Windows VPN profile is damaged. Remove the profile in the Windows VPN settings and create it again.",
+      "ru": "Сохранённые приложением сведения о профиле VPN Windows повреждены. Удалите профиль в параметрах VPN Windows и создайте его заново."
+    },
+    "ikev2_profile_manifest_read_failed": {
+      "kind": "control",
+      "en": "Could not read the application's record of this Windows VPN profile. Try again.",
+      "ru": "Не удалось прочитать сохранённые приложением сведения о профиле VPN Windows. Повторите попытку."
+    },
+    "ikev2_profile_name_not_owned": {
+      "kind": "control",
+      "en": "A Windows VPN profile with this name already exists and was not created by this application. Choose another name.",
+      "ru": "Профиль VPN Windows с таким именем уже есть, и создало его не это приложение. Выберите другое имя."
+    },
+    "ikev2_profile_not_owned": {
+      "kind": "control",
+      "en": "This Windows VPN profile was not created by this application, so it cannot be removed here. Remove it in the Windows VPN settings.",
+      "ru": "Этот профиль VPN Windows создан не этим приложением, поэтому удалить его здесь нельзя. Удалите его в параметрах VPN Windows."
+    },
+    "ikev2_profile_operation_failed": {
+      "kind": "control",
+      "en": "The Windows VPN profile could not be changed. Try again.",
+      "ru": "Не удалось изменить профиль VPN Windows. Повторите попытку."
+    },
+    "ikev2_profile_preparation_requires_windows": {
+      "kind": "control",
+      "en": "Windows VPN profiles can be created only on Windows.",
+      "ru": "Профили VPN Windows можно создавать только в Windows."
+    },
+    "ikev2_profile_preview_changed": {
+      "kind": "control",
+      "en": "The Windows VPN profile changed after you reviewed it. Review the changes again.",
+      "ru": "Профиль VPN Windows изменился после просмотра. Просмотрите изменения ещё раз."
+    },
+    "ikev2_profile_preview_required": {
+      "kind": "control",
+      "en": "Review the proposed profile changes before applying them.",
+      "ru": "Перед применением просмотрите предлагаемые изменения профиля."
+    },
+    "ikev2_profile_removed_manifest_cleanup_failed": {
+      "kind": "control",
+      "en": "The Windows VPN profile was removed, but the application's record of it could not be deleted. Try removing it again.",
+      "ru": "Профиль VPN Windows удалён, но сохранённые приложением сведения о нём удалить не удалось. Повторите удаление."
+    },
+    "ikev2_profile_rollback_incomplete_manual_review_required": {
+      "kind": "control",
+      "en": "Creating the Windows VPN profile failed, and the changes could not be fully undone. Check the profile in the Windows VPN settings and remove it manually if needed.",
+      "ru": "Создать профиль VPN Windows не удалось, а изменения не удалось полностью отменить. Проверьте профиль в параметрах VPN Windows и при необходимости удалите его вручную."
+    },
+    "ikev2_profile_rollback_manifest_cleanup_failed": {
+      "kind": "control",
+      "en": "Creating the Windows VPN profile failed. The profile was removed, but the application's record of it could not be deleted. Try again.",
+      "ru": "Создать профиль VPN Windows не удалось. Профиль удалён, но сохранённые приложением сведения о нём удалить не удалось. Повторите попытку."
+    },
+    "ikev2_profile_wildcard_name_not_supported": {
+      "kind": "control",
+      "en": "The profile name must not contain *, ? or `. Choose another name.",
+      "ru": "Имя профиля не должно содержать символы *, ? и `. Выберите другое имя."
+    },
+    "ikev2_profile_windows_operation_failed": {
+      "kind": "control",
+      "en": "Windows could not complete the VPN profile operation. Try again.",
+      "ru": "Windows не смогла выполнить операцию с профилем VPN. Повторите попытку."
+    },
+    "installation_mismatch": {
+      "kind": "control",
+      "en": "The VPN process belongs to a different installation of the application. Reinstall the application.",
+      "ru": "Процесс VPN относится к другой установке приложения. Переустановите приложение."
+    },
+    "invalid_auth_challenge": {
+      "kind": "control",
+      "en": "The sign-in request has expired. Connect again.",
+      "ru": "Запрос на вход устарел. Подключитесь снова."
+    },
+    "invalid_auth_response": {
+      "kind": "control",
+      "en": "The sign-in answer is too long or contains invalid characters.",
+      "ru": "Ответ для входа слишком длинный или содержит недопустимые символы."
+    },
+    "invalid_configuration": {
+      "kind": "control",
+      "en": "The profile contains errors. Open it in the editor and fix them.",
+      "ru": "В профиле есть ошибки. Откройте его в редакторе и исправьте."
+    },
+    "invalid_cursor": {
+      "kind": "control",
+      "en": "The connection log is out of date and will be reloaded.",
+      "ru": "Журнал подключения устарел и будет загружен заново."
+    },
+    "invalid_foreground_arguments": {
+      "kind": "control",
+      "en": "The VPN process was started with invalid parameters. Update or reinstall the application.",
+      "ru": "Процесс VPN запущен с неверными параметрами. Обновите или переустановите приложение."
+    },
+    "invalid_request": {
+      "kind": "control",
+      "en": "The VPN core rejected a malformed request from the application. Restart the application; if this repeats, report the problem.",
+      "ru": "Ядро VPN отклонило некорректный запрос приложения. Перезапустите приложение, а если ошибка повторится — сообщите о проблеме."
+    },
+    "operation_conflict": {
+      "kind": "control",
+      "en": "Another operation with the same request is already in progress. Wait until it finishes.",
+      "ru": "Уже выполняется другая операция с тем же запросом. Дождитесь её окончания."
+    },
+    "operation_pending": {
+      "kind": "control",
+      "en": "An operation is still in progress. Wait until it finishes.",
+      "ru": "Операция ещё выполняется. Дождитесь её окончания."
+    },
+    "owner_closing": {
+      "kind": "control",
+      "en": "The VPN process is closing. Wait a moment and try again.",
+      "ru": "Процесс VPN завершает работу. Подождите немного и повторите попытку."
+    },
+    "recovery_required": {
+      "kind": "control",
+      "en": "The result of the last maintenance operation is unknown. Run network recovery.",
+      "ru": "Результат последней служебной операции неизвестен. Запустите восстановление сети."
+    },
+    "response_too_large": {
+      "kind": "control",
+      "en": "The VPN core's reply was too large to send. Try again.",
+      "ru": "Ответ ядра VPN оказался слишком большим. Повторите попытку."
+    },
+    "session_already_running": {
+      "kind": "control",
+      "en": "A VPN connection is already running. Disconnect it first.",
+      "ru": "VPN уже подключён. Сначала отключите текущее подключение."
+    },
+    "session_not_terminal": {
+      "kind": "control",
+      "en": "The VPN connection is still active. Disconnect it first.",
+      "ru": "VPN-подключение ещё активно. Сначала отключите его."
+    },
+    "session_start_failed": {
+      "kind": "control",
+      "en": "The connection could not be started. See the connection status for details.",
+      "ru": "Не удалось начать подключение. Подробности — в состоянии подключения."
+    },
+    "session_stop_failed": {
+      "kind": "control",
+      "en": "The VPN could not be disconnected cleanly. If the internet does not work, run network recovery.",
+      "ru": "Не удалось корректно отключить VPN. Если интернет не работает, запустите восстановление сети."
+    },
+    "stale_instance": {
+      "kind": "control",
+      "en": "The VPN core has restarted. Try again.",
+      "ru": "Ядро VPN перезапустилось. Повторите попытку."
+    },
+    "stale_session": {
+      "kind": "control",
+      "en": "The connection changed while the request was being sent. Check the current status and try again.",
+      "ru": "Подключение изменилось, пока отправлялся запрос. Проверьте текущее состояние и повторите попытку."
+    },
+    "storage_failed": {
+      "kind": "control",
+      "en": "Could not save maintenance data. Check free disk space and try again.",
+      "ru": "Не удалось сохранить служебные данные. Проверьте свободное место на диске и повторите попытку."
+    },
+    "unknown_command": {
+      "kind": "control",
+      "en": "The VPN core does not support this action. Update the application.",
+      "ru": "Ядро VPN не поддерживает это действие. Обновите приложение."
+    },
+    "unsupported_protocol": {
+      "kind": "control",
+      "en": "The application and its VPN core are different versions. Update or reinstall the application.",
+      "ru": "Версии приложения и его ядра VPN не совпадают. Обновите или переустановите приложение."
+    }
+  }
+}
