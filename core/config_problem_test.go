@@ -42,6 +42,7 @@ func TestConfigDocumentProblems(t *testing.T) {
 		"insert range":   {d.InsertRule(4, "Domain", "x.test", "direct", true), wantProblem{"rule_index_out_of_range", "rule index out of range", "Rule", "", 0}},
 		"delete range":   {d.DeleteRule(-1), wantProblem{"rule_index_out_of_range", "rule index out of range", "Rule", "", 0}},
 		"domain":         {d.SetRule(2, "Domain", "a b", "direct"), wantProblem{"domain_invalid", "invalid domain", "Rule", "Domain", 2}},
+		"root dots":      {d.SetRule(2, "Domain", "..", "direct"), wantProblem{"domain_invalid", "invalid domain", "Rule", "Domain", 2}},
 		"disabled cidr":  {d.SetRule(1, "CIDR", "10.0.0.0/33", "direct"), wantProblem{"cidr_invalid", "invalid CIDR", "Rule", "CIDR", 0}},
 		"empty cidr":     {d.SetRule(0, "CIDR", "", "direct"), wantProblem{"value_required", "invalid CIDR", "Rule", "CIDR", 1}},
 		"geodata":        {d.SetRule(0, "GeoIP", "ru,", "direct"), wantProblem{"geodata_identifier_invalid", "invalid geodata identifier", "Rule", "GeoIP", 1}},

@@ -34,6 +34,25 @@ func TestPolicy(t *testing.T) {
 		t.Fatal("IPv6 rule ignored")
 	}
 }
+func TestLeadingDotDomainMatchesSuffix(t *testing.T) {
+	p, err := Compile(Config{Default: Direct, Rules: []Rule{{Domain: ".Example.com", Action: Proxy}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for domain, want := range map[string]Action{"example.com": Proxy, "www.example.com.": Proxy, "badexample.com": Direct} {
+		if got := p.Decide(netip.MustParseAddr("1.1.1.1"), domain); got != want {
+			t.Fatalf("%s: got %s, want %s", domain, got, want)
+		}
+	}
+	if got := p.Config().Rules[0].Domain; got != "example.com" {
+		t.Fatalf("snapshot domain = %q", got)
+	}
+	for _, domain := range []string{".", ".."} {
+		if _, err := Compile(Config{Default: Direct, Rules: []Rule{{Domain: domain, Action: Proxy}}}); err == nil || ValidDomain(domain) {
+			t.Fatalf("root-only domain %q accepted", domain)
+		}
+	}
+}
 func TestInvalidPolicies(t *testing.T) {
 	for _, c := range []Config{{}, {Default: Direct, Rules: []Rule{{Action: Proxy}}}, {Default: Direct, Rules: []Rule{{CIDR: "bad", Action: Proxy}}}, {Default: Direct, Rules: []Rule{{Domain: "example.com", CIDR: "0.0.0.0/0", Action: Proxy}}}} {
 		if _, err := Compile(c); err == nil {
