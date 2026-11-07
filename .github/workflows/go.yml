@@ -9,7 +9,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep every default-branch run so each merged commit gets a CI result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   lint:
