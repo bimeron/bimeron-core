@@ -13,7 +13,9 @@ import (
 // promptTimeout bounds each local prompt, including host-key offers. A Prompt
 // must return promptly once its context is done; answers it returns without an
 // error are always used, even if the context ended meanwhile, so an answer the
-// host saw accepted is never reported as unanswered.
+// host saw accepted is never reported as unanswered. A Prompt that cannot stop
+// a blocking read when its context ends, such as the CLI terminal prompt, must
+// itself discard an answer that arrives afterwards and return an error.
 var promptTimeout = 60 * time.Second
 
 type attempt struct {
