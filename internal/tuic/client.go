@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bimeron/internal/accesskey"
@@ -230,20 +231,79 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// closeSendTimeout bounds how long Close waits for the peer to acknowledge
+// buffered data and FIN before the send direction is reset.
+const closeSendTimeout = 5 * time.Second
+
 type streamConn struct {
 	*quic.Stream
 	local, remote net.Addr
+	writeMu       sync.Mutex
+	closed        atomic.Bool
+	once          sync.Once
 }
 
 func (s *streamConn) LocalAddr() net.Addr  { return s.local }
 func (s *streamConn) RemoteAddr() net.Addr { return s.remote }
+func (s *streamConn) Read(b []byte) (int, error) {
+	if s.closed.Load() {
+		return 0, net.ErrClosed
+	}
+	n, err := s.Stream.Read(b)
+	if s.closed.Load() {
+		return n, net.ErrClosed
+	}
+	return n, err
+}
+func (s *streamConn) Write(b []byte) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return 0, net.ErrClosed
+	}
+	return s.Stream.Write(b)
+}
+
+// Close finishes the send direction gracefully: buffered data and FIN stay
+// eligible for retransmission until QUIC acknowledges them or
+// closeSendTimeout expires. CancelWrite would discard that unacknowledged
+// tail, truncating data the relay already reported as written.
 func (s *streamConn) Close() error {
-	s.CancelRead(0)
-	s.CancelWrite(0)
+	s.once.Do(func() {
+		s.closed.Store(true)
+		// Interrupt public reads without sending STOP_SENDING before the peer
+		// has had a chance to consume our payload and FIN.
+		_ = s.Stream.SetReadDeadline(time.Now())
+		if !s.writeMu.TryLock() {
+			// Close must interrupt an in-progress flow-controlled Write.
+			s.CancelRead(0)
+			s.CancelWrite(0)
+			return
+		}
+		_ = s.Stream.Close()
+		s.writeMu.Unlock()
+		go func() {
+			timer := time.NewTimer(closeSendTimeout)
+			defer timer.Stop()
+			select {
+			case <-s.SendCompletionContext().Done():
+			case <-timer.C:
+				s.CancelWrite(0)
+			}
+			s.CancelRead(0)
+		}()
+	})
 	return nil
 }
-func (s *streamConn) CloseRead() error  { s.CancelRead(0); return nil }
-func (s *streamConn) CloseWrite() error { return s.Stream.Close() }
+func (s *streamConn) CloseRead() error { s.CancelRead(0); return nil }
+func (s *streamConn) CloseWrite() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return net.ErrClosed
+	}
+	return s.Stream.Close()
+}
 
 func writeAll(w io.Writer, b []byte) error {
 	for len(b) > 0 {
