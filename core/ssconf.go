@@ -15,7 +15,7 @@ func ResolveSSConf(ctx context.Context, source string, network PacketNetwork) ([
 
 func resolveSSConf(ctx context.Context, source string, network PacketNetwork, tlsConfig *tls.Config) ([]byte, error) {
 	d := bootstrapDialer(networkPath{dialer: network.Dialer, dns: network.DNS}, nil)
-	t := &http.Transport{TLSClientConfig: tlsConfig, DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
+	t := &http.Transport{TLSClientConfig: tlsConfig, MaxResponseHeaderBytes: accesskey.MaxSSConfResponseHeaderBytes, DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
 		return d.DialContext(ctx, "tcp4", address)
 	}}
 	defer t.CloseIdleConnections()

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFetchSSConfValidatedBytes(t *testing.T) {
@@ -78,6 +79,50 @@ func TestFetchSSConfRedirectBoundary(t *testing.T) {
 				}
 			} else if err == nil || b != nil || !reflect.DeepEqual(profile, Profile{}) || strings.Contains(err.Error(), "secret") {
 				t.Fatal("fifth redirect rejection or redaction failed")
+			}
+		})
+	}
+}
+
+func TestNewResolverResponseHeaderLimit(t *testing.T) {
+	transport, ok := NewResolver().client.Transport.(*http.Transport)
+	if !ok || transport == http.DefaultTransport || transport.MaxResponseHeaderBytes != MaxSSConfResponseHeaderBytes {
+		t.Fatal("NewResolver does not use a capped DefaultTransport clone")
+	}
+	defaults := http.DefaultTransport.(*http.Transport)
+	if defaults.MaxResponseHeaderBytes != 0 || transport.Proxy == nil || transport.ForceAttemptHTTP2 != defaults.ForceAttemptHTTP2 ||
+		transport.TLSHandshakeTimeout != defaults.TLSHandshakeTimeout || transport.IdleConnTimeout != defaults.IdleConnTimeout {
+		t.Fatal("NewResolver transport diverged from DefaultTransport")
+	}
+	const valid = "ss://aes-128-gcm:secret@127.0.0.1:443"
+	for _, tc := range []struct {
+		pad int
+		ok  bool
+	}{{MaxSSConfResponseHeaderBytes - 1024, true}, {MaxSSConfResponseHeaderBytes + 1, false}, {1 << 20, false}} {
+		t.Run(fmt.Sprint(tc.pad), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Pad", strings.Repeat("a", tc.pad))
+				w.Write([]byte(valid))
+			}))
+			defer server.Close()
+			// Trust the test certificate on a clone of NewResolver's own transport.
+			r := NewResolver()
+			trusted := r.client.Transport.(*http.Transport).Clone()
+			trusted.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+			defer trusted.CloseIdleConnections()
+			r.client.Transport = trusted
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			b, profile, err := r.FetchSSConf(ctx, strings.Replace(server.URL, "https://", "ssconf://", 1)+"/secret")
+			if ctx.Err() != nil {
+				t.Fatal("fetch stalled until the deadline")
+			}
+			if tc.ok {
+				if err != nil || string(b) != valid {
+					t.Fatalf("result %q: %v", b, err)
+				}
+			} else if err == nil || b != nil || !reflect.DeepEqual(profile, Profile{}) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("oversized headers accepted: %q, %v", b, err)
 			}
 		})
 	}
