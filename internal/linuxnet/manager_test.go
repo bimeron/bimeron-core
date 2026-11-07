@@ -223,6 +223,36 @@ func TestDisabledIPv6DirectPrefixesStayInTunnel(t *testing.T) {
 		}
 	}
 }
+func TestKernelWithoutIPv6SkipsIPv6Commands(t *testing.T) {
+	m, f, original := testManager(t)
+	m.NoIPv6 = func() bool { return true }
+	ctx := context.Background()
+	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "2001:db8::/32", Action: routing.Direct}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Preflight(ctx, "Bimeron2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Configure(ctx, "Bimeron", 1420, p, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.guard || len(f.rules["-4"]) != 3 {
+		t.Fatal("IPv4 protection not configured", f.calls)
+	}
+	if err := m.Recover(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(m.Resolver)
+	if string(b) != string(original) || f.guard || len(f.rules["-4"]) != 0 {
+		t.Fatal("recovery incomplete", f.calls)
+	}
+	for _, call := range f.calls {
+		if strings.HasPrefix(call, "ip -6 ") {
+			t.Fatal("IPv6 command on a kernel without IPv6", call)
+		}
+	}
+}
 func TestExternalDNSChangeKeepsProtection(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()

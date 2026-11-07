@@ -23,6 +23,8 @@ type Manager struct {
 	Dir      string
 	Resolver string
 	Run      Runner
+	// NoIPv6 reports a kernel without the IPv6 address family; nil means available.
+	NoIPv6 func() bool
 }
 type State struct {
 	Version      int
@@ -53,6 +55,14 @@ type route struct {
 	Metric      int             `json:"metric"`
 }
 
+// families lists the address families to manage; a kernel without IPv6 has
+// no IPv6 traffic to route or leak.
+func (m *Manager) families() []string {
+	if m.NoIPv6 != nil && m.NoIPv6() {
+		return []string{"-4"}
+	}
+	return []string{"-4", "-6"}
+}
 func scalar(b json.RawMessage) string { return strings.Trim(string(b), `"`) }
 func (m *Manager) command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return m.Run(ctx, name, "", args...)
@@ -129,7 +139,7 @@ func (m *Manager) Preflight(ctx context.Context, name string) error {
 	if !ValidName(name) {
 		return fmt.Errorf("Linux interface name must be at most 15 ASCII characters")
 	}
-	for _, family := range []string{"-4", "-6"} {
+	for _, family := range m.families() {
 		rs, err := m.rules(ctx, family)
 		if err != nil {
 			return fmt.Errorf("cannot inspect routing rules")
@@ -258,8 +268,10 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 	if _, err = m.command(ctx, "ip", "address", "add", "198.18.0.1/30", "dev", name); err != nil {
 		return fmt.Errorf("cannot configure TUN IPv4")
 	}
-	if _, err = m.command(ctx, "ip", "-6", "address", "add", "fdfe:524c::1/126", "dev", name, "nodad"); err != nil {
-		return fmt.Errorf("cannot configure TUN IPv6")
+	if len(m.families()) > 1 {
+		if _, err = m.command(ctx, "ip", "-6", "address", "add", "fdfe:524c::1/126", "dev", name, "nodad"); err != nil {
+			return fmt.Errorf("cannot configure TUN IPv6")
+		}
 	}
 	if _, err = m.command(ctx, "ip", "link", "set", "dev", name, "mtu", strconv.Itoa(mtu), "up"); err != nil {
 		return fmt.Errorf("cannot enable TUN")
@@ -285,7 +297,7 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 	if err = m.save(s); err != nil {
 		return err
 	}
-	for _, family := range []string{"-4", "-6"} {
+	for _, family := range m.families() {
 		for _, prefix := range p.DirectPrefixes() {
 			// With IPv6 disabled the TUN handler blocks IPv6; never bypass it.
 			if (family == "-4") != prefix.Addr().Is4() || disableIPv6 && prefix.Addr().Is6() {
@@ -410,7 +422,7 @@ func (m *Manager) Recover(ctx context.Context, preserveGuard bool) error {
 	}
 	if s.Routing {
 		routeFailed := false
-		for _, family := range []string{"-4", "-6"} {
+		for _, family := range m.families() {
 			rs, e := m.rules(ctx, family)
 			if e != nil {
 				failures = append(failures, e)

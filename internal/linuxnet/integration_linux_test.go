@@ -77,7 +77,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 	if err := os.WriteFile(resolver, original, 0644); err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{Dir: dir, Resolver: resolver, Run: runCommand}
+	m := &Manager{Dir: dir, Resolver: resolver, Run: runCommand, NoIPv6: ipv6Absent}
 	if nft := os.Getenv("BIMERON_NFT_BIN"); nft != "" {
 		m.Run = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
 			if name != "nft" {
@@ -105,7 +105,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 	if !strings.Contains(string(out), `"dev":"rlphysical"`) {
 		t.Fatal("marked upstream recursed into tunnel", string(out))
 	}
-	for _, family := range []string{"-4", "-6"} {
+	for _, family := range m.families() {
 		rs, err := m.rules(ctx, family)
 		if err != nil {
 			t.Fatal(err)
@@ -176,7 +176,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 		if present, err := m.guardPresent(ctx); err != nil || !present {
 			t.Fatal("failed setup released retained guard", err)
 		}
-		for _, family := range []string{"-4", "-6"} {
+		for _, family := range m.families() {
 			rs, _ := m.rules(ctx, family)
 			for _, r := range rs {
 				if ownedRule(r) {
@@ -219,7 +219,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 	if string(b) != string(original) {
 		t.Fatal("original DNS not restored")
 	}
-	for _, family := range []string{"-4", "-6"} {
+	for _, family := range m.families() {
 		rs, _ := m.rules(ctx, family)
 		for _, r := range rs {
 			if ownedRule(r) {
