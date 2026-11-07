@@ -1,13 +1,13 @@
 package control
 
 import (
+	core "bimeron/core"
+	"bimeron/internal/problem"
+	"bimeron/internal/telemetry"
 	"context"
 	"errors"
 	"net"
 	"path/filepath"
-	core "bimeron/core"
-	"bimeron/internal/problem"
-	"bimeron/internal/telemetry"
 	"sync"
 	"testing"
 	"time"

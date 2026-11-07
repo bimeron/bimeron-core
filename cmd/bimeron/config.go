@@ -62,6 +62,7 @@ func validateConfig(args []string) error {
 	fmt.Println("Configuration valid. No network requests or system changes performed.")
 	return nil
 }
+
 // errorCatalog prints the embedded catalog of human-readable error texts.
 func errorCatalog(args []string, out io.Writer) error {
 	if len(args) != 1 || args[0] != "--json" {
