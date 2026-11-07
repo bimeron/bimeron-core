@@ -92,7 +92,7 @@ func TestDynamicHTTPS(t *testing.T) {
 		case "/large":
 			_, _ = w.Write([]byte(strings.Repeat("x", maxBytes+1)))
 		case "/redirect":
-			http.Redirect(w, r, "http://example.com", 302)
+			http.Redirect(w, r, "http://example.com", http.StatusFound)
 		default:
 			_, _ = w.Write([]byte(body))
 		}
