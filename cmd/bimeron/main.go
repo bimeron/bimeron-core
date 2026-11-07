@@ -5,29 +5,52 @@ import (
 	"bimeron/internal/routing"
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
+	"runtime"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		// A subcommand flag set has already printed its usage for -h.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
+
+func printUsage(w io.Writer) {
+	recoverUsage := "bimeron recover"
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		recoverUsage += " [--keep-current-dns]"
+	}
+	fmt.Fprintln(w, "bimeron version [-daemon]")
+	fmt.Fprintln(w, "bimeron document (versioned JSON on stdin/stdout)\nbimeron geodata groups <geoip|geosite> <absolute-file>\nbimeron validate --json <absolute-profile-path>")
+	fmt.Fprintln(w, "bimeron doctor [-output report.json] (read-only diagnostics)")
+	fmt.Fprintln(w, "bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove] (Windows; preview by default)")
+	fmt.Fprintln(w, "bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
+	fmt.Fprintln(w, "bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
+	fmt.Fprintln(w, "bimeron run <config-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\n"+recoverUsage+"\nbimeron check [-dns 1.1.1.1] <key-file>")
+}
+
 func run(args []string) error {
 	if len(args) == 0 {
-		fmt.Println("bimeron version [-daemon]")
-		fmt.Println("bimeron document (versioned JSON on stdin/stdout)\nbimeron geodata groups <geoip|geosite> <absolute-file>\nbimeron validate --json <absolute-profile-path>")
-		fmt.Println("bimeron doctor [-output report.json] (read-only diagnostics)")
-		fmt.Println("bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove] (Windows; preview by default)")
-		fmt.Println("bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
-		fmt.Println("bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
-		fmt.Println("bimeron run <config-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\nbimeron recover\nbimeron check [-dns 1.1.1.1] <key-file>")
+		printUsage(os.Stdout)
 		return nil
 	}
 	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: bimeron help")
+		}
+		printUsage(os.Stdout)
+		return nil
 	case "repair-session":
 		return repairSessionCommand(args[1:])
 	case "document":
