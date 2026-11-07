@@ -22,7 +22,8 @@ sudo apt install iproute2 nftables
 sudo ./bin/bimeron-linux-amd64 run profiles/main.conf
 ```
 
-Ctrl+C or SIGTERM stops the session and cleans up settings.
+Ctrl+C, SIGTERM, or SIGHUP (a closed terminal or dropped SSH connection) stops
+the session and cleans up settings.
 The legacy `connect profiles/test.key` format is also supported.
 Linux does not need the Windows binary or Wintun DLL.
 On ARM64, use `bimeron-linux-arm64`.

@@ -5,8 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"os"
-	"os/signal"
 	"time"
 
 	"bimeron/internal/anytls"
@@ -48,7 +46,7 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
 	p, err := resolveInput(ctx, flags.Arg(0), cfg)
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 )
 
 func daemon(args []string) error {
@@ -28,7 +27,7 @@ func daemon(args []string) error {
 		fmt.Fprintf(os.Stderr, "Developer recovery record unavailable: %v\n", err)
 		finishRecord = func(bool) error { return nil }
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
 	fmt.Println("Bimeron daemon ready. Use start, status, stop, shutdown or watch in another CMD.")
 	fmt.Println("Ctrl+C stops the daemon and its VPN session.")

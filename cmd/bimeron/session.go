@@ -3,16 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 
 	core "bimeron/core"
 )
 
 func runSession(cfg core.SessionConfig) error {
 	cfg.SSHPrompt = terminalSSHPrompt
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
 	e := core.New(core.Options{})
 	if err := e.Start(ctx, cfg); err != nil {
