@@ -3,10 +3,12 @@ package androidcore
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode"
 	"unicode/utf8"
@@ -16,15 +18,23 @@ import (
 
 var errAuth = errors.New("SSH authentication request unavailable")
 
+// authRequest is the pendingAuth wire object. Text prompts always carry 1-8
+// prompts and echo flags. A host_key offer carries no prompts or echo, only
+// host, keyType, fingerprint and knownHostsLine.
 type authRequest struct {
-	SessionID string   `json:"sessionId"`
-	RequestID string   `json:"requestId"`
-	Kind      string   `json:"kind"`
-	Prompts   []string `json:"prompts"`
-	Echo      []bool   `json:"echo"`
-	ctx       context.Context
-	cancel    context.CancelFunc
-	result    chan []string
+	SessionID      string   `json:"sessionId"`
+	RequestID      string   `json:"requestId"`
+	Kind           string   `json:"kind"`
+	Prompts        []string `json:"prompts,omitempty"`
+	Echo           []bool   `json:"echo,omitempty"`
+	Host           string   `json:"host,omitempty"`
+	KeyType        string   `json:"keyType,omitempty"`
+	Fingerprint    string   `json:"fingerprint,omitempty"`
+	KnownHostsLine string   `json:"knownHostsLine,omitempty"`
+	ctx            context.Context
+	cancel         context.CancelFunc
+	result         chan []string
+	declined       bool // guarded by authBridge.mu
 }
 type authBridge struct {
 	mu         sync.Mutex
@@ -62,24 +72,59 @@ func (b *authBridge) invalidate(g uint64, stopped bool) {
 		b.pending = nil
 	}
 }
+
+// validOffer bounds every host_key field the host renders or persists.
+func validOffer(o *sshtunnel.HostKeyOffer) bool {
+	if o == nil || !safePrompt(o.Host) || len(o.Host) > 512 || !safePrompt(o.KeyType) || len(o.KeyType) > 128 || o.KeyType == "" || strings.ContainsAny(o.KeyType, " ,") {
+		return false
+	}
+	sum, ok := strings.CutPrefix(o.Fingerprint, "SHA256:")
+	if raw, err := base64.RawStdEncoding.DecodeString(sum); !ok || err != nil || len(raw) != 32 {
+		return false
+	}
+	fields := strings.Split(o.KnownHostsLine, " ")
+	if len(o.KnownHostsLine) > 12288 || len(fields) != 3 || fields[1] != o.KeyType {
+		return false
+	}
+	for _, f := range fields {
+		if f == "" {
+			return false
+		}
+		for i := 0; i < len(f); i++ {
+			if f[i] <= ' ' || f[i] > '~' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (b *authBridge) prompt(g uint64) sshtunnel.Prompt {
 	return func(ctx context.Context, c sshtunnel.Challenge) ([]string, error) {
-		if len(c.Prompts) < 1 || len(c.Prompts) > 8 || len(c.Echo) != len(c.Prompts) {
-			return nil, errAuth
-		}
 		switch c.Kind {
 		case "password", "key_passphrase", "keyboard_interactive":
-		default:
-			return nil, errAuth
-		}
-		for _, p := range c.Prompts {
-			if !safePrompt(p) {
+			if len(c.Prompts) < 1 || len(c.Prompts) > 8 || len(c.Echo) != len(c.Prompts) || c.HostKey != nil {
 				return nil, errAuth
 			}
+			for _, p := range c.Prompts {
+				if !safePrompt(p) {
+					return nil, errAuth
+				}
+			}
+		case sshtunnel.HostKeyKind:
+			if len(c.Prompts) != 0 || len(c.Echo) != 0 || !validOffer(c.HostKey) {
+				return nil, errAuth
+			}
+		default:
+			return nil, errAuth
 		}
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		r := &authRequest{SessionID: b.id, RequestID: opaqueID(), Kind: c.Kind, Prompts: append([]string(nil), c.Prompts...), Echo: append([]bool(nil), c.Echo...), ctx: ctx, cancel: cancel, result: make(chan []string, 1)}
+		if c.HostKey != nil {
+			r.Prompts, r.Echo = nil, nil
+			r.Host, r.KeyType, r.Fingerprint, r.KnownHostsLine = c.HostKey.Host, c.HostKey.KeyType, c.HostKey.Fingerprint, c.HostKey.KnownHostsLine
+		}
 		data, _ := json.Marshal(r)
 		if len(data) > 16384 {
 			return nil, errAuth
@@ -105,6 +150,12 @@ func (b *authBridge) prompt(g uint64) sshtunnel.Prompt {
 			}
 			return answers, nil
 		case <-ctx.Done():
+			b.mu.Lock()
+			declined := r.declined
+			b.mu.Unlock()
+			if declined && r.Kind == sshtunnel.HostKeyKind {
+				return nil, sshtunnel.ErrHostKeyDeclined
+			}
 			return nil, errAuth
 		}
 	}
@@ -126,7 +177,10 @@ func (s *Session) PendingAuth() string {
 	return string(data)
 }
 
-// ReplyAuth consumes a request exactly once. Answers must be a JSON string array.
+// ReplyAuth consumes a request exactly once. Answers must be a JSON string array
+// with one answer per prompt. A host_key offer is accepted only by ["accept"];
+// any other answer is rejected without consuming the offer. Decline it with
+// CancelAuth.
 func (s *Session) ReplyAuth(sessionID, requestID, answersJSON string) error {
 	if len(answersJSON) > 131072 || !utf8.ValidString(answersJSON) {
 		return errAuth
@@ -183,7 +237,14 @@ func (s *Session) ReplyAuth(sessionID, requestID, answersJSON string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	r := b.pending
-	if r == nil || r.ctx.Err() != nil || r.SessionID != sessionID || r.RequestID != requestID || len(answers) != len(r.Prompts) {
+	if r == nil || r.ctx.Err() != nil || r.SessionID != sessionID || r.RequestID != requestID {
+		return errAuth
+	}
+	if r.Kind == sshtunnel.HostKeyKind {
+		if len(answers) != 1 || answers[0] != sshtunnel.HostKeyAccept {
+			return errAuth
+		}
+	} else if len(answers) != len(r.Prompts) {
 		return errAuth
 	}
 	b.pending = nil
@@ -191,7 +252,8 @@ func (s *Session) ReplyAuth(sessionID, requestID, answersJSON string) error {
 	return nil
 }
 
-// CancelAuth consumes a request and terminates its SSH attempt.
+// CancelAuth consumes a request and terminates its SSH attempt. For a host_key
+// offer this is the user's refusal (fault ssh_host_key_rejected).
 func (s *Session) CancelAuth(sessionID, requestID string) error {
 	b := &s.auth
 	b.mu.Lock()
@@ -201,6 +263,7 @@ func (s *Session) CancelAuth(sessionID, requestID string) error {
 		return errAuth
 	}
 	b.pending = nil
+	r.declined = true
 	r.cancel()
 	return nil
 }

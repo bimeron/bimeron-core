@@ -26,6 +26,9 @@ type Challenge struct {
 	Kind    string   `json:"kind"`
 	Prompts []string `json:"prompts"`
 	Echo    []bool   `json:"echo"`
+	// HostKey is set only for Kind HostKeyKind, which has no prompts. It is
+	// never serialized by the control protocol.
+	HostKey *HostKeyOffer `json:"-"`
 }
 type Prompt func(context.Context, Challenge) ([]string, error)
 
@@ -86,6 +89,14 @@ func signer(path string, ctx context.Context, prompt Prompt) (ssh.Signer, error)
 }
 
 func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Prompt, defaultKeys bool) (*Client, error) {
+	return NewWithHostKeys(ctx, p, dialer, prompt, defaultKeys, nil)
+}
+
+// NewWithHostKeys connects like New. A nil hostKeys keeps file-only
+// verification. A non-nil hostKeys enables accept-new: an unknown host is
+// offered through prompt as a HostKeyKind challenge, a known host with another
+// key is refused without an offer, and failures are reported as *HostKeyError.
+func NewWithHostKeys(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Prompt, defaultKeys bool, hostKeys *HostKeys) (*Client, error) {
 	if err := p.ValidateShadowTLS(); err != nil {
 		return nil, err
 	}
@@ -96,7 +107,20 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	if err != nil {
 		return nil, err
 	}
-	if hostFile == "" {
+	var policy *verifier
+	if hostKeys != nil {
+		policy = &verifier{keys: hostKeys}
+		if hostFile != "" {
+			data, err := os.ReadFile(hostFile)
+			if err != nil {
+				return nil, fmt.Errorf("SSH known_hosts unavailable")
+			}
+			if policy.file, err = knownhosts.New(hostFile); err != nil {
+				return nil, fmt.Errorf("SSH known_hosts unavailable")
+			}
+			policy.ca = hasAuthority(data)
+		}
+	} else if hostFile == "" {
 		if !defaultKeys {
 			return nil, fmt.Errorf("SSH known_hosts file must be selected for service use")
 		}
@@ -106,9 +130,11 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 		}
 		hostFile = filepath.Join(home, ".ssh", "known_hosts")
 	}
-	verify, err := knownhosts.New(hostFile)
-	if err != nil {
-		return nil, fmt.Errorf("SSH known_hosts unavailable")
+	var verify ssh.HostKeyCallback
+	if policy == nil {
+		if verify, err = knownhosts.New(hostFile); err != nil {
+			return nil, fmt.Errorf("SSH known_hosts unavailable")
+		}
 	}
 	identity, err := expand(p.SSH.IdentityFile)
 	if err != nil {
@@ -183,12 +209,22 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	}
 	stop := context.AfterFunc(dialCtx, func() { _ = conn.Close() })
 	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, HostKeyCallback: verify, Timeout: 20 * time.Second}
+	if policy != nil {
+		policy.ctx, policy.prompt = ctx, prompt
+		config.HostKeyCallback = policy.check
+		config.HostKeyAlgorithms = policy.algorithms(address, conn.RemoteAddr())
+	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
 	stop()
 	if err != nil {
 		conn.Close()
 		if agentConn != nil {
 			agentConn.Close()
+		}
+		if policy != nil {
+			if e := policy.result(); e != nil {
+				return nil, e
+			}
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}

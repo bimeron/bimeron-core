@@ -52,6 +52,10 @@ type SessionConfig struct {
 	ResolveOnNetwork func(context.Context, http.RoundTripper) (Profile, error)
 	SSHPrompt        sshtunnel.Prompt
 	SSHDefaultKeys   bool
+	// SSHHostKeys opts in to accept-new host-key offers through SSHPrompt and to
+	// distinct ssh_host_key_* faults. Nil keeps known_hosts-only verification
+	// and the single ssh_connection_failed fault.
+	SSHHostKeys *sshtunnel.HostKeys
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters
