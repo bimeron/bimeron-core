@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -110,6 +111,15 @@ func TestAndroidSSHIgnoresHome(t *testing.T) {
 	}
 	c.Close()
 	t.Setenv("SSH_AUTH_SOCK", filepath.Join(home, "agent.sock"))
+	// Lock the fake ~/.ssh so that any real access the trace misses fails
+	// instead of silently succeeding. Windows and root ignore the mode.
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	if _, err := os.ReadFile(filepath.Join(dir, "known_hosts")); err == nil && runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		t.Fatal("fake ~/.ssh is still readable")
+	}
 
 	base := "[Profile]\nVersion = 1\n[AccessKey]\nSSH = ssh://fixture@" + address + "\n"
 	for _, tc := range []struct {
@@ -168,11 +178,14 @@ func TestAndroidSSHIgnoresHome(t *testing.T) {
 }
 
 // Once ReplyAuth has accepted an answer, the prompt returns it even if its
-// context ends before the waiting goroutine runs.
+// context ends at the same moment: ReplyAuth and cancel are released together
+// from a shared barrier, and the prompt result must agree with ReplyAuth.
 func TestAuthReplyWinsOverDeadline(t *testing.T) {
 	line := knownhosts.Line([]string{"example.com:22"}, otherKey(t))
 	offer := sshtunnel.HostKeyOffer{Host: "example.com:22", KeyType: "ssh-ed25519", Fingerprint: "SHA256:" + strings.Repeat("A", 43), KnownHostsLine: line}
-	for i := 0; i < 200; i++ {
+	accepted := 0
+	const rounds = 500
+	for i := 0; i < rounds; i++ {
 		s := &Session{}
 		s.auth.id = opaqueID()
 		ctx, cancel := context.WithCancel(context.Background())
@@ -185,12 +198,30 @@ func TestAuthReplyWinsOverDeadline(t *testing.T) {
 			done <- err
 		}()
 		r := pending(t, s)
-		replied := s.ReplyAuth(r.SessionID, r.RequestID, `["accept"]`)
-		cancel()
+		barrier := make(chan struct{})
+		var race sync.WaitGroup
+		var replied error
+		race.Add(2)
+		go func() { defer race.Done(); <-barrier; replied = s.ReplyAuth(r.SessionID, r.RequestID, `["accept"]`) }()
+		go func() {
+			defer race.Done()
+			<-barrier
+			// Sweep the cancel across ReplyAuth's whole critical section.
+			for j := 0; j < i%64; j++ {
+				runtime.Gosched()
+			}
+			cancel()
+		}()
+		close(barrier)
+		race.Wait()
 		if err := <-done; (replied == nil) != (err == nil) {
 			t.Fatalf("round %d: reply %v, prompt %v", i, replied, err)
 		}
+		if replied == nil {
+			accepted++
+		}
 	}
+	t.Logf("ReplyAuth won %d of %d races", accepted, rounds)
 	// A reply after the deadline fails and the prompt is unanswered.
 	s := &Session{}
 	s.auth.id = opaqueID()
