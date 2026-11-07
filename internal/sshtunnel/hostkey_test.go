@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"errors"
 	"net"
@@ -97,7 +98,7 @@ func connect(t *testing.T, address, knownHostsFile string, keys *HostKeys, o *of
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c, err := NewWithHostKeys(ctx, p, net.Dialer{}, prompt, false, keys)
+	c, err := NewWithOptions(ctx, p, net.Dialer{}, prompt, Options{HostKeys: keys})
 	if c != nil {
 		c.Close()
 	}
@@ -283,7 +284,7 @@ func TestHostKeyNoOptIn(t *testing.T) {
 	}
 	p, _ := accesskey.ParseSSH("ssh://alice@" + address)
 	p.SSH.IdentityFile = identity
-	if _, err := NewWithHostKeys(context.Background(), p, net.Dialer{}, nil, false, mustKeys(t, "")); code(err) != HostKeyUnknown {
+	if _, err := NewWithOptions(context.Background(), p, net.Dialer{}, nil, Options{HostKeys: mustKeys(t, "")}); code(err) != HostKeyUnknown {
 		t.Fatalf("no prompt %v", err)
 	}
 }
@@ -307,5 +308,211 @@ func TestParseHostKeys(t *testing.T) {
 	k := mustKeys(t, "[example.com]:22 "+key)
 	if len(k.lookup("example.com")) != 1 {
 		t.Fatal("port 22 not normalized")
+	}
+}
+
+func connectAs(t *testing.T, host, address, knownHostsFile string, keys *HostKeys, o *offers) error {
+	t.Helper()
+	_, port, _ := net.SplitHostPort(address)
+	return connect(t, net.JoinHostPort(host, port), knownHostsFile, keys, o)
+}
+
+func declineAll() *offers {
+	return &offers{answer: func(context.Context, Challenge) ([]string, error) { return nil, ErrHostKeyDeclined }}
+}
+
+// Host names match case-insensitively, as in OpenSSH: a changed key behind a
+// differently cased name is a mismatch, never a new host.
+func TestHostKeyHostCase(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	trusted, presented := hostSigner(t), hostSigner(t)
+	address := hostKeyServer(t, presented)
+	_, port, _ := net.SplitHostPort(address)
+	lower := knownhosts.Line([]string{"localhost:" + port}, trusted.PublicKey())
+	upper := knownhosts.Line([]string{"LocalHost:" + port}, trusted.PublicKey())
+	for name, tc := range map[string]struct {
+		dial, file, trusted, code string
+	}{
+		"trusted_lower_dial_upper": {"LOCALHOST", "", lower, HostKeyMismatch},
+		"trusted_upper_dial_lower": {"localhost", "", upper, HostKeyMismatch},
+		"file_lower_dial_upper":    {"LOCALHOST", writeHosts(t, lower), "", HostKeyMismatch},
+		"file_hashed_dial_upper":   {"LOCALHOST", writeHosts(t, knownhosts.HashHostname("[localhost]:"+port)+" "+strings.SplitN(lower, " ", 2)[1]), "", HostKeyMismatch},
+		"file_upper_dial_same":     {"LocalHost", writeHosts(t, upper), "", HostKeyMismatch},
+		// knownhosts cannot match a mixed-case pattern against another case,
+		// so such a file never yields offers.
+		"file_upper_dial_lower": {"localhost", writeHosts(t, upper), "", HostKeyUnknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := declineAll()
+			if err := connectAs(t, tc.dial, address, tc.file, mustKeys(t, tc.trusted), o); code(err) != tc.code || o.count() != 0 {
+				t.Fatalf("result %v offers %d", err, o.count())
+			}
+		})
+	}
+	// A matching key under either case connects.
+	good := knownhosts.Line([]string{"localhost:" + port}, presented.PublicKey())
+	if err := connectAs(t, "LOCALHOST", address, writeHosts(t, good), mustKeys(t, ""), declineAll()); err != nil {
+		t.Fatal(err)
+	}
+	if err := connectAs(t, "LocalHost", address, writeHosts(t, knownhosts.Line([]string{"LocalHost:" + port}, presented.PublicKey())), mustKeys(t, ""), declineAll()); err != nil {
+		t.Fatal(err)
+	}
+	// Offers and stored lines use the lowercase host; the session then knows
+	// the host under any case.
+	keys, o := mustKeys(t, ""), &offers{}
+	if err := connectAs(t, "LOCALHOST", address, "", keys, o); err != nil || o.count() != 1 {
+		t.Fatalf("offer %v %d", err, o.count())
+	}
+	if offer := o.seen[0].HostKey; offer.Host != "localhost:"+port || offer.KnownHostsLine != good {
+		t.Fatalf("offer %+v", offer)
+	}
+	if err := connectAs(t, "localhost", address, "", keys, o); err != nil || o.count() != 1 {
+		t.Fatalf("reconnect %v %d", err, o.count())
+	}
+}
+
+func hostCert(t *testing.T, ca, host ssh.Signer, principal string) ssh.Signer {
+	t.Helper()
+	cert := &ssh.Certificate{Key: host.PublicKey(), CertType: ssh.HostCert, ValidPrincipals: []string{principal}, ValidBefore: ssh.CertTimeInfinity}
+	if err := cert.SignCert(rand.Reader, ca); err != nil {
+		t.Fatal(err)
+	}
+	s, err := ssh.NewCertSigner(cert, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// A known_hosts file with @cert-authority lines never produces offers.
+// knownhosts CA patterns need an exact port, so "*" does not cover a non-22
+// port and cannot prove such a host unknown.
+func TestHostKeyCertificateAuthority(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	ca, otherCA, hostKey, plain := hostSigner(t), hostSigner(t), hostSigner(t), hostSigner(t)
+	certServer := hostKeyServer(t, hostCert(t, ca, hostKey, "127.0.0.1"))
+	foreignServer := hostKeyServer(t, hostCert(t, otherCA, hostKey, "127.0.0.1"))
+	plainServer := hostKeyServer(t, plain)
+	caKey := strings.SplitN(knownhosts.Line([]string{"a:22"}, ca.PublicKey()), " ", 2)[1]
+	exact := func(address string) string { return "@cert-authority " + knownhosts.Normalize(address) + " " + caKey }
+	for name, tc := range map[string]struct {
+		server, file, trusted, code string
+	}{
+		"exact_cert":             {certServer, exact(certServer), "", ""},
+		"exact_plain":            {plainServer, exact(plainServer), "", HostKeyMismatch},
+		"wildcard_plain":         {plainServer, "@cert-authority * " + caKey, "", HostKeyCARequired},
+		"wildcard_port_plain":    {plainServer, "@cert-authority [127.0.0.*]:* " + caKey, "", HostKeyCARequired},
+		"other_host_plain":       {plainServer, "@cert-authority *.example.com " + caKey, "", HostKeyCARequired},
+		"exact_other_port_plain": {plainServer, exact(certServer), "", HostKeyCARequired},
+		"trusted_plain_match":    {plainServer, "@cert-authority * " + caKey, knownhosts.Line([]string{plainServer}, plain.PublicKey()), ""},
+		// Certificates the file cannot verify fail without a host-key code:
+		// a foreign CA, or a wildcard CA line on a non-22 port.
+		"exact_foreign_cert": {foreignServer, exact(foreignServer), "", "generic"},
+		"wildcard_cert":      {certServer, "@cert-authority * " + caKey, "", "generic"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := &offers{}
+			err := connect(t, tc.server, writeHosts(t, tc.file), mustKeys(t, tc.trusted), o)
+			switch {
+			case o.count() != 0:
+				t.Fatalf("offered %+v", o.seen[0].HostKey)
+			case tc.code == "":
+				if err != nil {
+					t.Fatal(err)
+				}
+			case tc.code == "generic":
+				if err == nil || code(err) != "" {
+					t.Fatalf("result %v", err)
+				}
+			case code(err) != tc.code:
+				t.Fatalf("result %v want %s", err, tc.code)
+			}
+		})
+	}
+}
+
+// Several keys for one host: any listed key connects, any other is refused.
+func TestHostKeyMultipleKeysPerHost(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	k1, k2, k3 := hostSigner(t), hostSigner(t), hostSigner(t)
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecSigner, _ := ssh.NewSignerFromKey(ec)
+	two := hostKeyServer(t, k2)
+	three := hostKeyServer(t, k3)
+	both := hostKeyServer(t, ecSigner, k1)
+	line := func(address string, s ssh.Signer) string { return knownhosts.Line([]string{address}, s.PublicKey()) }
+	retarget := func(l, from, to string) string {
+		return knownhosts.Normalize(to) + strings.TrimPrefix(l, knownhosts.Normalize(from))
+	}
+	for name, tc := range map[string]struct {
+		server, file, trusted, code string
+	}{
+		"trusted_second":     {two, "", line(two, k1) + "\n" + line(two, k2), ""},
+		"trusted_neither":    {three, "", line(three, k1) + "\n" + line(three, k2), HostKeyMismatch},
+		"trusted_multi_host": {two, "", "example.com," + line(two, k2), ""},
+		"file_second":        {two, writeHosts(t, line(two, k1), line(two, k2)), "", ""},
+		"file_neither":       {three, writeHosts(t, line(three, k1), line(three, k2)), "", HostKeyMismatch},
+		"split_sources":      {two, writeHosts(t, line(two, k1)), line(two, k2), ""},
+		"split_neither":      {three, writeHosts(t, line(three, k1)), line(three, k2), HostKeyMismatch},
+		"server_two_types":   {both, "", line(both, k1) + "\n" + line(both, ecSigner), ""},
+		"server_ecdsa_known": {both, "", retarget(line(two, ecSigner), two, both), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := declineAll()
+			if err := connect(t, tc.server, tc.file, mustKeys(t, tc.trusted), o); code(err) != tc.code || (tc.code == "") != (err == nil) || o.count() != 0 {
+				t.Fatalf("result %v offers %d", err, o.count())
+			}
+		})
+	}
+}
+
+// First contact prefers Ed25519, then ECDSA, then RSA, then certificates.
+func TestHostKeyFirstContactOrder(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	v := &verifier{keys: mustKeys(t, "")}
+	got := v.algorithms("127.0.0.1:2222", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 2222})
+	rank := map[string]int{}
+	for i, name := range got {
+		rank[name] = i
+	}
+	if got[0] != ssh.KeyAlgoED25519 || rank[ssh.KeyAlgoECDSA256] > rank[ssh.KeyAlgoRSASHA256] || rank[ssh.KeyAlgoRSA] > rank[ssh.CertAlgoED25519v01] || len(rank) != len(got) {
+		t.Fatalf("order %v", got)
+	}
+	for _, name := range ssh.SupportedAlgorithms().HostKeys {
+		if _, ok := rank[name]; !ok {
+			t.Fatalf("missing %s in %v", name, got)
+		}
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsaSigner, _ := ssh.NewSignerFromKey(rsaKey)
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecSigner, _ := ssh.NewSignerFromKey(ec)
+	for _, servers := range [][]ssh.Signer{{rsaSigner, ecSigner, hostSigner(t)}, {rsaSigner, ecSigner}} {
+		o := declineAll()
+		connect(t, hostKeyServer(t, servers...), "", mustKeys(t, ""), o)
+		want := servers[len(servers)-1].PublicKey().Type()
+		if o.count() != 1 || o.seen[0].HostKey.KeyType != want {
+			t.Fatalf("offers %d %+v want %s", o.count(), o.seen, want)
+		}
+	}
+}
+
+// Answers a prompt returned without error are used even if its context ended
+// meanwhile, so an accepted reply is never reported as unanswered.
+func TestAttemptAnswerAfterDeadline(t *testing.T) {
+	old := promptTimeout
+	promptTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { promptTimeout = old })
+	a := newAttempt(context.Background())
+	defer a.close()
+	p := a.prompt(func(ctx context.Context, _ Challenge) ([]string, error) {
+		<-ctx.Done()
+		return []string{HostKeyAccept}, nil
+	})
+	if answers, err := p(a.ctx, Challenge{}); err != nil || len(answers) != 1 || a.ctx.Err() != nil {
+		t.Fatalf("answers %v err %v", answers, err)
 	}
 }

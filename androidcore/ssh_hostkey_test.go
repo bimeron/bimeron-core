@@ -120,7 +120,7 @@ func TestAuthHostKeyOffer(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				c, err := sshtunnel.NewWithHostKeys(ctx, p, net.Dialer{}, s.auth.prompt(0), false, keys)
+				c, err := sshtunnel.NewWithOptions(ctx, p, net.Dialer{}, s.auth.prompt(0), sshtunnel.Options{HostKeys: keys})
 				if c != nil {
 					c.Close()
 				}
@@ -244,11 +244,26 @@ func TestAuthHostKeyOfferBounds(t *testing.T) {
 		func(o *sshtunnel.HostKeyOffer) { o.KnownHostsLine += " comment" },
 		func(o *sshtunnel.HostKeyOffer) { o.KnownHostsLine += "\n" },
 		func(o *sshtunnel.HostKeyOffer) { o.KnownHostsLine = strings.Repeat("a", 12289) },
+		func(o *sshtunnel.HostKeyOffer) {
+			o.KnownHostsLine = "other.example.com" + strings.TrimPrefix(o.KnownHostsLine, "example.com")
+		},
+		func(o *sshtunnel.HostKeyOffer) {
+			o.KnownHostsLine = "[example.com]:22" + strings.TrimPrefix(o.KnownHostsLine, "example.com")
+		},
+		func(o *sshtunnel.HostKeyOffer) { o.Host = "Example.com:22" },
+		func(o *sshtunnel.HostKeyOffer) { o.Host = "example.com:2222" },
 	} {
 		o := ok
 		mutate(&o)
 		s := &Session{}
-		if _, err := s.auth.prompt(0)(context.Background(), sshtunnel.Challenge{Kind: sshtunnel.HostKeyKind, HostKey: &o}); err == nil || s.PendingAuth() != "null" {
+		// A published offer would block until this deadline and then report
+		// itself through PendingAuth having been non-null; fail fast instead.
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		published := make(chan bool, 1)
+		go func() { published <- rawPendingWithin(s, ctx) }()
+		_, err := s.auth.prompt(0)(ctx, sshtunnel.Challenge{Kind: sshtunnel.HostKeyKind, HostKey: &o})
+		cancel()
+		if err == nil || <-published {
 			t.Fatalf("invalid offer published %+v", o)
 		}
 	}
@@ -351,4 +366,15 @@ func TestAcceptNewHostKeysFaults(t *testing.T) {
 			}
 		})
 	}
+}
+
+// rawPendingWithin reports whether a request was published before ctx ends.
+func rawPendingWithin(s *Session, ctx context.Context) bool {
+	for ctx.Err() == nil {
+		if s.PendingAuth() != "null" {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
 }

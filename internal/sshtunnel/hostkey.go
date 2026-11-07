@@ -30,6 +30,14 @@ const (
 	HostKeyUnanswered = "ssh_host_key_unanswered"
 	// HostKeyUnknown: the host is unknown and no offer could be made.
 	HostKeyUnknown = "ssh_host_key_unknown"
+	// HostKeyCARequired: the selected known_hosts file has @cert-authority
+	// lines and the presented key matched no entry. A file that delegates
+	// trust to a CA never produces offers, because knownhosts CA patterns
+	// match an exact port and so cannot prove a host outside the CA.
+	HostKeyCARequired = "ssh_host_key_ca_required"
+	// KnownHostsMissing: Options.ProfileOnly is set, the profile selects no
+	// KnownHostsFile and the connection did not opt in with HostKeys.
+	KnownHostsMissing = "ssh_known_hosts_missing"
 )
 
 // HostKeyKind is the Challenge kind of an accept-new host-key offer.
@@ -53,6 +61,10 @@ func (e *HostKeyError) Error() string {
 		return "SSH host key was not accepted"
 	case HostKeyUnanswered:
 		return "SSH host key offer was not answered"
+	case HostKeyCARequired:
+		return "SSH host key is not covered by the trusted certificate authority"
+	case KnownHostsMissing:
+		return "SSH known_hosts file must be selected"
 	default:
 		return "SSH host key is unknown"
 	}
@@ -61,7 +73,7 @@ func (e *HostKeyError) Error() string {
 // HostKeyOffer describes the key presented by an unknown host. KnownHostsLine
 // is the exact known_hosts line to persist after acceptance.
 type HostKeyOffer struct {
-	Host           string // host:port as dialed
+	Host           string // host:port as dialed, host in ASCII lowercase
 	KeyType        string // e.g. ssh-ed25519
 	Fingerprint    string // SHA256:base64-without-padding
 	KnownHostsLine string // "<host> <type> <base64>", without newline
@@ -135,11 +147,13 @@ func (h *HostKeys) lookup(host string) []ssh.PublicKey {
 	return keys
 }
 
-// canonicalHost maps a literal known_hosts host to knownhosts.Normalize form.
+// canonicalHost maps a literal known_hosts host to lowercase
+// knownhosts.Normalize form.
 func canonicalHost(raw string) (string, bool) {
 	if !safeHost(raw) {
 		return "", false
 	}
+	raw = asciiLower(raw)
 	address := net.JoinHostPort(raw, "22")
 	if strings.HasPrefix(raw, "[") {
 		host, port, err := net.SplitHostPort(raw)
@@ -154,6 +168,19 @@ func canonicalHost(raw string) (string, bool) {
 		return "", false
 	}
 	return knownhosts.Normalize(address), true
+}
+
+// asciiLower lowercases ASCII letters only. OpenSSH lowercases host names
+// before matching and writing known_hosts, while x/crypto knownhosts compares
+// bytes, so every lookup, offer and stored line uses this form.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // safeHost admits only literal host characters, so an emitted known_hosts line
@@ -178,6 +205,7 @@ type verifier struct {
 	keys    *HostKeys
 	file    ssh.HostKeyCallback // nil without a selected known_hosts file
 	ca      bool                // the file has @cert-authority lines
+	upper   bool                // the file has a plain host pattern with A-Z
 	ctx     context.Context
 	prompt  Prompt // already bounded by the attempt; nil means no offers
 	mu      sync.Mutex
@@ -198,28 +226,37 @@ func (v *verifier) result() *HostKeyError {
 	return v.outcome
 }
 
-// known returns the trusted keys for address from both sources. A non-nil
-// error means the file database could not answer.
+// known returns the trusted keys for address from both sources. The file is
+// asked with the lowercase address and, if different, the address as dialed,
+// so an entry in either case is honoured. A non-nil error means the file
+// database could not answer.
 func (v *verifier) known(address string, remote net.Addr, key ssh.PublicKey) (match, revoked bool, want []ssh.PublicKey, err error) {
+	lower := asciiLower(address)
 	if v.file != nil {
-		e := v.file(address, remote, key)
-		var ke *knownhosts.KeyError
-		var re *knownhosts.RevokedError
-		switch {
-		case e == nil:
-			match = true
-		case errors.As(e, &re):
-			return false, true, nil, nil
-		case errors.As(e, &ke):
-			for _, k := range ke.Want {
-				want = append(want, k.Key)
+		candidates := []string{lower}
+		if address != lower {
+			candidates = append(candidates, address)
+		}
+		for _, candidate := range candidates {
+			e := v.file(candidate, remote, key)
+			var ke *knownhosts.KeyError
+			var re *knownhosts.RevokedError
+			switch {
+			case e == nil:
+				match = true
+			case errors.As(e, &re):
+				return false, true, nil, nil
+			case errors.As(e, &ke):
+				for _, k := range ke.Want {
+					want = append(want, k.Key)
+				}
+			default:
+				return false, false, nil, e
 			}
-		default:
-			return false, false, nil, e
 		}
 	}
 	blob := key.Marshal()
-	for _, k := range v.keys.lookup(knownhosts.Normalize(address)) {
+	for _, k := range v.keys.lookup(knownhosts.Normalize(lower)) {
 		want = append(want, k)
 		if bytes.Equal(k.Marshal(), blob) {
 			match = true
@@ -239,16 +276,19 @@ func (v *verifier) check(address string, remote net.Addr, key ssh.PublicKey) err
 		return nil
 	case len(want) > 0:
 		return v.fail(HostKeyMismatch)
+	case v.ca:
+		return v.fail(HostKeyCARequired)
 	}
-	if _, ok := key.(*ssh.Certificate); ok || v.prompt == nil {
+	if _, ok := key.(*ssh.Certificate); ok || v.prompt == nil || v.upper {
 		return v.fail(HostKeyUnknown)
 	}
-	host, port, err := net.SplitHostPort(address)
+	host, port, err := net.SplitHostPort(asciiLower(address))
 	if err != nil || !safeHost(host) || strings.ContainsAny(host, "[]") {
 		return v.fail(HostKeyUnknown)
 	}
+	address = net.JoinHostPort(host, port)
 	offer := HostKeyOffer{
-		Host:           net.JoinHostPort(host, port),
+		Host:           address,
 		KeyType:        key.Type(),
 		Fingerprint:    ssh.FingerprintSHA256(key),
 		KnownHostsLine: knownhosts.Line([]string{address}, key),
@@ -269,11 +309,21 @@ func (v *verifier) check(address string, remote net.Addr, key ssh.PublicKey) err
 	return nil
 }
 
+// hostKeyPreference is the first-contact order: Ed25519, then ECDSA, then RSA,
+// so a new host is not pinned to RSA because the library lists it first.
+var hostKeyPreference = []string{
+	ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521,
+	ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA,
+	ssh.CertAlgoED25519v01, ssh.CertAlgoECDSA256v01, ssh.CertAlgoECDSA384v01, ssh.CertAlgoECDSA521v01,
+	ssh.CertAlgoRSASHA512v01, ssh.CertAlgoRSASHA256v01,
+}
+
 // algorithms prefers host-key algorithms for key types already trusted for the
 // host, like OpenSSH, so an additional server key type is not mistaken for a
-// changed key. Plain-key algorithms follow, then certificate algorithms. A
-// file with @cert-authority lines keeps the library order (certificates first),
-// because knownhosts also counts authority keys as known keys for the host.
+// changed key. Plain-key algorithms follow in hostKeyPreference order, then
+// certificate algorithms. A file with @cert-authority lines keeps the library
+// order (certificates first), because knownhosts also counts authority keys as
+// known keys for the host; such a file never produces offers.
 func (v *verifier) algorithms(address string, remote net.Addr) []string {
 	if v.ca {
 		return nil
@@ -287,7 +337,12 @@ func (v *verifier) algorithms(address string, remote net.Addr) []string {
 	if err != nil {
 		return nil
 	}
-	supported := append(ssh.SupportedAlgorithms().HostKeys, ssh.KeyAlgoRSA)
+	var supported []string
+	for _, name := range append(hostKeyPreference, ssh.SupportedAlgorithms().HostKeys...) {
+		if (name == ssh.KeyAlgoRSA || contains(ssh.SupportedAlgorithms().HostKeys, name)) && !contains(supported, name) {
+			supported = append(supported, name)
+		}
+	}
 	var known, plain, certs []string
 	for _, k := range want {
 		names := []string{k.Type()}
@@ -313,14 +368,31 @@ func (v *verifier) algorithms(address string, remote net.Addr) []string {
 	return append(append(known, plain...), certs...)
 }
 
-// hasAuthority reports whether known_hosts data contains a CA marker line.
-func hasAuthority(data []byte) bool {
+// inspectHosts reports whether known_hosts data has @cert-authority lines and
+// whether a plain (unhashed) host pattern contains an uppercase letter. Such a
+// pattern matches case-insensitively in OpenSSH but not in x/crypto
+// knownhosts, so the file cannot prove a host unknown and offers are disabled.
+func inspectHosts(data []byte) (authority, upper bool) {
 	for _, line := range bytes.Split(data, []byte("\n")) {
-		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("@cert-authority")) {
-			return true
+		fields := bytes.Fields(line)
+		if len(fields) == 0 || fields[0][0] == '#' {
+			continue
+		}
+		hosts := fields[0]
+		if hosts[0] == '@' {
+			authority = authority || bytes.HasPrefix(hosts, []byte("@cert-authority"))
+			if len(fields) < 2 {
+				continue
+			}
+			hosts = fields[1]
+		}
+		for _, pattern := range bytes.Split(hosts, []byte(",")) {
+			if !bytes.HasPrefix(pattern, []byte("|")) && bytes.ContainsFunc(pattern, func(r rune) bool { return r >= 'A' && r <= 'Z' }) {
+				upper = true
+			}
 		}
 	}
-	return false
+	return authority, upper
 }
 
 func contains(list []string, s string) bool {
