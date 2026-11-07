@@ -40,7 +40,7 @@ func bootstrapDialer(path networkPath, fallback []string) net.Dialer {
 }
 func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Profile, net.Dialer, sessionEndpoints, error) {
 	d := bootstrapDialer(path, c.DNS)
-	t := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+	t := &http.Transport{MaxResponseHeaderBytes: accesskey.MaxSSConfResponseHeaderBytes, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return d.DialContext(ctx, "tcp4", address)
 	}}
 	defer t.CloseIdleConnections()

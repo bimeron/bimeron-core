@@ -21,6 +21,22 @@ import (
 
 const maxBytes = 64 * 1024
 
+// MaxSSConfResponseHeaderBytes caps the response header block accepted from an
+// ssconf server, replacing Go's 10 MiB default. Every ssconf transport sets it.
+const MaxSSConfResponseHeaderBytes = 64 << 10
+
+// defaultSSConfTransport is captured at package init so NewResolver keeps the
+// http.DefaultTransport settings and a shared connection pool.
+var defaultSSConfTransport = func() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	t := base.Clone()
+	t.MaxResponseHeaderBytes = MaxSSConfResponseHeaderBytes
+	return t
+}()
+
 // Endpoint holds secrets and must never be included in logs.
 type Endpoint struct {
 	Host   string
@@ -876,21 +892,20 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func NewResolver() *Resolver {
-	return &Resolver{client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+// NewResolver uses a clone of http.DefaultTransport with the ssconf response
+// header cap applied.
+func NewResolver() *Resolver { return NewResolverWithTransport(defaultSSConfTransport) }
+
+// NewResolverWithTransport preserves HTTPS and redirect restrictions while
+// allowing the VPN control plane to use an interface-bound transport. Callers
+// supplying an *http.Transport should set MaxSSConfResponseHeaderBytes.
+func NewResolverWithTransport(t http.RoundTripper) *Resolver {
+	return &Resolver{client: &http.Client{Transport: t, Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || req.URL.Scheme != "https" || req.URL.User != nil {
 			return fmt.Errorf("redirect rejected")
 		}
 		return nil
 	}}}
-}
-
-// NewResolverWithTransport preserves HTTPS and redirect restrictions while
-// allowing the VPN control plane to use an interface-bound transport.
-func NewResolverWithTransport(t http.RoundTripper) *Resolver {
-	r := NewResolver()
-	r.client.Transport = t
-	return r
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
