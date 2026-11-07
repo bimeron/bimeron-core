@@ -10,6 +10,9 @@ import (
 
 // attempt keeps one cumulative network budget; local interaction never extends
 // the caller's deadline. All timer transitions are serialized with cancellation.
+// promptTimeout bounds each local prompt, including host-key offers.
+var promptTimeout = 60 * time.Second
+
 type attempt struct {
 	mu        sync.Mutex
 	ctx       context.Context
@@ -53,7 +56,7 @@ func (a *attempt) prompt(p Prompt) Prompt {
 			a.timer = nil
 		}
 		a.mu.Unlock()
-		ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)
+		ctx, cancel := context.WithTimeout(a.ctx, promptTimeout)
 		answers, err := p(ctx, c)
 		if ctx.Err() != nil {
 			err = errors.New("SSH authentication unavailable")
@@ -61,6 +64,9 @@ func (a *attempt) prompt(p Prompt) Prompt {
 		cancel()
 		if err != nil {
 			a.cancel()
+			if errors.Is(err, ErrHostKeyDeclined) {
+				return nil, ErrHostKeyDeclined
+			}
 			return nil, errors.New("SSH authentication unavailable")
 		}
 		if active {

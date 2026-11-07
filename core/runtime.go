@@ -52,6 +52,16 @@ func hysteria2Fault(err error) error {
 	return fault("hysteria2_unknown", false)
 }
 
+// sshFault keeps the single ssh_connection_failed code unless the session
+// opted in to host-key handling, which exposes ssh_host_key_* codes.
+func sshFault(err error, hostKeys bool) error {
+	var hostKey *sshtunnel.HostKeyError
+	if hostKeys && errors.As(err, &hostKey) {
+		return fault(hostKey.Code, false)
+	}
+	return fault("ssh_connection_failed", false)
+}
+
 type vpnBackend struct {
 	platform platform
 	metadata *vpn.DNSMetadata
@@ -165,9 +175,9 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		if path.sshPrompt != nil {
 			prompt = path.sshPrompt
 		}
-		client, clientErr := sshtunnel.New(ctx, p, outbound, prompt, c.SSHDefaultKeys)
+		client, clientErr := sshtunnel.NewWithHostKeys(ctx, p, outbound, prompt, c.SSHDefaultKeys, c.SSHHostKeys)
 		if clientErr != nil {
-			return nil, nil, nil, nil, fault("ssh_connection_failed", false)
+			return nil, nil, nil, nil, sshFault(clientErr, c.SSHHostKeys != nil)
 		}
 		tcp, closeTransport = client, client.Close
 	} else if p.Type == "naive" {
@@ -450,9 +460,9 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "ssh" {
-		client, clientErr := sshtunnel.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, c.SSHDefaultKeys)
+		client, clientErr := sshtunnel.NewWithHostKeys(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, c.SSHDefaultKeys, c.SSHHostKeys)
 		if clientErr != nil {
-			return nil, fault("ssh_connection_failed", false)
+			return nil, sshFault(clientErr, c.SSHHostKeys != nil)
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "naive" {
