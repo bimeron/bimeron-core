@@ -104,7 +104,9 @@ service registration is removed, run it again to remove the remaining event
 source and files; it reports every cleanup step that fails. When no service is
 registered, installation also replaces files and the event source left by an
 interrupted installation or uninstallation. The adjacent wintun.dll must match the EXE's
-architecture. WINTUN-LICENSE.txt is also required. Profiles and keys remain in place.
+architecture. WINTUN-LICENSE.txt is also required. Installation verifies the
+copied wintun.dll and WINTUN-LICENSE.txt against the SHA-256 digests of the
+Wintun 0.14.1 release pinned in the core and refuses other files. Profiles and keys remain in place.
 
 ## Updating
 
