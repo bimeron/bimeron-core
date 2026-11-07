@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -100,36 +101,60 @@ func watchControl(args []string) error {
 	}
 	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
+	return watchEvents(ctx, control.Call, os.Stdout, defaultWatchTiming)
+}
+
+type watchTiming struct{ poll, retryMin, retryMax time.Duration }
+
+var defaultWatchTiming = watchTiming{poll: time.Second, retryMin: 100 * time.Millisecond, retryMax: time.Second}
+
+// watchEvents follows daemon events until ctx is canceled. When no daemon
+// answers, for example while it restarts, it retries with bounded backoff;
+// errors reported by a daemon still end the watch.
+func watchEvents(ctx context.Context, call func(context.Context, control.Request) (control.Response, error), out io.Writer, timing watchTiming) error {
 	var cursor uint64
 	var instance string
+	var retry time.Duration
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		a, err := control.Call(callCtx, control.Request{Command: "events", After: cursor})
+		a, err := call(callCtx, control.Request{Command: "events", After: cursor})
 		cancel()
 		if ctx.Err() != nil {
 			return nil
 		}
-		if a.Instance != "" && instance != "" && instance != a.Instance {
-			fmt.Println("Daemon restarted; resetting event cursor.")
-			cursor = 0
-			instance = a.Instance
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		instance = a.Instance
-		if a.Dropped {
-			fmt.Println("Some events were skipped; current state:", a.Status.State)
-		}
-		for _, e := range a.Events {
-			fmt.Printf("%s [%s] %s\n", e.Event.Time.Format("15:04:05"), e.Event.State, e.Event.Message)
-			if e.Event.LastError != "" {
-				fmt.Println("Reason:", e.Event.LastError)
+		delay := timing.poll
+		if err != nil && a.Version == 0 {
+			if retry == 0 {
+				fmt.Fprintln(out, "Daemon unavailable; retrying:", err)
+				retry = timing.retryMin
+			} else {
+				retry = min(2*retry, timing.retryMax)
 			}
+			delay = retry
+		} else {
+			retry = 0
+			if a.Instance != "" && instance != "" && instance != a.Instance {
+				fmt.Fprintln(out, "Daemon restarted; resetting event cursor.")
+				cursor = 0
+				instance = a.Instance
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			instance = a.Instance
+			if a.Dropped {
+				fmt.Fprintln(out, "Some events were skipped; current state:", a.Status.State)
+			}
+			for _, e := range a.Events {
+				fmt.Fprintf(out, "%s [%s] %s\n", e.Event.Time.Format("15:04:05"), e.Event.State, e.Event.Message)
+				if e.Event.LastError != "" {
+					fmt.Fprintln(out, "Reason:", e.Event.LastError)
+				}
+			}
+			cursor = a.Cursor
 		}
-		cursor = a.Cursor
-		timer := time.NewTimer(time.Second)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
