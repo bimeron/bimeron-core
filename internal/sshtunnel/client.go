@@ -172,7 +172,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 			if policy.file, err = knownhosts.New(hostFile); err != nil {
 				return nil, fmt.Errorf("SSH known_hosts unavailable")
 			}
-			policy.ca, policy.upper = inspectHosts(data)
+			policy.ca, policy.folds = inspectHosts(data)
 		}
 	} else if hostFile == "" {
 		if o.ProfileOnly {

@@ -338,9 +338,8 @@ func TestHostKeyHostCase(t *testing.T) {
 		"file_lower_dial_upper":    {"LOCALHOST", writeHosts(t, lower), "", HostKeyMismatch},
 		"file_hashed_dial_upper":   {"LOCALHOST", writeHosts(t, knownhosts.HashHostname("[localhost]:"+port)+" "+strings.SplitN(lower, " ", 2)[1]), "", HostKeyMismatch},
 		"file_upper_dial_same":     {"LocalHost", writeHosts(t, upper), "", HostKeyMismatch},
-		// knownhosts cannot match a mixed-case pattern against another case,
-		// so such a file never yields offers.
-		"file_upper_dial_lower": {"localhost", writeHosts(t, upper), "", HostKeyUnknown},
+		// A mixed-case literal is also asked for by its own spelling.
+		"file_upper_dial_lower": {"localhost", writeHosts(t, upper), "", HostKeyMismatch},
 	} {
 		t.Run(name, func(t *testing.T) {
 			o := declineAll()
@@ -514,5 +513,116 @@ func TestAttemptAnswerAfterDeadline(t *testing.T) {
 	})
 	if answers, err := p(a.ctx, Challenge{}); err != nil || len(answers) != 1 || a.ctx.Err() != nil {
 		t.Fatalf("answers %v err %v", answers, err)
+	}
+}
+
+// verifierFor builds the accept-new verifier NewWithOptions would use, without
+// a network round trip.
+func verifierFor(t *testing.T, file []string, trusted string, o *offers) *verifier {
+	t.Helper()
+	v := &verifier{keys: mustKeys(t, trusted), ctx: context.Background()}
+	if o != nil {
+		v.prompt = o.prompt
+	}
+	if file != nil {
+		path := writeHosts(t, file...)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.file, err = knownhosts.New(path); err != nil {
+			t.Fatal(err)
+		}
+		v.ca, v.folds = inspectHosts(data)
+	}
+	return v
+}
+
+// IPv6 literals are compared in net/netip canonical form: a changed key behind
+// another spelling of a known address is a mismatch, never a new host.
+func TestHostKeyIPv6Canonical(t *testing.T) {
+	trusted, presented := hostSigner(t), hostSigner(t)
+	remote := &net.TCPAddr{IP: net.IPv6loopback, Port: 2222}
+	long, short := "[0:0:0:0:0:0:0:1]:2222", "[::1]:2222"
+	line := func(host string) string { return knownhosts.Line([]string{host}, trusted.PublicKey()) }
+	for name, tc := range map[string]struct {
+		dial    string
+		file    []string
+		trusted string
+	}{
+		"trusted_short_dial_long": {long, nil, line(short)},
+		"trusted_long_dial_short": {short, nil, line(long)},
+		"file_short_dial_long":    {long, []string{line(short)}, ""},
+		"file_long_dial_short":    {short, []string{line(long)}, ""},
+		"file_upper_dial_short":   {"[::ABCD]:2222", []string{line("[0:0:0:0:0:0:0:abcd]:2222")}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := declineAll()
+			v := verifierFor(t, tc.file, tc.trusted, o)
+			if err := v.check(tc.dial, remote, presented.PublicKey()); code(err) != HostKeyMismatch || o.count() != 0 {
+				t.Fatalf("result %v offers %d", err, o.count())
+			}
+			if err := v.check(tc.dial, remote, trusted.PublicKey()); err != nil {
+				t.Fatalf("trusted key: %v", err)
+			}
+		})
+	}
+	// Offers and stored lines use the canonical form.
+	o := &offers{}
+	v := verifierFor(t, nil, "", o)
+	if err := v.check(long, remote, presented.PublicKey()); err != nil || o.count() != 1 {
+		t.Fatalf("offer %v %d", err, o.count())
+	}
+	if offer := o.seen[0].HostKey; offer.Host != short || offer.KnownHostsLine != knownhosts.Line([]string{short}, presented.PublicKey()) {
+		t.Fatalf("offer %+v", offer)
+	}
+	if err := v.check(short, remote, presented.PublicKey()); err != nil || o.count() != 1 {
+		t.Fatalf("reconnect %v %d", err, o.count())
+	}
+	if h, ok := canonicalHost("0:0:0:0:0:0:0:1"); !ok || h != "::1" {
+		t.Fatalf("canonicalHost = %q %v", h, ok)
+	}
+}
+
+// A mixed-case or non-canonical pattern affects only the hosts it can name:
+// literals are asked for by their own spelling, and a wildcard whose
+// lowercase form covers the dialed host disables the offer for that host only.
+func TestHostKeyFoldScope(t *testing.T) {
+	other, presented := hostSigner(t), hostSigner(t)
+	remote := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 22}
+	file := []string{
+		knownhosts.Line([]string{"Other.Example.com"}, other.PublicKey()),
+		"*.Wild.Example.COM,!Skip.Wild.Example.com " + strings.SplitN(knownhosts.Line([]string{"x"}, other.PublicKey()), " ", 2)[1],
+		knownhosts.Line([]string{"[0:0:0:0:0:0:0:2]:2222"}, other.PublicKey()),
+	}
+	for _, tc := range []struct {
+		dial, code string
+		offer      bool
+	}{
+		{"fresh.example.com:22", "", true},
+		{"other.example.com:22", HostKeyMismatch, false},
+		{"other.example.com:2222", "", true},
+		{"a.wild.example.com:22", HostKeyUnknown, false},
+		{"a.wild.example.com:2222", HostKeyUnknown, false},
+		{"skip.wild.example.com:22", HostKeyUnknown, false},
+		{"[::2]:2222", HostKeyMismatch, false},
+		{"[::2]:22", "", true},
+	} {
+		o := &offers{}
+		err := verifierFor(t, file, "", o).check(tc.dial, remote, presented.PublicKey())
+		if code(err) != tc.code || (o.count() == 1) != tc.offer || (tc.code == "" && err != nil) {
+			t.Errorf("%s: result %v offers %d", tc.dial, err, o.count())
+		}
+	}
+	for _, tc := range []struct {
+		pattern, s string
+		want       bool
+	}{
+		{"*", "", true}, {"*.a", "b.a", true}, {"*.a", "a", false}, {"?.a", "b.a", true},
+		{"a*b*c", "axxbyyc", true}, {"a*b*c", "axxbyy", false}, {"*a*a*a*a*b", strings.Repeat("a", 200), false},
+	} {
+		if got := wildcardMatch(tc.pattern, tc.s); got != tc.want {
+			t.Errorf("wildcardMatch(%q, %q) = %v", tc.pattern, tc.s, got)
+		}
 	}
 }

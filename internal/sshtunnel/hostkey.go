@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,14 +148,14 @@ func (h *HostKeys) lookup(host string) []ssh.PublicKey {
 	return keys
 }
 
-// canonicalHost maps a literal known_hosts host to lowercase
-// knownhosts.Normalize form.
+// canonicalHost maps a literal known_hosts host to canonical
+// knownhosts.Normalize form (see canonicalAddress).
 func canonicalHost(raw string) (string, bool) {
 	if !safeHost(raw) {
 		return "", false
 	}
 	raw = asciiLower(raw)
-	address := net.JoinHostPort(raw, "22")
+	address := net.JoinHostPort(canonicalIP(raw), "22")
 	if strings.HasPrefix(raw, "[") {
 		host, port, err := net.SplitHostPort(raw)
 		if err != nil || host == "" {
@@ -163,11 +164,32 @@ func canonicalHost(raw string) (string, bool) {
 		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
 			return "", false
 		}
-		address = net.JoinHostPort(host, port)
+		address = net.JoinHostPort(canonicalIP(host), port)
 	} else if strings.ContainsAny(raw, "[]") {
 		return "", false
 	}
 	return knownhosts.Normalize(address), true
+}
+
+// canonicalAddress is the form of a dialed host:port used for app-owned keys,
+// offers and stored lines: ASCII-lowercase, with an IP literal host in
+// net/netip canonical form, so "[0:0:0:0:0:0:0:1]:22" and "[::1]:22" are the
+// same host.
+func canonicalAddress(address string) string {
+	lower := asciiLower(address)
+	host, port, err := net.SplitHostPort(lower)
+	if err != nil {
+		return lower
+	}
+	return net.JoinHostPort(canonicalIP(host), port)
+}
+
+// canonicalIP returns host in net/netip canonical form if it is an IP literal.
+func canonicalIP(host string) string {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.String()
+	}
+	return host
 }
 
 // asciiLower lowercases ASCII letters only. OpenSSH lowercases host names
@@ -205,7 +227,7 @@ type verifier struct {
 	keys    *HostKeys
 	file    ssh.HostKeyCallback // nil without a selected known_hosts file
 	ca      bool                // the file has @cert-authority lines
-	upper   bool                // the file has a plain host pattern with A-Z
+	folds   []fold              // file host patterns knownhosts compares byte-wise
 	ctx     context.Context
 	prompt  Prompt // already bounded by the attempt; nil means no offers
 	mu      sync.Mutex
@@ -226,16 +248,41 @@ func (v *verifier) result() *HostKeyError {
 	return v.outcome
 }
 
+// aliases returns the literal file spellings of the canonical host, such as
+// "SSH.Example.com" or "0:0:0:0:0:0:0:1", and whether a wildcard file pattern
+// that differs from its lowercase form covers the host.
+func (v *verifier) aliases(host string) (names []string, wild bool) {
+	for _, f := range v.folds {
+		switch {
+		case f.wild:
+			wild = wild || wildcardMatch(f.host, host)
+		case f.host == host && !contains(names, f.raw):
+			names = append(names, f.raw)
+		}
+	}
+	return names, wild
+}
+
 // known returns the trusted keys for address from both sources. The file is
-// asked with the lowercase address and, if different, the address as dialed,
-// so an entry in either case is honoured. A non-nil error means the file
-// database could not answer.
+// asked with the canonical address, the lowercase and dialed addresses, and
+// every literal file spelling of the host, so an entry in any case or IP form
+// is honoured. A non-nil error means the file database could not answer.
 func (v *verifier) known(address string, remote net.Addr, key ssh.PublicKey) (match, revoked bool, want []ssh.PublicKey, err error) {
-	lower := asciiLower(address)
+	canonical := canonicalAddress(address)
 	if v.file != nil {
-		candidates := []string{lower}
-		if address != lower {
-			candidates = append(candidates, address)
+		var candidates []string
+		for _, candidate := range []string{canonical, asciiLower(address), address} {
+			if !contains(candidates, candidate) {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if host, port, err := net.SplitHostPort(canonical); err == nil {
+			names, _ := v.aliases(host)
+			for _, name := range names {
+				if candidate := net.JoinHostPort(name, port); !contains(candidates, candidate) {
+					candidates = append(candidates, candidate)
+				}
+			}
 		}
 		for _, candidate := range candidates {
 			e := v.file(candidate, remote, key)
@@ -256,7 +303,7 @@ func (v *verifier) known(address string, remote net.Addr, key ssh.PublicKey) (ma
 		}
 	}
 	blob := key.Marshal()
-	for _, k := range v.keys.lookup(knownhosts.Normalize(lower)) {
+	for _, k := range v.keys.lookup(knownhosts.Normalize(canonical)) {
 		want = append(want, k)
 		if bytes.Equal(k.Marshal(), blob) {
 			match = true
@@ -279,11 +326,14 @@ func (v *verifier) check(address string, remote net.Addr, key ssh.PublicKey) err
 	case v.ca:
 		return v.fail(HostKeyCARequired)
 	}
-	if _, ok := key.(*ssh.Certificate); ok || v.prompt == nil || v.upper {
+	host, port, err := net.SplitHostPort(canonicalAddress(address))
+	if err != nil || !safeHost(host) || strings.ContainsAny(host, "[]") {
 		return v.fail(HostKeyUnknown)
 	}
-	host, port, err := net.SplitHostPort(asciiLower(address))
-	if err != nil || !safeHost(host) || strings.ContainsAny(host, "[]") {
+	if _, wild := v.aliases(host); wild {
+		return v.fail(HostKeyUnknown)
+	}
+	if _, ok := key.(*ssh.Certificate); ok || v.prompt == nil {
 		return v.fail(HostKeyUnknown)
 	}
 	address = net.JoinHostPort(host, port)
@@ -368,11 +418,22 @@ func (v *verifier) algorithms(address string, remote net.Addr) []string {
 	return append(append(known, plain...), certs...)
 }
 
+// fold is an unhashed known_hosts host pattern that x/crypto knownhosts
+// compares byte-wise but that names other spellings too: it has an uppercase
+// letter (OpenSSH matches host names case-insensitively) or is an IP literal
+// in non-canonical form.
+type fold struct {
+	raw  string // host part as written, without "!" and "[...]:port"
+	host string // ASCII-lowercase; a literal IP in canonical form
+	wild bool   // the pattern has "*" or "?"
+}
+
 // inspectHosts reports whether known_hosts data has @cert-authority lines and
-// whether a plain (unhashed) host pattern contains an uppercase letter. Such a
-// pattern matches case-insensitively in OpenSSH but not in x/crypto
-// knownhosts, so the file cannot prove a host unknown and offers are disabled.
-func inspectHosts(data []byte) (authority, upper bool) {
+// returns its fold patterns. A literal fold is asked for by its own spelling,
+// so it still yields a match or mismatch. A wildcard fold cannot be asked for;
+// if its lowercase form covers the dialed host, the file cannot prove the host
+// unknown and no offer is made. Ports are ignored, which only widens this.
+func inspectHosts(data []byte) (authority bool, folds []fold) {
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		fields := bytes.Fields(line)
 		if len(fields) == 0 || fields[0][0] == '#' {
@@ -386,13 +447,48 @@ func inspectHosts(data []byte) (authority, upper bool) {
 			}
 			hosts = fields[1]
 		}
-		for _, pattern := range bytes.Split(hosts, []byte(",")) {
-			if !bytes.HasPrefix(pattern, []byte("|")) && bytes.ContainsFunc(pattern, func(r rune) bool { return r >= 'A' && r <= 'Z' }) {
-				upper = true
+		for _, pattern := range strings.Split(string(hosts), ",") {
+			pattern = strings.TrimPrefix(pattern, "!")
+			if pattern == "" || pattern[0] == '|' {
+				continue
+			}
+			raw := pattern
+			if i := strings.LastIndex(pattern, "]:"); pattern[0] == '[' && i > 0 {
+				raw = pattern[1:i]
+			}
+			f := fold{raw: raw, host: asciiLower(raw), wild: strings.ContainsAny(raw, "*?")}
+			if !f.wild {
+				f.host = canonicalIP(f.host)
+			}
+			if f.host != f.raw {
+				folds = append(folds, f)
 			}
 		}
 	}
-	return authority, upper
+	return authority, folds
+}
+
+// wildcardMatch matches s against a known_hosts pattern with "*" (any run,
+// including none) and "?" (one byte), in linear time.
+func wildcardMatch(pattern, s string) bool {
+	p, i, star, mark := 0, 0, -1, 0
+	for i < len(s) {
+		switch {
+		case p < len(pattern) && pattern[p] == '*':
+			star, mark, p = p, i, p+1
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p, i = p+1, i+1
+		case star >= 0:
+			mark++
+			p, i = star+1, mark
+		default:
+			return false
+		}
+	}
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
+	}
+	return p == len(pattern)
 }
 
 func contains(list []string, s string) bool {
