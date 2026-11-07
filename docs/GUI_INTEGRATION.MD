@@ -259,6 +259,12 @@ kill switch filters may remain after a process crash.
 Status.LastError and Event.Code/LastError are diagnostic codes. They can
 expand: for unknown code, show the general message and code. Event.Message
 good for logging, but not for logic control or error detection.
+Response `error`, Status.LastError and Event.LastError values are catalog codes;
+take user-facing texts from the catalog ([ERRORS.MD](ERRORS.MD)). LastError never
+contains free text: a failure without a specific code is `connection_failed`.
+Codes ending in `_run_recover` mean that the user must run network recovery.
+Event.Code values for progress (`state`, `retry`, `network_setup` and similar)
+are not catalog codes.
 After cleanup failure, do not perform automatic start/recover without a solution
 user. Recover removes remaining settings and protection so it can
 allow direct access to the network. There is no separate recover command in RPC.

@@ -1,10 +1,11 @@
 package accesskey
 
 import (
-	"fmt"
 	"net"
 	"strings"
 	"unicode/utf8"
+
+	"bimeron/internal/problem"
 )
 
 // ShadowTLS describes an optional strict-v3 wrapper around an encrypted TCP
@@ -27,21 +28,25 @@ func (s ShadowTLS) Validate() error {
 		}
 	}
 	if !validName {
-		return fmt.Errorf("invalid ShadowTLS server name")
+		return problem.New("server_name_invalid", "invalid ShadowTLS server name").In("ShadowTLS").At("ServerName")
 	}
-	if s.Password == "" || !utf8.ValidString(s.Password) || strings.ContainsAny(s.Password, "\x00\r\n") {
-		return fmt.Errorf("invalid ShadowTLS password")
+	if s.Password == "" {
+		return problem.New("value_required", "invalid ShadowTLS password").In("ShadowTLS").On("Password", "")
+	}
+	if !utf8.ValidString(s.Password) || strings.ContainsAny(s.Password, "\x00\r\n") {
+		return problem.New("value_has_invalid_characters", "invalid ShadowTLS password").In("ShadowTLS").On("Password", s.Password)
 	}
 	return nil
 }
 
 // ValidateShadowTLS is shared by parsed profiles and direct Go API callers.
+// Wrapper conflicts have no field; callers place them in [ShadowTLS].
 func (p Profile) ValidateShadowTLS() error {
 	if p.ShadowTLS == nil {
 		return nil
 	}
 	if p.SSPlugin != nil {
-		return fmt.Errorf("ShadowTLS cannot be combined with a Shadowsocks plugin")
+		return problem.New("shadowtls_plugin_unsupported", "ShadowTLS cannot be combined with a Shadowsocks plugin")
 	}
 	if err := p.ShadowTLS.Validate(); err != nil {
 		return err
@@ -52,14 +57,14 @@ func (p Profile) ValidateShadowTLS() error {
 			return err
 		}
 		if p.TCP.Cipher == "aes-192-gcm" {
-			return fmt.Errorf("ShadowTLS does not support this Shadowsocks cipher")
+			return problem.New("shadowtls_cipher_unsupported", "ShadowTLS does not support this Shadowsocks cipher")
 		}
 	case "vless":
 		if err := p.VLESS.Validate(p.TCP.Host, p.TCP.Port); err != nil {
 			return err
 		}
 		if p.VLESS.Security != "tls" && p.VLESS.Security != "reality" {
-			return fmt.Errorf("ShadowTLS requires encrypted VLESS transport")
+			return problem.New("shadowtls_upstream_unsupported", "ShadowTLS requires encrypted VLESS transport")
 		}
 		if err := shadowXHTTP(p.VLESS.ALPN, p.VLESS.XHTTPOptions); err != nil {
 			return err
@@ -77,22 +82,31 @@ func (p Profile) ValidateShadowTLS() error {
 		return p.AnyTLS.Validate(p.TCP.Host, p.TCP.Port)
 	case "naive":
 		if p.Naive.QUIC {
-			return fmt.Errorf("ShadowTLS does not support HTTP/3")
+			return problem.New("shadowtls_http3_unsupported", "ShadowTLS does not support HTTP/3")
 		}
 		return p.Naive.Validate(p.TCP.Host, p.TCP.Port)
 	case "ssh":
-		if p.SSH.User == "" || p.TCP.Host == "" || p.TCP.Port < 1 || p.TCP.Port > 65535 {
-			return fmt.Errorf("invalid SSH profile")
+		// The SSH upstream belongs to [AccessKey]; name it so callers do not
+		// place it in [ShadowTLS].
+		const message = "invalid SSH profile"
+		if p.SSH.User == "" {
+			return problem.New("value_required", message).In("AccessKey").On("Username", "")
+		}
+		if p.TCP.Host == "" {
+			return problem.New("value_required", message).In("AccessKey").On("Server", "")
+		}
+		if p.TCP.Port < 1 || p.TCP.Port > 65535 {
+			return problem.New("port_invalid", message).In("AccessKey").At("Port")
 		}
 	default:
-		return fmt.Errorf("ShadowTLS requires a supported encrypted TCP upstream")
+		return problem.New("shadowtls_upstream_unsupported", "ShadowTLS requires a supported encrypted TCP upstream")
 	}
 	return nil
 }
 
 func shadowXHTTP(alpn string, options *XHTTPOptions) error {
 	if strings.Contains(alpn, "h3") || options != nil && options.DownloadSettings != nil && strings.Contains(options.DownloadSettings.ALPN, "h3") {
-		return fmt.Errorf("ShadowTLS does not support HTTP/3")
+		return problem.New("shadowtls_http3_unsupported", "ShadowTLS does not support HTTP/3")
 	}
 	return nil
 }

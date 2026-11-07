@@ -72,7 +72,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		if err == context.DeadlineExceeded {
 			return nil, fault("ikev2_connect_timeout", false)
 		}
-		return nil, fault(err.Error(), false)
+		return nil, codeFault(err, "ikev2_native_operation_failed", false)
 	}
 	c.updateNative(func(n *NativeStatus) {
 		n.ProfileReadiness = "validated"
@@ -93,7 +93,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fault(err.Error(), false)
+		return nil, codeFault(err, "ikev2_endpoint_unavailable", false)
 	}
 	network, err := windowsnet.ObserveVPN(setup, c.IKEv2.WindowsProfile)
 	if err != nil {

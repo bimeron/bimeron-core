@@ -50,7 +50,9 @@ int main(void) {
     char *validation = RLValidateConfigWithGeoData(config, (int)strlen(config), NULL, 0, NULL, 0);
     assert(validation && strstr(validation, "\"error\":null")); RLFree(validation);
     validation = RLValidateConfigWithGeoData(kill_switch_config, (int)strlen(kill_switch_config), NULL, 0, NULL, 0);
-    assert(validation && strstr(validation, "\"error\":\"")); RLFree(validation);
+    assert(validation && strstr(validation, "\"error\":\"") && strstr(validation, "\"code\":\"embedded_kill_switch_unsupported\"")); RLFree(validation);
+    char *catalog = RLErrorCatalog();
+    assert(catalog && strstr(catalog, "\"embedded_requires_vpn_mode\"") && strstr(catalog, "\"ru\":")); RLFree(catalog);
     char ikev2_config[] = "[Profile]\nVersion = 1\n[IKEv2]\nWindowsProfile = Corporate VPN\nServerName = vpn.example.com\n[Interface]\nMode = vpn\n";
     assert(RLCreate(ikev2_config, (int)strlen(ikev2_config)) == 0);
     assert(RLCreateWithGeoData(ikev2_config, (int)strlen(ikev2_config), NULL, 0, NULL, 0) == 0);

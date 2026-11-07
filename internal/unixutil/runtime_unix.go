@@ -13,12 +13,15 @@ import (
 	"syscall"
 )
 
+// ErrRootRequired reports that a root-only operation ran without root.
+var ErrRootRequired = errors.New("root required; use sudo")
+
 func EnsureRuntimeDir() error {
 	return EnsureRootDir(RuntimeDir, 0711)
 }
 func EnsureRootDir(path string, mode os.FileMode) error {
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("root required; use sudo")
+		return ErrRootRequired
 	}
 	if err := os.Mkdir(path, mode); err != nil && !errors.Is(err, os.ErrExist) {
 		return err

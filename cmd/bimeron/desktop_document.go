@@ -4,6 +4,7 @@ import (
 	"bimeron/core"
 	"bimeron/internal/config"
 	"bimeron/internal/geofile"
+	"bimeron/internal/problem"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,9 @@ type bridgeResponse struct {
 	Groups      *[]string          `json:"groups,omitempty"`
 	Error       string             `json:"error,omitempty"`
 	Details     *core.GeoDataError `json:"details,omitempty"`
+	// Problems lists structured failures; see docs/ERRORS.MD. Validation
+	// responses always include it, other bridge responses only on failure.
+	Problems *[]*problem.Error `json:"problems,omitempty"`
 }
 
 func writeBridge(w io.Writer, r bridgeResponse, err error) error {
@@ -48,6 +52,8 @@ func writeBridge(w io.Writer, r bridgeResponse, err error) error {
 	if err != nil {
 		r.Error = "request failed"
 		errors.As(err, &r.Details)
+		problems := problem.List(err)
+		r.Problems = &problems
 	}
 	b, marshalErr := json.Marshal(r)
 	if marshalErr != nil {
@@ -170,8 +176,9 @@ func geoDataBridge(args []string, out io.Writer) error {
 
 func validateJSONBridge(path string, out io.Writer) error {
 	if !filepath.IsAbs(path) {
-		return writeBridge(out, bridgeResponse{}, fmt.Errorf("absolute path required"))
+		return writeBridge(out, bridgeResponse{}, problem.New("invalid_request", "absolute path required"))
 	}
 	_, err := config.Load(path)
-	return writeBridge(out, bridgeResponse{}, err)
+	problems := problem.List(err)
+	return writeBridge(out, bridgeResponse{Problems: &problems}, err)
 }

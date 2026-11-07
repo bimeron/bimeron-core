@@ -54,7 +54,7 @@ func RLCreate(data unsafe.Pointer, size C.int) C.ulonglong {
 }
 
 func create(c core.SessionConfig, err error) C.ulonglong {
-	if err != nil || c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil {
+	if err != nil || core.ValidateEmbeddedHost(c) != nil {
 		return 0
 	}
 	i := &instance{config: c}
@@ -236,10 +236,19 @@ func geoDataJSON(groups []string, err error) *C.char {
 	var details *core.GeoDataError
 	errors.As(err, &details)
 	b, _ := json.Marshal(struct {
-		Groups  []string           `json:"groups"`
-		Error   *string            `json:"error"`
-		Details *core.GeoDataError `json:"details,omitempty"`
-	}{groups, message, details})
+		Groups   []string           `json:"groups"`
+		Error    *string            `json:"error"`
+		Details  *core.GeoDataError `json:"details,omitempty"`
+		Problems []*core.Problem    `json:"problems,omitempty"`
+	}{groups, message, details, problems(err)})
+	return C.CString(string(b))
+}
+
+// RLErrorCatalog returns the JSON error catalog. Free the result with RLFree.
+//
+//export RLErrorCatalog
+func RLErrorCatalog() *C.char {
+	b, _ := core.ErrorCatalog()
 	return C.CString(string(b))
 }
 
@@ -262,8 +271,8 @@ func RLGeoDataGroups(kind *C.char, data unsafe.Pointer, size C.int) *C.char {
 //export RLValidateConfigWithGeoData
 func RLValidateConfigWithGeoData(data unsafe.Pointer, size C.int, geoIP unsafe.Pointer, geoIPSize C.int, geoSite unsafe.Pointer, geoSiteSize C.int) *C.char {
 	c, err := loadGeoConfig(data, size, geoIP, geoIPSize, geoSite, geoSiteSize)
-	if err == nil && (c.Mode != "vpn" || c.KillSwitch || c.IKEv2 != nil) {
-		err = errors.New("Apple packet VPN requires vpn mode without core kill switch or IKEv2")
+	if err == nil {
+		err = core.ValidateEmbeddedHost(c)
 	}
 	return geoDataJSON(nil, err)
 }
@@ -274,4 +283,13 @@ func RLCapabilities() *C.char {
 	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema}
 	b, _ := json.Marshal(c)
 	return C.CString(string(b))
+}
+
+// problems lists structured failures; success keeps the historical JSON
+// without a problems field.
+func problems(err error) []*core.Problem {
+	if err == nil {
+		return nil
+	}
+	return core.Problems(err)
 }

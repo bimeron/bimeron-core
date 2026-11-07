@@ -118,24 +118,38 @@ func TestGeoDataBindings(t *testing.T) {
 		t.Fatal(caps)
 	}
 	var result struct {
-		Groups []string `json:"groups"`
-		Error  *string  `json:"error"`
+		Groups   []string        `json:"groups"`
+		Error    *string         `json:"error"`
+		Problems []*core.Problem `json:"problems"`
 	}
 	for _, input := range []struct {
-		profile string
-		valid   bool
+		profile, code, field string
 	}{
-		{testProfile, true},
-		{testProfile + "[Interface]\nKillSwitch = true\n", false},
-		{testProfile + "[Interface]\nMode = proxy\n", false},
-		{"invalid", false},
+		{testProfile, "", ""},
+		{testProfile + "[Interface]\nKillSwitch = true\n", "embedded_kill_switch_unsupported", "KillSwitch"},
+		{testProfile + "[Interface]\nMode = proxy\n", "embedded_requires_vpn_mode", "Mode"},
+		{"invalid", "syntax_invalid", ""},
 	} {
+		result.Problems = nil
 		if err := json.Unmarshal([]byte(ValidateConfigWithGeoData([]byte(input.profile), nil, nil)), &result); err != nil {
 			t.Fatal(err)
 		}
-		if (result.Error == nil) != input.valid {
+		if (result.Error == nil) != (input.code == "") {
 			t.Fatalf("validation: %+v", result)
 		}
+		if input.code == "" && result.Problems != nil {
+			t.Fatalf("success reported problems: %+v", result)
+		}
+		if input.code != "" && (len(result.Problems) != 1 || result.Problems[0].Code != input.code || result.Problems[0].Field != input.field) {
+			t.Fatalf("problems for %q: %+v", input.code, result.Problems)
+		}
+	}
+	var catalog struct {
+		Version int                       `json:"version"`
+		Codes   map[string]map[string]any `json:"codes"`
+	}
+	if err := json.Unmarshal([]byte(ErrorCatalog()), &catalog); err != nil || catalog.Version != 1 || catalog.Codes["embedded_requires_vpn_mode"] == nil {
+		t.Fatalf("catalog: %v %+v", err, catalog.Version)
 	}
 	if err := json.Unmarshal([]byte(GeoDataGroups("invalid", nil)), &result); err != nil {
 		t.Fatal(err)
