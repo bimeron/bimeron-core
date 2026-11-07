@@ -6,6 +6,9 @@ Push-Location $root
 try {
     $output = Join-Path $root 'dist/android'
     New-Item -ItemType Directory -Force $output | Out-Null
+    # Keep the NDK install path out of the C/DWARF debug info so builds on different hosts match.
+    $cflags = if ($env:CGO_CFLAGS) { $env:CGO_CFLAGS } else { '-O2 -g' }
+    $env:CGO_CFLAGS = "$cflags -ffile-prefix-map=$($env:ANDROID_NDK_HOME)=/android-ndk"
     $buildFlags = @()
     $version = $env:BIMERON_VERSION
     if (-not $version) { $version = git describe --tags --abbrev=0 --match 'v[0-9]*' 2>$null; if ($LASTEXITCODE -eq 0) { $version += '-dev' } }
