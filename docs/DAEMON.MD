@@ -37,7 +37,11 @@ dist\windows-amd64\bimeron.exe shutdown
 | `shutdown` | Stops the session, then exits the daemon. If cleanup fails, returns an error and keeps the daemon available. |
 
 Ctrl+C in the daemon console also disconnects the session and exits after waiting
-for cleanup. Forced termination through taskkill is a crash: if enabled, the kill
+for cleanup. Closing the console window, signing out, or shutting down Windows
+starts the same cleanup, but Windows ends the process after a few seconds; run
+`recover` if the kill switch is still active afterwards. On Linux and macOS,
+SIGTERM and SIGHUP (for example, a closed terminal or dropped SSH connection)
+stop the session the same way. Forced termination through taskkill is a crash: if enabled, the kill
 switch remains active until a new connection or `recover`.
 
 Control commands apply only to the daemon's session, not a separate `run`.

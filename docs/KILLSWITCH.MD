@@ -53,6 +53,9 @@ claimed protection.
 ## Shutdown and crashes
 
 Ctrl+C performs normal cleanup of DNS, routes, and owned WFP filters.
+Closing the console window, signing out, or shutting down Windows starts the
+same cleanup, but Windows ends the process after a few seconds; if cleanup does
+not finish in time, the filters stay in place as after a forced termination.
 Forced process termination leaves filters in place. Remove them with:
 
 ```cmd

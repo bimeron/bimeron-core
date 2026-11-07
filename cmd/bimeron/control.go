@@ -1,14 +1,13 @@
 package main
 
 import (
+	core "bimeron/core"
+	"bimeron/internal/control"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	core "bimeron/core"
-	"bimeron/internal/control"
 	"time"
 )
 
@@ -99,7 +98,7 @@ func watchControl(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: bimeron watch")
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
 	var cursor uint64
 	var instance string

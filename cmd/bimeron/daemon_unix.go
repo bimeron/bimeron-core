@@ -8,8 +8,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 )
 
 func daemon(args []string) error {
@@ -28,7 +26,7 @@ func daemon(args []string) error {
 		fmt.Fprintf(os.Stderr, "Developer recovery record unavailable: %v\n", err)
 		finishRecord = func(bool) error { return nil }
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := notifyShutdown(context.Background())
 	defer stop()
 	fmt.Println("Bimeron daemon ready. Use start, status, stop, shutdown or watch in another terminal.")
 	err = control.NewServer(core.New(core.Options{})).Serve(ctx, l)
