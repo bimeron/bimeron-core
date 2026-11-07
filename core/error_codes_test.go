@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/sshtunnel"
 )
 
 // failureCode matches every code literal that the core can place into
@@ -48,6 +49,25 @@ func TestFailureCodesAreCatalogCodes(t *testing.T) {
 	}
 	if !problem.Known(connectionFailed) {
 		t.Fatalf("generic code %q has no catalog entry", connectionFailed)
+	}
+}
+
+// TestSSHHostKeyCodesAreCatalogCodes covers the codes that sshFault forwards
+// from sshtunnel.HostKeyError, which the literal scan above cannot see.
+func TestSSHHostKeyCodesAreCatalogCodes(t *testing.T) {
+	c := problem.MustLoad()
+	for _, code := range []string{
+		sshtunnel.HostKeyMismatch, sshtunnel.HostKeyRejected, sshtunnel.HostKeyUnanswered,
+		sshtunnel.HostKeyUnknown, sshtunnel.HostKeyCARequired, sshtunnel.KnownHostsMissing,
+	} {
+		entry, ok := c.Codes[code]
+		if !ok || entry.Kind != problem.KindConnection {
+			t.Errorf("host-key code %q has catalog entry %+v, %v; want kind connection", code, entry, ok)
+		}
+		err := sshFault(&sshtunnel.HostKeyError{Code: code}, SessionConfig{SSHProfileOnly: true})
+		if got := lastErrorCode(err); got != code || retryable(err) {
+			t.Errorf("sshFault(%q) LastError = %q retry %v", code, got, retryable(err))
+		}
 	}
 }
 

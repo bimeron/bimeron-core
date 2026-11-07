@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bimeron/internal/accesskey"
@@ -26,6 +27,9 @@ type Challenge struct {
 	Kind    string   `json:"kind"`
 	Prompts []string `json:"prompts"`
 	Echo    []bool   `json:"echo"`
+	// HostKey is set only for Kind HostKeyKind, which has no prompts. It is
+	// never serialized by the control protocol.
+	HostKey *HostKeyOffer `json:"-"`
 }
 type Prompt func(context.Context, Challenge) ([]string, error)
 
@@ -44,12 +48,47 @@ func (c streamConn) CloseWrite() error { return c.closeWrite() }
 
 var _ transport.StreamDialer = (*Client)(nil)
 
-func expand(path string) (string, error) {
+// fileTrace observes filesystem access for tests; see SetFileTrace.
+var fileTrace atomic.Pointer[func(op, path string)]
+
+// SetFileTrace installs f to observe every filesystem access this package
+// makes for a connection: op is "home" (user home lookup, path empty), "stat",
+// "read" or "agent" (agent socket dial). It exists for tests that prove which
+// paths a session touches. It returns a function restoring the previous trace.
+func SetFileTrace(f func(op, path string)) (restore func()) {
+	old := fileTrace.Swap(&f)
+	return func() { fileTrace.Store(old) }
+}
+
+func trace(op, path string) {
+	if f := fileTrace.Load(); f != nil && *f != nil {
+		(*f)(op, path)
+	}
+}
+
+func userHomeDir() (string, error) {
+	trace("home", "")
+	return os.UserHomeDir()
+}
+
+func readFile(path string) ([]byte, error) {
+	trace("read", path)
+	return os.ReadFile(path)
+}
+
+func homeRelative(path string) bool {
+	return path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`)
+}
+
+func expand(path string, profileOnly bool) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
-		home, err := os.UserHomeDir()
+	if homeRelative(path) {
+		if profileOnly {
+			return "", fmt.Errorf("SSH home-relative path unavailable")
+		}
+		home, err := userHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("SSH home directory unavailable")
 		}
@@ -59,7 +98,7 @@ func expand(path string) (string, error) {
 }
 
 func signer(path string, ctx context.Context, prompt Prompt) (ssh.Signer, error) {
-	b, err := os.ReadFile(path)
+	b, err := readFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("SSH identity file unavailable")
 	}
@@ -86,31 +125,76 @@ func signer(path string, ctx context.Context, prompt Prompt) (ssh.Signer, error)
 }
 
 func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Prompt, defaultKeys bool) (*Client, error) {
+	return NewWithOptions(ctx, p, dialer, prompt, Options{DefaultKeys: defaultKeys})
+}
+
+// Options configures NewWithOptions. The zero value is New with defaultKeys
+// false.
+type Options struct {
+	// DefaultKeys permits the user-home fallbacks: ~/.ssh/known_hosts without
+	// a KnownHostsFile, and ~/.ssh/id_{ed25519,ecdsa,rsa} without an
+	// IdentityFile. Ignored with ProfileOnly.
+	DefaultKeys bool
+	// HostKeys enables accept-new: an unknown host is offered through prompt
+	// as a HostKeyKind challenge, a known host with another key is refused
+	// without an offer, and failures are reported as *HostKeyError. Nil keeps
+	// file-only verification.
+	HostKeys *HostKeys
+	// ProfileOnly restricts the connection to the files the profile names:
+	// no user home lookup, no "~" path, no default identity or known_hosts,
+	// and no SSH agent. Without a KnownHostsFile and without HostKeys the
+	// connection fails with HostKeyError KnownHostsMissing. The Android
+	// embedding always sets it.
+	ProfileOnly bool
+}
+
+// NewWithOptions connects like New with explicit options.
+func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Prompt, o Options) (*Client, error) {
 	if err := p.ValidateShadowTLS(); err != nil {
 		return nil, err
 	}
 	if p.Type != "ssh" || p.SSH.User == "" || p.TCP.Host == "" || p.TCP.Port < 1 || p.TCP.Port > 65535 {
 		return nil, fmt.Errorf("invalid SSH profile")
 	}
-	hostFile, err := expand(p.SSH.KnownHostsFile)
+	defaultKeys := o.DefaultKeys && !o.ProfileOnly
+	hostFile, err := expand(p.SSH.KnownHostsFile, o.ProfileOnly)
 	if err != nil {
 		return nil, err
 	}
-	if hostFile == "" {
+	var policy *verifier
+	if o.HostKeys != nil {
+		policy = &verifier{keys: o.HostKeys}
+		if hostFile != "" {
+			data, err := readFile(hostFile)
+			if err != nil {
+				return nil, fmt.Errorf("SSH known_hosts unavailable")
+			}
+			if policy.file, err = knownhosts.New(hostFile); err != nil {
+				return nil, fmt.Errorf("SSH known_hosts unavailable")
+			}
+			policy.ca, policy.folds = inspectHosts(data)
+		}
+	} else if hostFile == "" {
+		if o.ProfileOnly {
+			return nil, &HostKeyError{Code: KnownHostsMissing}
+		}
 		if !defaultKeys {
 			return nil, fmt.Errorf("SSH known_hosts file must be selected for service use")
 		}
-		home, err := os.UserHomeDir()
+		home, err := userHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("SSH known_hosts unavailable")
 		}
 		hostFile = filepath.Join(home, ".ssh", "known_hosts")
 	}
-	verify, err := knownhosts.New(hostFile)
-	if err != nil {
-		return nil, fmt.Errorf("SSH known_hosts unavailable")
+	var verify ssh.HostKeyCallback
+	if policy == nil {
+		trace("read", hostFile)
+		if verify, err = knownhosts.New(hostFile); err != nil {
+			return nil, fmt.Errorf("SSH known_hosts unavailable")
+		}
 	}
-	identity, err := expand(p.SSH.IdentityFile)
+	identity, err := expand(p.SSH.IdentityFile, o.ProfileOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +212,10 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 		}
 		methods = append(methods, ssh.PublicKeys(s))
 	}
-	agentConn, err := dialAgent(ctx)
+	agentConn, err := net.Conn(nil), fmt.Errorf("SSH agent disabled")
+	if !o.ProfileOnly {
+		agentConn, err = dialAgent(ctx)
+	}
 	if err == nil {
 		if signers, e := agent.NewClient(agentConn).Signers(); e == nil && len(signers) > 0 {
 			methods = append(methods, ssh.PublicKeys(signers...))
@@ -138,9 +225,10 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 		}
 	}
 	if identity == "" && defaultKeys {
-		if home, e := os.UserHomeDir(); e == nil {
+		if home, e := userHomeDir(); e == nil {
 			for _, name := range []string{"id_ed25519", "id_ecdsa", "id_rsa"} {
 				path := filepath.Join(home, ".ssh", name)
+				trace("stat", path)
 				if _, e := os.Stat(path); e != nil {
 					continue
 				}
@@ -183,12 +271,22 @@ func New(ctx context.Context, p accesskey.Profile, dialer net.Dialer, prompt Pro
 	}
 	stop := context.AfterFunc(dialCtx, func() { _ = conn.Close() })
 	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, HostKeyCallback: verify, Timeout: 20 * time.Second}
+	if policy != nil {
+		policy.ctx, policy.prompt = ctx, prompt
+		config.HostKeyCallback = policy.check
+		config.HostKeyAlgorithms = policy.algorithms(address, conn.RemoteAddr())
+	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
 	stop()
 	if err != nil {
 		conn.Close()
 		if agentConn != nil {
 			agentConn.Close()
+		}
+		if policy != nil {
+			if e := policy.result(); e != nil {
+				return nil, e
+			}
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}

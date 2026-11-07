@@ -480,6 +480,36 @@
       "en": "Could not connect to the SSH server. Check the server address, the user name, the key or password, and the server's host key.",
       "ru": "Не удалось подключиться к SSH-серверу. Проверьте адрес сервера, имя пользователя, ключ или пароль, а также ключ хоста сервера."
     },
+    "ssh_host_key_ca_required": {
+      "kind": "connection",
+      "en": "The known_hosts file trusts a certificate authority, and the SSH server's host key is not covered by it. Add the server's host key to the file or ask the server administrator for a signed host key.",
+      "ru": "Файл known_hosts доверяет центру сертификации, а ключ хоста SSH-сервера им не подписан. Добавьте ключ хоста сервера в файл или попросите администратора сервера подписать ключ хоста."
+    },
+    "ssh_host_key_mismatch": {
+      "kind": "connection",
+      "en": "The SSH server's host key has changed or is no longer trusted. This may be an attack: do not connect until the server administrator confirms the new key, then update the trusted host keys.",
+      "ru": "Ключ хоста SSH-сервера изменился или больше не считается доверенным. Это может быть атакой: не подключайтесь, пока администратор сервера не подтвердит новый ключ, затем обновите доверенные ключи хоста."
+    },
+    "ssh_host_key_rejected": {
+      "kind": "connection",
+      "en": "The SSH server's host key was not accepted, so the connection was cancelled. Connect again to review the key.",
+      "ru": "Ключ хоста SSH-сервера не принят, поэтому подключение отменено. Подключитесь снова, чтобы ещё раз проверить ключ."
+    },
+    "ssh_host_key_unanswered": {
+      "kind": "connection",
+      "en": "The SSH server's host key was not confirmed in time. Connect again and accept or decline the key.",
+      "ru": "Ключ хоста SSH-сервера не был подтверждён вовремя. Подключитесь снова и примите или отклоните ключ."
+    },
+    "ssh_host_key_unknown": {
+      "kind": "connection",
+      "en": "The SSH server's host key is unknown and cannot be confirmed here. Add the server's host key to the known_hosts file of the profile.",
+      "ru": "Ключ хоста SSH-сервера неизвестен, и подтвердить его здесь нельзя. Добавьте ключ хоста сервера в файл known_hosts профиля."
+    },
+    "ssh_known_hosts_missing": {
+      "kind": "connection",
+      "en": "No known_hosts file is selected for the SSH server. Import a known_hosts file into the profile or allow confirming new host keys.",
+      "ru": "Для SSH-сервера не выбран файл known_hosts. Импортируйте файл known_hosts в профиль или разрешите подтверждение новых ключей хоста."
+    },
     "transport_check_failed": {
       "kind": "connection",
       "en": "The server did not pass the connection test. Check the server address, port and key, and your internet connection.",

@@ -52,6 +52,22 @@ func hysteria2Fault(err error) error {
 	return fault("hysteria2_unknown", false)
 }
 
+// sshOptions maps the session's SSH settings to the tunnel options.
+func sshOptions(c SessionConfig) sshtunnel.Options {
+	return sshtunnel.Options{DefaultKeys: c.SSHDefaultKeys, HostKeys: c.SSHHostKeys, ProfileOnly: c.SSHProfileOnly}
+}
+
+// sshFault keeps the single ssh_connection_failed code unless the session
+// opted in to host-key handling (ssh_host_key_* codes) or is profile-only
+// (ssh_known_hosts_missing).
+func sshFault(err error, c SessionConfig) error {
+	var hostKey *sshtunnel.HostKeyError
+	if (c.SSHHostKeys != nil || c.SSHProfileOnly) && errors.As(err, &hostKey) {
+		return fault(hostKey.Code, false)
+	}
+	return fault("ssh_connection_failed", false)
+}
+
 type vpnBackend struct {
 	platform platform
 	metadata *vpn.DNSMetadata
@@ -165,9 +181,9 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		if path.sshPrompt != nil {
 			prompt = path.sshPrompt
 		}
-		client, clientErr := sshtunnel.New(ctx, p, outbound, prompt, c.SSHDefaultKeys)
+		client, clientErr := sshtunnel.NewWithOptions(ctx, p, outbound, prompt, sshOptions(c))
 		if clientErr != nil {
-			return nil, nil, nil, nil, fault("ssh_connection_failed", false)
+			return nil, nil, nil, nil, sshFault(clientErr, c)
 		}
 		tcp, closeTransport = client, client.Close
 	} else if p.Type == "naive" {
@@ -450,9 +466,9 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "ssh" {
-		client, clientErr := sshtunnel.New(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, c.SSHDefaultKeys)
+		client, clientErr := sshtunnel.NewWithOptions(resolveCtx, p, net.Dialer{Timeout: 15 * time.Second}, c.SSHPrompt, sshOptions(c))
 		if clientErr != nil {
-			return nil, fault("ssh_connection_failed", false)
+			return nil, sshFault(clientErr, c)
 		}
 		d, closeTransport = client, client.Close
 	} else if p.Type == "naive" {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/core"
+	"bimeron/internal/sshtunnel"
 )
 
 // SocketProtector is implemented by the VpnService. Protect must call
@@ -36,6 +37,7 @@ type Session struct {
 	networkID  string
 	dns        []string
 	generation uint64
+	started    bool
 	stopped    bool
 }
 
@@ -57,10 +59,17 @@ func NewSessionWithGeoData(profile, geoIP, geoSite []byte, protector SocketProte
 	return newSession(c, protector)
 }
 
+// newSession is the only constructor of a startable Session; every exported
+// constructor goes through it.
 func newSession(c core.SessionConfig, protector SocketProtector) (*Session, error) {
 	if err := core.ValidateEmbeddedHost(c); err != nil {
 		return nil, err
 	}
+	// SSH on Android uses only files the app imported and named in the
+	// profile: no default identity scan, no ~/.ssh/known_hosts fallback, no
+	// "~" paths and no SSH agent. A profile needs a KnownHostsFile or
+	// AcceptNewHostKeys, otherwise LastError is ssh_known_hosts_missing.
+	c.SSHDefaultKeys, c.SSHProfileOnly = false, true
 	s := &Session{config: c, protector: protector}
 	s.auth.id = opaqueID()
 	var err error
@@ -133,7 +142,34 @@ func (s *Session) Start() error {
 	if s.stopped {
 		return errors.New("Android session already stopped")
 	}
+	s.started = true
 	return s.engine.Start(context.Background(), s.config)
+}
+
+// AcceptNewHostKeys opts this Session in to SSH accept-new host-key handling.
+// Call it at most once, before Start. trustedKnownHosts holds the app-owned
+// known_hosts lines for this profile (empty or nil for none); only plain
+// "host[,host] type base64 [comment]" lines are accepted. The profile's
+// KnownHostsFile, if set, is still trusted. No default file is ever read on
+// Android; without KnownHostsFile and without this call, an SSH profile fails
+// with ssh_known_hosts_missing.
+//
+// An unknown host then produces a pendingAuth offer of kind "host_key"; a host
+// known from either source with a different key fails with fault
+// ssh_host_key_mismatch and no offer. Keys accepted here are remembered for
+// this Session's reconnects; the app persists knownHostsLine itself.
+func (s *Session) AcceptNewHostKeys(trustedKnownHosts []byte) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	if s.started || s.stopped || s.config.SSHHostKeys != nil {
+		return errors.New("host keys must be configured once before Start")
+	}
+	keys, err := sshtunnel.ParseHostKeys(trustedKnownHosts)
+	if err != nil {
+		return err
+	}
+	s.config.SSHHostKeys = keys
+	return nil
 }
 
 func (s *Session) WritePacket(packet []byte) error { return s.port.WritePacket(packet) }

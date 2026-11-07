@@ -292,7 +292,11 @@ func TestSnapshotOriginalConfigurationAndAuth(t *testing.T) {
 			t.Fatalf("routing after mutation: %v, want %v", got, tc.want)
 		}
 	}
+	if s.config.SSHDefaultKeys || !s.config.SSHProfileOnly {
+		t.Fatal("Android SSH profile-only guard missing")
+	}
 	a, b := s.config, expected
+	b.SSHDefaultKeys, b.SSHProfileOnly = false, true
 	a.Resolve = nil
 	a.ResolveOnNetwork = nil
 	b.Resolve = nil
