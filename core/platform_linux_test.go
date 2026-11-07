@@ -37,6 +37,12 @@ func (d loopbackStream) DialStream(ctx context.Context, _ string) (transport.Str
 	return dialer.DialStream(ctx, d.address)
 }
 
+// kernelHasIPv6 is false on kernels booted with ipv6.disable=1.
+func kernelHasIPv6() bool {
+	_, err := os.Stat("/proc/sys/net/ipv6")
+	return !errors.Is(err, os.ErrNotExist)
+}
+
 func TestLinuxTUNHTTP(t *testing.T)   { testLinuxTUNHTTP(t, false) }
 func TestLinuxTUNMASQUE(t *testing.T) { testLinuxTUNHTTP(t, true) }
 
@@ -88,7 +94,9 @@ func testLinuxTUNHTTP(t *testing.T, useMASQUE bool) {
 	dir := t.TempDir()
 	resolver := filepath.Join(dir, "resolv.conf")
 	os.WriteFile(resolver, []byte("nameserver 192.0.2.53\n"), 0644)
-	manager := &linuxnet.Manager{Dir: dir, Resolver: resolver, Run: runner}
+	// Start from NewManager so host checks such as a missing IPv6 stack apply.
+	manager := linuxnet.NewManager()
+	manager.Dir, manager.Resolver, manager.Run = dir, resolver, runner
 	platform := &linuxPlatform{manager: manager}
 	link, err := platform.Open(ctx, SessionConfig{Name: "Bimeron", MTU: 1420}, router, func(string, string) {})
 	if err != nil {
@@ -98,7 +106,11 @@ func testLinuxTUNHTTP(t *testing.T, useMASQUE bool) {
 	tr := &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext}
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
-	for _, url := range []string{"http://203.0.113.9/", "http://[2001:db8::9]/"} {
+	urls := []string{"http://203.0.113.9/"}
+	if kernelHasIPv6() {
+		urls = append(urls, "http://[2001:db8::9]/")
+	}
+	for _, url := range urls {
 		if useMASQUE {
 			address := strings.TrimSuffix(strings.TrimPrefix(url, "http://"), "/") + ":80"
 			tcp, err := net.DialTimeout("tcp", address, 3*time.Second)
@@ -205,7 +217,8 @@ func TestLinuxTUNCleanupAndImmediateReopen(t *testing.T) {
 	if err := os.WriteFile(resolver, original, 0644); err != nil {
 		t.Fatal(err)
 	}
-	manager := &linuxnet.Manager{Dir: dir, Resolver: resolver, Run: run}
+	manager := linuxnet.NewManager()
+	manager.Dir, manager.Resolver, manager.Run = dir, resolver, run
 	platform := &linuxPlatform{manager: manager}
 	checkClean := func() {
 		t.Helper()
@@ -244,8 +257,13 @@ func TestLinuxTUNCleanupAndImmediateReopen(t *testing.T) {
 		checkClean()
 	}
 	injected := false
+	// Fail in the last managed address family.
+	family := "-6"
+	if !kernelHasIPv6() {
+		family = "-4"
+	}
 	manager.Run = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
-		if name == "ip" && strings.Join(args, " ") == "-6 rule add pref 10901 iif lo lookup "+linuxnet.Table+" protocol "+linuxnet.Protocol {
+		if name == "ip" && strings.Join(args, " ") == family+" rule add pref 10901 iif lo lookup "+linuxnet.Table+" protocol "+linuxnet.Protocol {
 			injected = true
 			return nil, errors.New("injected setup failure")
 		}

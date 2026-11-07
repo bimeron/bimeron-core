@@ -36,7 +36,14 @@ func lockFile(path string) (func(), error) {
 	return unixutil.LockFile(path)
 }
 func NewManager() *Manager {
-	return &Manager{Dir: RuntimeDir, Resolver: "/etc/resolv.conf", Run: runCommand}
+	return &Manager{Dir: RuntimeDir, Resolver: "/etc/resolv.conf", Run: runCommand, NoIPv6: ipv6Absent}
+}
+
+// ipv6Absent detects ipv6.disable=1, which removes the IPv6 sysctl tree.
+// Any other stat error keeps IPv6 management mandatory.
+func ipv6Absent() bool {
+	_, err := os.Stat("/proc/sys/net/ipv6")
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func executable(name string) (string, error) {
