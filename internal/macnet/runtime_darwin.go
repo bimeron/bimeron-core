@@ -3,14 +3,15 @@
 package macnet
 
 import (
+	"bimeron/internal/unixutil"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
 	"os/exec"
-	"bimeron/internal/unixutil"
 	"sort"
 	"strings"
 	"syscall"
@@ -74,7 +75,16 @@ func runCommand(ctx context.Context, name, input string, args ...string) ([]byte
 	cmd.Stdout = &out
 	cmd.Stderr = &diagnostics
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s command failed", name)
+		var exitErr *exec.ExitError
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		if ctx.Err() != nil && errors.As(err, &exitErr) {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+				return nil, ctx.Err()
+			}
+		}
+		return nil, fmt.Errorf("%s command failed: %w", name, err)
 	}
 	return out.Bytes(), nil
 }
