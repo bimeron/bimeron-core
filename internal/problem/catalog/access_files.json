@@ -1,0 +1,87 @@
+{
+  "uri_fields": {
+    "VMessSecurity": ["VMess"],
+    "VMessNetwork": ["VMess"],
+    "VMessTLS": ["VMess"],
+    "VMessPath": ["VMess"],
+    "VMessHost": ["VMess"],
+    "VMessMode": ["VMess"],
+    "VMessExtra": ["VMess"],
+    "VMessVersion": ["VMess"],
+    "VMessHeaderType": ["VMess"],
+    "AlterID": ["VMess"],
+    "UDPRelayMode": ["TUIC"]
+  },
+  "codes": {
+    "vmess_legacy_unsupported": {
+      "kind": "config",
+      "en": "This VMess link uses a legacy format or legacy authentication that is not supported. Ask the provider for a current link.",
+      "ru": "Ссылка VMess в устаревшем формате или со старым способом аутентификации, который не поддерживается. Попросите у провайдера актуальную ссылку."
+    },
+    "xhttp_extra_invalid": {
+      "kind": "config",
+      "en": "The additional XHTTP settings are not valid JSON or contain unsupported or repeated keys.",
+      "ru": "Дополнительные настройки XHTTP — некорректный JSON или в них есть неподдерживаемые либо повторяющиеся ключи."
+    },
+    "xhttp_header_invalid": {
+      "kind": "config",
+      "en": "Each header needs a valid name other than Host and a single-line value of at most 4096 characters.",
+      "ru": "У каждого заголовка должно быть допустимое имя (не Host) и однострочное значение не длиннее 4096 символов."
+    },
+    "xhttp_range_invalid": {
+      "kind": "config",
+      "en": "Enter a number or a range such as 10-20, with values from {min} to {max}.",
+      "ru": "Укажите число или диапазон вида 10-20 со значениями от {min} до {max}."
+    },
+    "xhttp_download_invalid": {
+      "kind": "config",
+      "en": "The settings of the separate download connection are incomplete or invalid.",
+      "ru": "Настройки отдельного соединения для загрузки неполные или содержат ошибку."
+    },
+    "option_requires_mode": {
+      "kind": "config",
+      "en": "This option is only available in {mode} mode.",
+      "ru": "Этот параметр доступен только в режиме {mode}."
+    },
+    "masque_path_invalid": {
+      "kind": "config",
+      "en": "Enter a path that starts with / and contains {host_variable} and {port_variable} exactly once each, with no other variables.",
+      "ru": "Укажите путь, который начинается с / и содержит {host_variable} и {port_variable} ровно по одному разу, без других переменных."
+    },
+    "plugin_options_invalid": {
+      "kind": "config",
+      "en": "Write the plugin options as key=value pairs separated by semicolons, each key only once.",
+      "ru": "Запишите параметры плагина парами ключ=значение через точку с запятой, каждый ключ только один раз."
+    },
+    "plugin_option_unsupported": {
+      "kind": "config",
+      "en": "The plugin options contain an unsupported option. Supported: {allowed}.",
+      "ru": "В параметрах плагина есть неподдерживаемый параметр. Поддерживаются: {allowed}."
+    },
+    "plugin_option_invalid": {
+      "kind": "config",
+      "en": "The plugin option {option} is missing or has an invalid value.",
+      "ru": "Параметр плагина {option} не указан или имеет недопустимое значение."
+    },
+    "shadowtls_plugin_unsupported": {
+      "kind": "config",
+      "en": "ShadowTLS cannot be combined with a Shadowsocks plugin. Remove the plugin or turn off ShadowTLS.",
+      "ru": "ShadowTLS нельзя использовать вместе с плагином Shadowsocks. Удалите плагин или отключите ShadowTLS."
+    },
+    "shadowtls_cipher_unsupported": {
+      "kind": "config",
+      "en": "ShadowTLS does not support the AES-192-GCM cipher. Choose another cipher.",
+      "ru": "ShadowTLS не поддерживает шифр AES-192-GCM. Выберите другой шифр."
+    },
+    "shadowtls_http3_unsupported": {
+      "kind": "config",
+      "en": "ShadowTLS cannot carry HTTP/3. Choose a transport over TCP.",
+      "ru": "ShadowTLS не работает с HTTP/3. Выберите транспорт поверх TCP."
+    },
+    "shadowtls_upstream_unsupported": {
+      "kind": "config",
+      "en": "ShadowTLS cannot wrap this connection. Use Shadowsocks, VLESS with TLS or REALITY, VMess, Trojan, AnyTLS, NaiveProxy or SSH.",
+      "ru": "ShadowTLS не может обернуть это подключение. Используйте Shadowsocks, VLESS с TLS или REALITY, VMess, Trojan, AnyTLS, NaiveProxy или SSH."
+    }
+  }
+}
