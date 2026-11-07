@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"bimeron/internal/accesskey"
+	"bimeron/internal/proxy"
+	"bimeron/internal/routing"
+	"bimeron/internal/telemetry"
 	"github.com/xjasonlyu/tun2socks/v2/core"
 	"golang.getoutline.org/sdk/transport"
 	"golang.getoutline.org/sdk/transport/shadowsocks"
@@ -15,10 +19,6 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
-	"bimeron/internal/accesskey"
-	"bimeron/internal/proxy"
-	"bimeron/internal/routing"
-	"bimeron/internal/telemetry"
 )
 
 func checksum(b []byte) uint16 {

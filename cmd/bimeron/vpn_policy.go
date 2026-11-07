@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bimeron/internal/routing"
 	"encoding/json"
 	"fmt"
 	"os"
-	"bimeron/internal/routing"
 )
 
 func vpnPolicy(path string) (*routing.Policy, error) {

@@ -1,8 +1,8 @@
 package killswitch
 
 import (
-	"net/netip"
 	"bimeron/internal/routing"
+	"net/netip"
 	"testing"
 )
 

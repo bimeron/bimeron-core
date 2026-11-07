@@ -3,8 +3,8 @@
 package main
 
 import (
-	"context"
 	"bimeron/internal/macnet"
+	"context"
 	"time"
 )
 

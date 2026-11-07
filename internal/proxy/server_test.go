@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"golang.getoutline.org/sdk/transport"
-	"golang.getoutline.org/sdk/transport/shadowsocks"
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
 	"bimeron/internal/telemetry"
+	"golang.getoutline.org/sdk/transport"
+	"golang.getoutline.org/sdk/transport/shadowsocks"
 )
 
 func start(t *testing.T, s *Server) (string, context.CancelFunc, <-chan error) {

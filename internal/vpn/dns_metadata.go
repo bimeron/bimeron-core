@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/dns/dnsmessage"
 	"bimeron/internal/routing"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 const defaultDNSMetadataEntries = 4096

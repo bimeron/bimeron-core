@@ -3,6 +3,7 @@
 package linuxnet
 
 import (
+	"bimeron/internal/routing"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"bimeron/internal/routing"
 	"strings"
 	"syscall"
 	"testing"

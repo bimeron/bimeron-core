@@ -1,12 +1,12 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"bimeron/core"
 	"bimeron/internal/control"
 	"bimeron/internal/telemetry"
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
