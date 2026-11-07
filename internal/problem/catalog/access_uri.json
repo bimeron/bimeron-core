@@ -1,0 +1,57 @@
+{
+  "uri_fields": {
+    "Insecure": ["AnyTLS", "Hysteria2"]
+  },
+  "codes": {
+    "uri_credentials_invalid": {
+      "kind": "config",
+      "en": "The part of the link before @ must be a single value without a colon.",
+      "ru": "В ссылке перед @ должно быть одно значение без двоеточия."
+    },
+    "insecure_tls_unsupported": {
+      "kind": "config",
+      "en": "Turning off server certificate verification is not supported. Remove this option or set it to 0.",
+      "ru": "Отключать проверку сертификата сервера нельзя. Уберите этот параметр или укажите 0."
+    },
+    "path_early_data_unsupported": {
+      "kind": "config",
+      "en": "Remove the ed parameter from the path. If the protocol supports WebSocket early data, set it separately.",
+      "ru": "Уберите параметр ed из пути. Если протокол поддерживает ранние данные WebSocket, они задаются отдельно."
+    },
+    "reality_public_key_invalid": {
+      "kind": "config",
+      "en": "Enter the REALITY public key: 43 base64url characters.",
+      "ru": "Укажите открытый ключ REALITY: 43 символа в кодировке base64url."
+    },
+    "reality_short_id_invalid": {
+      "kind": "config",
+      "en": "Enter an even number of hexadecimal characters (0-9, a-f), at most 16.",
+      "ru": "Укажите чётное количество шестнадцатеричных символов (0–9, a–f), не больше 16."
+    },
+    "grpc_service_name_invalid": {
+      "kind": "config",
+      "en": "A service name that contains / must start with /, must not end with / and must not contain //.",
+      "ru": "Если в имени сервиса есть «/», оно должно начинаться с «/», не заканчиваться на «/» и не содержать «//»."
+    },
+    "http3_fingerprint_unsupported": {
+      "kind": "config",
+      "en": "HTTP/3 cannot be used with a TLS fingerprint. Clear the fingerprint or choose another ALPN.",
+      "ru": "HTTP/3 нельзя использовать вместе с TLS-отпечатком. Уберите отпечаток или выберите другой ALPN."
+    },
+    "ss2022_identity_requires_aes": {
+      "kind": "config",
+      "en": "Several keys separated by colons work only with an AES method.",
+      "ru": "Несколько ключей через двоеточие можно указать только для методов AES."
+    },
+    "ss2022_key_invalid": {
+      "kind": "config",
+      "en": "Enter a base64 key of {bytes} bytes. Separate several keys with colons.",
+      "ru": "Укажите ключ в кодировке base64. Нужная длина ключа в байтах: {bytes}. Несколько ключей разделяйте двоеточием."
+    },
+    "ssconf_config_invalid": {
+      "kind": "config",
+      "en": "The dynamic key server returned a malformed or unsupported configuration.",
+      "ru": "Сервер динамического ключа вернул повреждённую или неподдерживаемую конфигурацию."
+    }
+  }
+}
