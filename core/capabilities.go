@@ -27,6 +27,9 @@ type Capabilities struct {
 	// ExplicitAccess lists protocols accepted as explicit [AccessKey]
 	// parameters; "naive_quic" is Type = naive with Network = quic.
 	ExplicitAccess []string `json:"explicit_access"`
+	// AccessConversion reports the document operations access_to_fields and
+	// access_to_uri, which convert [AccessKey] between a URI and parameters.
+	AccessConversion bool `json:"access_conversion"`
 }
 
 // IKEv2Capabilities applies only to the system backend. Top-level flags retain
@@ -54,7 +57,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess)}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}

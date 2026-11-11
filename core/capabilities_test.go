@@ -44,10 +44,14 @@ func TestExplicitAccessCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	var report struct {
-		ExplicitAccess []string `json:"explicit_access"`
+		ExplicitAccess   []string `json:"explicit_access"`
+		AccessConversion bool     `json:"access_conversion"`
 	}
 	if err := json.Unmarshal(b, &report); err != nil {
 		t.Fatal(err)
+	}
+	if !report.AccessConversion {
+		t.Fatal("access_conversion is not reported")
 	}
 	for _, want := range []string{"shadowsocks", "vless", "trojan", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"} {
 		if !slices.Contains(report.ExplicitAccess, want) {

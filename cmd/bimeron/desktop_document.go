@@ -87,7 +87,8 @@ func documentBridge(in io.Reader, out io.Writer) error {
 	original := core.ParseConfigDocument([]byte(*req.Profile))
 	doc := core.ParseConfigDocument(original.Bytes())
 	for _, op := range *req.Operations {
-		if op.Op != "set_field" && op.Index == nil {
+		access := op.Op == "access_to_fields" || op.Op == "access_to_uri"
+		if op.Op != "set_field" && !access && op.Index == nil {
 			err = fmt.Errorf("missing index")
 			break
 		}
@@ -120,6 +121,12 @@ func documentBridge(in io.Reader, out io.Writer) error {
 			err = doc.DeleteRule(*op.Index)
 		case "set_field":
 			err = doc.SetSectionField(op.Section, op.Key, *op.Value)
+		case "access_to_fields", "access_to_uri":
+			if op.Index != nil || op.To != nil || op.Enabled != nil || op.Value != nil || op.Matcher != "" || op.Action != "" || op.Section != "" || op.Key != "" {
+				err = fmt.Errorf("unexpected operation fields")
+			} else {
+				err = doc.ConvertAccess(op.Op == "access_to_fields")
+			}
 		default:
 			err = fmt.Errorf("unknown operation")
 		}

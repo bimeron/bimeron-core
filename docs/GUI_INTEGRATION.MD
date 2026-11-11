@@ -173,7 +173,8 @@ Reply hello (form example, capability values ​​vary by platform):
     "app_split": false,
     "kill_switch": true,
     "daemon": true,
-    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"]
+    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"],
+    "access_conversion": true
   }
 }
 ```
@@ -182,6 +183,12 @@ Reply hello (form example, capability values ​​vary by platform):
 `Type = ...` parameters (see [CONF.MD](CONF.MD)); `naive_quic` is `Type = naive`
 with `Network = quic`. Offer a parameter form only for listed protocols. An older
 core omits the field and supports only the first nine entries.
+
+`access_conversion` reports the `bimeron document` operations `access_to_fields`
+and `access_to_uri`, which convert `[AccessKey]` between a share URI and explicit
+parameters (see [DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD)). An older core
+omits it; the mobile libraries report `false` because they have no document
+bridge.
 
 Register feature: status contains State, Attempt, Since, LastError and an optional Session;
 nested Event contains Time, State, Code, Message, Attempt, LastError.
