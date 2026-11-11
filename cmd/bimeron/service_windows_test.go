@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -59,5 +60,23 @@ waiting:
 		}
 	case <-timeout:
 		t.Fatal("service did not stop")
+	}
+}
+
+func TestWindowsServiceExitClean(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status svc.Status
+		clean  bool
+	}{
+		{"clean stop", svc.Status{State: svc.Stopped}, true},
+		{"never started since boot", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_NEVER_STARTED)}, true},
+		{"never started with service code", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_NEVER_STARTED), ServiceSpecificExitCode: 1}, false},
+		{"service specific failure", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_SPECIFIC_ERROR), ServiceSpecificExitCode: 3}, false},
+		{"process failure", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_PROCESS_ABORTED)}, false},
+	} {
+		if got := windowsServiceExitClean(test.status); got != test.clean {
+			t.Errorf("%s: clean = %v, want %v", test.name, got, test.clean)
+		}
 	}
 }

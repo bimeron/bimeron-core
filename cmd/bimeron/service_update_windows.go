@@ -69,7 +69,7 @@ func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
 	if err != nil {
 		return err
 	}
-	if status.Win32ExitCode != 0 || status.ServiceSpecificExitCode != 0 || status.ProcessId != 0 {
+	if !windowsServiceExitClean(status) || status.ProcessId != 0 {
 		return fmt.Errorf("service cleanup unconfirmed")
 	}
 	return nil

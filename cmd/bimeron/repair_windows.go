@@ -142,7 +142,7 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 			if e != nil {
 				return repairObservation{}, e
 			}
-			if !pending && statusBefore.Win32ExitCode != 0 && statusBefore.Win32ExitCode != uint32(windows.ERROR_FILE_NOT_FOUND) && statusBefore.Win32ExitCode != 193 {
+			if !pending && !windowsServiceExitClean(statusBefore) && statusBefore.Win32ExitCode != uint32(windows.ERROR_FILE_NOT_FOUND) && statusBefore.Win32ExitCode != 193 {
 				return repairObservation{}, fmt.Errorf("service cleanup unconfirmed")
 			}
 			return repairObservation{Owned: true, Stopped: true, ReplacementRequired: true, CleanupRequired: pending}, nil
@@ -171,7 +171,7 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 		if pending {
 			return repairObservation{Owned: true, CleanupRequired: true}, nil
 		}
-		if status.Win32ExitCode != 0 || status.ServiceSpecificExitCode != 0 {
+		if !windowsServiceExitClean(status) {
 			return repairObservation{}, fmt.Errorf("previous service cleanup unconfirmed")
 		}
 		return repairObservation{Owned: true, Stopped: true, ReplacementRequired: b.dllDamaged}, nil
@@ -258,7 +258,7 @@ func (b *windowsRepairBackend) CleanupProven(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.State != svc.Stopped || s.ProcessId != 0 || (!b.recovered && (s.Win32ExitCode != 0 || s.ServiceSpecificExitCode != 0)) {
+	if s.State != svc.Stopped || s.ProcessId != 0 || (!b.recovered && !windowsServiceExitClean(s)) {
 		return fmt.Errorf("service exit and cleanup unconfirmed")
 	}
 	return nil
@@ -482,6 +482,17 @@ func repairWindowsConflictGate(ctx context.Context, owner string) error {
 		return fmt.Errorf("control endpoint absence unproven: %w", err)
 	}
 	return nil
+}
+
+// windowsServiceExitClean reports whether a stopped service status proves that
+// the last service process, if any, exited cleanly. ERROR_SERVICE_NEVER_STARTED
+// means no service process has run since boot, so this boot left no runtime
+// state behind; persistent leftovers are detected by repairWindowsCleanupPending.
+func windowsServiceExitClean(s svc.Status) bool {
+	if s.Win32ExitCode == uint32(windows.ERROR_SERVICE_NEVER_STARTED) {
+		return s.ServiceSpecificExitCode == 0
+	}
+	return s.Win32ExitCode == 0 && s.ServiceSpecificExitCode == 0
 }
 
 func repairWindowsCleanupPending(ctx context.Context) (bool, error) {
