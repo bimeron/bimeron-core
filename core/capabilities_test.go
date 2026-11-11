@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -34,5 +35,23 @@ func TestPlatformCapabilities(t *testing.T) {
 	b, err := json.Marshal(c)
 	if err != nil || b == nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExplicitAccessCapability(t *testing.T) {
+	b, err := json.Marshal(PlatformCapabilities())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		ExplicitAccess []string `json:"explicit_access"`
+	}
+	if err := json.Unmarshal(b, &report); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"shadowsocks", "vless", "trojan", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"} {
+		if !slices.Contains(report.ExplicitAccess, want) {
+			t.Fatalf("explicit_access lacks %q: %v", want, report.ExplicitAccess)
+		}
 	}
 }

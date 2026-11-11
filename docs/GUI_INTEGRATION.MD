@@ -172,10 +172,16 @@ Reply hello (form example, capability values ​​vary by platform):
     "domain_split": true,
     "app_split": false,
     "kill_switch": true,
-    "daemon": true
+    "daemon": true,
+    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"]
   }
 }
 ```
+
+`explicit_access` lists the protocols that `[AccessKey]` accepts as explicit
+`Type = ...` parameters (see [CONF.MD](CONF.MD)); `naive_quic` is `Type = naive`
+with `Network = quic`. Offer a parameter form only for listed protocols. An older
+core omits the field and supports only the first nine entries.
 
 Register feature: status contains State, Attempt, Since, LastError and an optional Session;
 nested Event contains Time, State, Code, Message, Attempt, LastError.
