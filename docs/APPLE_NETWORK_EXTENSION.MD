@@ -74,8 +74,8 @@ The native system extension build appears in
 `dist/apple-system-extension-<arch>/BimeronCore.app`, with `LICENSE`,
 `THIRD_PARTY_NOTICES.txt`, and `UNSIGNED.txt` when it is unsigned.
 For signature, set `TEAM_ID`, `BUNDLE_ID`, `SIGN_IDENTITY`, `HOST_PROFILE`
-and `EXTENSION_PROFILE`. By default bundle ID is `org.bimeron.core.dev`,
-provider - `org.bimeron.core.dev.packet`; when preparing profiles you can
+and `EXTENSION_PROFILE`. By default bundle ID is `com.noob-rp.bimeron`,
+provider - `com.noob-rp.bimeron.packet`; when preparing profiles you can
 select your IDs.
 
 ```sh
