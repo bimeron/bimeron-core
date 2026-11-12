@@ -44,6 +44,8 @@ Each operation has `op` plus these fields:
 | add | index (0 through row count), matcher, value, action, enabled |
 | delete | index |
 | set_field | section, key, value (strings; empty value allowed) |
+| access_to_fields | none; any other member is rejected |
+| access_to_uri | none; any other member is rejected |
 
 Matcher IDs are `CIDR`, `Domain`, `GeoIP`, `GeoSite`; actions are `direct`,
 `proxy`, `block`. CIDR input must already be a prefix; no IP normalization occurs.
@@ -65,6 +67,39 @@ key/section, and quote edited values using Go string quoting. Existing key
 spacing and line endings survive replacement. Adding text may add a separator
 and final newline. Section/key identifiers are case-sensitive. No implicit delete
 or runtime interpretation is performed by set_field.
+
+### Access source conversion
+
+`access_to_fields` replaces a share URI source in `[AccessKey]` (`SS`, `SOCKS5`,
+`HTTP`, `VLESS`, `VMess`, `Trojan`, `Naive`, `Hysteria2`, `AnyTLS`, `TUIC`, `SSH`,
+`MASQUE`, or `Key` holding one of these URIs) with the equivalent explicit
+`Type = ...` options. `access_to_uri` replaces explicit options with the URI
+under the protocol's own source key, for example `Hysteria2 = hysteria2://...`.
+Capabilities report `access_conversion: true` when both operations exist.
+
+- Only the replaced option lines change: the first becomes the new options, in
+  a fixed order, and the others are removed. Comments, other sections, rules,
+  `[ShadowTLS]`, BOM and line endings keep their bytes. `IdentityFile` and
+  `KnownHostsFile` stay as options; SSH file paths from the URI query become
+  these options unless they are already set.
+- Core resolves `[AccessKey]` before and after the change and fails unless both
+  produce an equivalent runtime profile. Only `[AccessKey]` takes part, so
+  routing rules and GeoData files do not need to be valid or present.
+- The conversion is semantic, not byte-identical: `hy2://` becomes
+  `hysteria2://`, percent-encoding and option order may change, defaults may
+  become explicit, and the URI fragment is dropped because `[Profile] Name`
+  holds the name. Separate `XHTTP*` options become one `extra` JSON value, and a
+  URI `extra` becomes `XHTTPExtra`.
+- Values that a bare option line would not preserve, such as values with outer
+  spaces, are written as Go quoted strings.
+- `SSConf`, `File`, a `Key` holding `ssconf://`, profiles without `[AccessKey]`
+  (including IKEv2), and a source already in the requested form fail with
+  `access_conversion_unsupported`. A source Core rejects fails with its usual
+  problem, without a line number. If the converted form would connect
+  differently, the operation fails with `access_conversion_mismatch`.
+- Duplicate `[AccessKey]` sections, duplicate options and options after a
+  disabled rule header are refused as for `set_field`. Problems never contain
+  option values or the input URI.
 
 Response: `version:1`, `profile:string`, `rules:array`, optional `error:string`,
 optional `details:object` and, on failure, `problems:array` of structured problems

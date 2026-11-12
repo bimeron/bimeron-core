@@ -47,6 +47,44 @@ func TestDocumentBridge(t *testing.T) {
 		}
 	}
 }
+func TestDocumentBridgeAccessConversion(t *testing.T) {
+	const profile = "[Profile]\nVersion = 1\n\n[AccessKey]\nHysteria2 = hy2://secret@example.com:443?sni=front.example\n"
+	call := func(profile, ops string) bridgeResponse {
+		t.Helper()
+		p, _ := json.Marshal(profile)
+		var out bytes.Buffer
+		if err := documentBridge(strings.NewReader(`{"version":1,"profile":`+string(p)+`,"operations":`+ops+`}`), &out); err != nil {
+			t.Fatal(err)
+		}
+		var r bridgeResponse
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	r := call(profile, `[{"op":"access_to_fields"}]`)
+	if r.Error != "" || !strings.Contains(*r.Profile, "Type = hysteria2\nServer = example.com\nPort = 443\nPassword = secret\nServerName = front.example\n") {
+		t.Fatalf("to fields: %+v", r)
+	}
+	if !strings.Contains(string(r.Fields), `"AccessKey/Type":"hysteria2"`) {
+		t.Fatalf("fields: %s", r.Fields)
+	}
+	r = call(*r.Profile, `[{"op":"access_to_uri"}]`)
+	if r.Error != "" || *r.Profile != "[Profile]\nVersion = 1\n\n[AccessKey]\nHysteria2 = hysteria2://secret@example.com:443?sni=front.example\n" {
+		t.Fatalf("to uri: %+v", r)
+	}
+	// Unknown members and failed conversions leave the draft unchanged.
+	for _, ops := range []string{`[{"op":"access_to_fields","index":0}]`, `[{"op":"access_to_uri"}]`, `[{"op":"set_field","section":"Profile","key":"Name","value":"x"},{"op":"access_to_uri"}]`} {
+		r = call(profile, ops)
+		if r.Error == "" || *r.Profile != profile {
+			t.Fatalf("%s: %+v", ops, r)
+		}
+	}
+	if r.Problems == nil || len(*r.Problems) != 1 || (*r.Problems)[0].Code != "access_conversion_unsupported" {
+		t.Fatalf("problems: %+v", r.Problems)
+	}
+}
+
 func TestGeoDataBridgeArguments(t *testing.T) {
 	for _, args := range [][]string{nil, {"groups", "geoip", "relative.dat"}, {"groups", "unknown", "/tmp/data"}} {
 		var out bytes.Buffer

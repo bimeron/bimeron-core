@@ -105,6 +105,16 @@
       "en": "The profile has no access key. Add a key or server parameters.",
       "ru": "В профиле нет ключа доступа. Добавьте ключ или параметры сервера."
     },
+    "access_conversion_unsupported": {
+      "kind": "config",
+      "en": "This access key cannot be converted. Only a single link or a set of server parameters converts; SSConf subscriptions and key files do not.",
+      "ru": "Этот ключ доступа нельзя преобразовать. Преобразуется только одна ссылка или набор параметров сервера; подписки SSConf и файлы ключей не преобразуются."
+    },
+    "access_conversion_mismatch": {
+      "kind": "config",
+      "en": "The converted access key would connect differently, so the profile was left unchanged.",
+      "ru": "Преобразованный ключ доступа подключался бы иначе, поэтому профиль оставлен без изменений."
+    },
     "access_key_multiple_sources": {
       "kind": "config",
       "en": "The profile has more than one access key. Keep only one key or one set of server parameters.",
