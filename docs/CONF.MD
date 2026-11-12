@@ -306,7 +306,37 @@ See [VMess transport matrix](VMESS_TRANSPORTS.MD).
 The account must use AEAD (`aid=0`). TCP and UDP are supported in VPN mode;
 the local SOCKS5 listener accepts TCP only. Legacy alter IDs, plaintext
 transport, `scy=zero`, other networks, and unknown JSON fields are rejected.
-VMess has no explicit parameter form in this release.
+
+An explicit profile uses the VLESS option names:
+
+```ini
+[AccessKey]
+Type = vmess
+Server = server.example.com
+Port = 443
+ID = 123e4567-e89b-12d3-a456-426614174000
+Encryption = auto
+Network = ws
+Security = tls
+WSPath = /vmess
+WSHost = server.example.com
+```
+
+| Option | Link field | Notes |
+|---|---|---|
+| `ID` | `id` | Required UUID. |
+| `Encryption` | `scy` | `auto` (default), `aes-128-gcm`, or `chacha20-poly1305`. |
+| `Network` | `net` | `tcp` (default), `ws`, `httpupgrade`, `grpc`, or `xhttp`. |
+| `Security` | `tls` | Required: `tls` or `reality`. |
+| `ServerName`, `ALPN`, `Fingerprint` | `sni`, `alpn`, `fp` | Optional; `ServerName` defaults to `Server`. |
+| `WSPath`, `WSHost` | `path`, `host` | `ws` and `httpupgrade`; the path defaults to `/`. |
+| `GRPCServiceName`, `GRPCAuthority`, `GRPCMultiMode` | `path`, `host`, `mode=multi` | `grpc`. |
+| `XHTTPPath`, `XHTTPHost`, `XHTTPMode`, `XHTTPExtra` or separate `XHTTP` fields | `path`, `host`, `mode`, `extra` | `xhttp`; the path defaults to `/` and the mode to `auto`. |
+| `PublicKey`, `ShortID`, `SpiderX` | `pbk`, `sid`, `spx` | `reality`. |
+
+The explicit form accepts exactly the combinations that the link accepts and
+produces the same connection. `Flow`, `WSEarlyData`, `Username`, `Password`,
+`Method`, and `Prefix` are rejected.
 
 ### Trojan over TCP, WebSocket, and gRPC with TLS
 
@@ -374,9 +404,11 @@ The client supports TCP streams and UDP-over-TCP version 2 in VPN mode. Proxy
 mode exposes TCP CONNECT through the local SOCKS5 listener. TLS sessions are
 reused after streams finish, and the server may update the padding scheme for
 new sessions. UDP uses TCP congestion control and can suffer head-of-line
-blocking. Custom TLS fingerprints, ALPN, and explicit server parameters are
-not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
+blocking. Custom TLS fingerprints and ALPN are not supported. AnyTLS FIN closes the entire logical stream, so TCP half-close
 is unavailable; `CloseRead` and `CloseWrite` close the stream.
+
+An explicit profile uses `Type = anytls`, `Server`, `Port`, and `Password`;
+`ServerName` is optional and defaults to `Server`. Other options are rejected.
 
 ### NaiveProxy-compatible HTTP/2 and HTTP/3 CONNECT
 
@@ -400,8 +432,9 @@ options are rejected. The server must support CONNECT over the selected
 HTTP version and Basic proxy authentication.
 
 An explicit profile uses `Type = naive`, `Server`, `Port`, `Username`, and
-`Password`; `ServerName` is optional. This explicit form selects HTTP/2;
-use a `naive+quic://` URI for HTTP/3, or set `Profile.Naive.QUIC` in the Go API. See
+`Password`; `ServerName` is optional. This explicit form selects HTTP/2.
+Add `Network = quic` to select HTTP/3, matching a `naive+quic://` URI; no other
+`Network` value or transport option is accepted. See
 [`examples/naive.conf`](../examples/naive.conf).
 
 The client requests Naive padding and uses it only when the server returns a
@@ -466,6 +499,10 @@ Unknown or duplicate query options, obfuscation, and bandwidth options are
 rejected. The server must allow UDP relay. In VPN mode, both TCP and UDP
 traffic use the Hysteria2 QUIC connection. Proxy mode exposes TCP CONNECT.
 
+An explicit profile uses `Type = hysteria2`, `Server`, `Port`, and `Password`.
+`ServerName` (`sni`, defaults to `Server`), `ALPN` (`h3` only), and
+`Fingerprint` (the `fp` values above) are optional. Other options are rejected.
+
 ### TUIC v5 over QUIC
 
 Use a complete URI as the sole `[AccessKey]` source:
@@ -480,9 +517,13 @@ percent-encode reserved password characters. `sni` defaults to the server
 hostname, and `alpn` defaults to `h3`. TLS verifies the certificate and SNI.
 The only supported UDP relay mode is `quic`, which sends each packet in a
 QUIC unidirectional stream. `udp_relay_mode=quic` may be omitted. Native
-QUIC datagram mode, insecure certificates, 0-RTT, explicit TUIC parameters,
-and other URI options are rejected. The local SOCKS5 listener supports TCP
-CONNECT only. See [`examples/tuic.conf`](../examples/tuic.conf).
+QUIC datagram mode, insecure certificates, 0-RTT, and other URI options are
+rejected. The local SOCKS5 listener supports TCP CONNECT only. See
+[`examples/tuic.conf`](../examples/tuic.conf).
+
+An explicit profile uses `Type = tuic`, `Server`, `Port`, `ID` (UUID), and
+`Password`. `ServerName` (defaults to `Server`) and `ALPN` (defaults to `h3`)
+are optional. Other options are rejected.
 
 ### Compatibility: Key
 

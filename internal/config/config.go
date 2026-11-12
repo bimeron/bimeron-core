@@ -925,6 +925,14 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 			c.profile = &accesskey.Profile{Name: c.Name, Type: "trojan", TCP: e, UDP: e, Trojan: t}
 			return c, nil
 		}
+		if build := explicitTypes[c.Access.Type]; build != nil {
+			profile, err := build(c, s)
+			if err != nil {
+				return nil, err
+			}
+			c.profile = profile
+			return c, nil
+		}
 		if c.Access.Type == "naive" {
 			const message = "[AccessKey] invalid NaiveProxy parameters"
 			if c.Access.Username == "" {
@@ -933,14 +941,18 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 			if s.Password == "" {
 				return nil, problem.New("value_required", message).In("AccessKey").On("Password", "")
 			}
-			if s.Method != "" || s.Prefix != "" || c.Access.VLESSParameters != nil {
-				return nil, c.unsupported("NaiveProxy", message, append([]string{"Method", "Prefix"}, vlessFields...)...)
+			if s.Method != "" || s.Prefix != "" {
+				return nil, c.unsupported("NaiveProxy", message, "Method", "Prefix")
+			}
+			quic, err := c.explicitNaiveQUIC(message)
+			if err != nil {
+				return nil, err
 			}
 			name := c.Access.ServerName
 			if name == "" {
 				name = s.Server
 			}
-			n := accesskey.Naive{User: c.Access.Username, Password: s.Password, ServerName: name}
+			n := accesskey.Naive{User: c.Access.Username, Password: s.Password, ServerName: name, QUIC: quic}
 			if err := n.Validate(s.Server, s.Port); err != nil {
 				return nil, accessProblem(err)
 			}
@@ -1014,7 +1026,7 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 			return c, nil
 		}
 		if c.Access.Type != "shadowsocks" && c.Access.Type != "ss" {
-			return nil, problem.New("choice_invalid", "[AccessKey] unsupported Type").In("AccessKey").At("Type").Arg("allowed", "shadowsocks, socks5, http, https, vless, trojan, naive, ssh, masque")
+			return nil, problem.New("choice_invalid", "[AccessKey] unsupported Type").In("AccessKey").At("Type").Arg("allowed", "shadowsocks, socks5, http, https, vless, trojan, naive, ssh, masque, hysteria2, tuic, anytls, vmess")
 		}
 		if c.Access.Username != "" {
 			return nil, problem.New("option_not_supported", "[AccessKey] Username is only valid for socks5, http, or https").In("AccessKey").At("Username").Arg("type", "Shadowsocks")

@@ -239,7 +239,7 @@ func Version() string {
 // unsupported standalone Android platform backend reported by core.New.
 func Capabilities() string {
 	c := core.PlatformCapabilities()
-	c = core.Capabilities{Platform: "android", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema}
+	c = core.Capabilities{Platform: "android", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema, ExplicitAccess: c.ExplicitAccess}
 	b, _ := json.Marshal(c)
 	return string(b)
 }
