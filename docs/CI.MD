@@ -79,7 +79,8 @@ allocation assertion. The ordinary unit run still requires this test to pass.
 
 The `cli-dist` job builds all six Windows, Linux, and macOS CLI directories,
 including the verified Wintun DLL and license in each Windows directory. It
-runs `scripts/check-dist.go` and uploads `cli-dist` for 14 days. The
+runs `scripts/check-dist.go`, which also checks the icon and VERSIONINFO of
+both Windows executables, and uploads `cli-dist` for 14 days. The
 `android-dist` job builds the four-ABI Android AAR, checks its contents and
 licenses, and uploads `android-dist` for 14 days. These workflow artifacts
 are build outputs, not GitHub Releases. Apple NetworkExtension is excluded.
