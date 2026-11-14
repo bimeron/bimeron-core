@@ -197,11 +197,20 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		hostFile = filepath.Join(home, ".ssh", "known_hosts")
 	}
 	var verify ssh.HostKeyCallback
+	// order chooses the host-key algorithms. In file-only mode it is a
+	// verifier without app-owned keys and without prompts, used only for
+	// algorithms: verification stays with verify.
+	order := policy
 	if policy == nil {
-		trace("read", hostFile)
+		data, err := readFile(hostFile)
+		if err != nil {
+			return nil, fmt.Errorf("SSH known_hosts unavailable")
+		}
 		if verify, err = knownhosts.New(hostFile); err != nil {
 			return nil, fmt.Errorf("SSH known_hosts unavailable")
 		}
+		order = &verifier{keys: &HostKeys{}, file: verify}
+		order.ca, _ = inspectHosts(data)
 	}
 	identity, err := expand(p.SSH.IdentityFile, o.ProfileOnly)
 	if err != nil {
@@ -295,9 +304,8 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 				hostKeyFailed.Store(true)
 			}
 			return err
-		}}
-	if policy != nil {
-		config.HostKeyAlgorithms = policy.algorithms(address, conn.RemoteAddr())
+		},
+		HostKeyAlgorithms: order.algorithms(address, conn.RemoteAddr()),
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
 	stop()

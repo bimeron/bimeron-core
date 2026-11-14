@@ -136,6 +136,14 @@ compare its fingerprint with the trusted value before using it. A changed key
 causes connection failure until investigated and corrected. Do not remove an
 old entry solely to silence that failure.
 
+During negotiation Bimeron first asks the server for the host key types
+recorded for it in `known_hosts`, like OpenSSH. An `ssh-ed25519` entry
+therefore works even when the server also offers ECDSA, which the SSH library
+would otherwise prefer. The remaining types follow in the order Ed25519,
+ECDSA, RSA, then certificates; the insecure `ssh-dss` type is not offered.
+When the file contains an `@cert-authority` line, the library's default order
+is used instead. Verification itself does not change.
+
 The embedded Android Session can opt in to OpenSSH-style `accept-new` (ADR
 0037, `docs/android-ssh-auth.md`). An unknown host is then shown to the user as
 a fingerprint offer, and the app stores accepted keys itself. A changed key is
