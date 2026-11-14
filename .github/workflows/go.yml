@@ -43,6 +43,10 @@ jobs:
           echo "BIMERON_MASQUE_REFERENCE_BIN=$RUNNER_TEMP/masque-reference" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: go vet ./...
+      - name: Check protocol lifecycle races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 ./internal/proxy ./internal/hysteria2 ./internal/tuic
       - name: Check Android SSH authentication races
         env:
           CGO_ENABLED: '1'
@@ -201,6 +205,10 @@ jobs:
       # visible: serialization does not diagnose stalls before script entry.
       - run: go test -p 1 -v ./...
       - run: go vet ./...
+      - name: Check protocol lifecycle races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 ./internal/proxy ./internal/hysteria2 ./internal/tuic
       - name: Check Android SSH authentication races
         env:
           CGO_ENABLED: '1'
