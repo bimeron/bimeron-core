@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bimeron/release"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -25,13 +26,7 @@ func TestRepairAcquisitionSignatureAndArchive(t *testing.T) {
 	h := sha256.Sum256(b.Bytes())
 	kh := sha256.Sum256(pub)
 	m := repairManifest{Schema: 1, KeyID: hex.EncodeToString(kh[:8]), Tag: "v0.2.0-beta.1", Version: "0.2.0-beta.1", Channel: "beta"}
-	m.Compatibility.Schema = 1
-	m.Compatibility.Reviewed = true
-	m.Compatibility.Min = "0.2.0"
-	m.Compatibility.Max = "0.2.1"
-	m.Compatibility.IPCMin = 1
-	m.Compatibility.IPCMax = 1
-	m.Compatibility.Profile = 1
+	m.Compatibility = repairCompatibilityFromSource(t)
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			m.Archives = append(m.Archives, repairArchive{platform, arch, "bimeron-v0.2.0-beta.1-" + platform + "-" + arch + ".zip", int64(b.Len()), hex.EncodeToString(h[:])})
@@ -69,6 +64,21 @@ func TestRepairAcquisitionSignatureAndArchive(t *testing.T) {
 	if _, err = verifyRepairManifest(data, sig, pub, m.Version, "windows", "amd64"); err == nil {
 		t.Fatal("accepted bad signature")
 	}
+}
+
+// Read the publisher's source file independently of the embedded accessor so
+// the signed acceptance fixtures detect drift between publication and repair.
+func repairCompatibilityFromSource(t *testing.T) release.Compatibility {
+	t.Helper()
+	data, err := os.ReadFile("../../release/compatibility.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c release.Compatibility
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 func TestRepairDownloadPolicy(t *testing.T) {
 	for _, s := range []string{"http://github.com/a", "https://evil.example/a", "https://github.com:443/a", "https://user@github.com/a", "https://github.com.evil/a"} {
