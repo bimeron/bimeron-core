@@ -187,6 +187,7 @@ func TestIKEAuthConcurrentRetirement(t *testing.T) {
 }
 func TestIKESecretsDiagnostics(t *testing.T) {
 	secret := ikeSecrets{[]byte("private-sentinel"), []byte("private-sentinel")}
+	//lint:ignore SA9005 asserts secrets never serialize.
 	data, _ := json.Marshal(secret)
 	for _, v := range []string{fmt.Sprintf("%v", secret), fmt.Sprintf("%+v", secret), fmt.Sprintf("%#v", secret), string(data)} {
 		if strings.Contains(v, "private-sentinel") {

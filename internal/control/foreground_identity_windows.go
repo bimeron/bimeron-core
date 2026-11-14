@@ -285,10 +285,6 @@ func foregroundPipe(sid string, session uint32) string {
 	return fmt.Sprintf(`\\.\pipe\Bimeron.Core.IKEv2.%x.%d`, sum[:16], session)
 }
 
-func pipePeer(c net.Conn, server bool) (ProcessIdentity, func(), error) {
-	return expectedPipePeer(c, server, nil)
-}
-
 func expectedPipePeer(c net.Conn, server bool, expected *ProcessIdentity) (ProcessIdentity, func(), error) {
 	fd, ok := c.(interface{ Fd() uintptr })
 	if !ok {

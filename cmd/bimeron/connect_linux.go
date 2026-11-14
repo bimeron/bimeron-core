@@ -3,10 +3,10 @@
 package main
 
 import (
+	"bimeron/internal/linuxnet"
 	"context"
 	"flag"
 	"fmt"
-	"bimeron/internal/linuxnet"
 	"time"
 )
 

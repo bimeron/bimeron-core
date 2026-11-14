@@ -90,6 +90,7 @@ func readProfileRecord(path string) (*profileRecord, error) {
 	return &record, nil
 }
 
+//lint:ignore U1000 used by the Windows profile implementation.
 func newProfilePlan(cfg Config) ProfilePlan {
 	return ProfilePlan{Action: "create", WindowsProfile: cfg.WindowsProfile, ServerName: cfg.ServerName,
 		Authentication: "IKEv2 only; EAP-MSCHAPv2; no automatic redial",

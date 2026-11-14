@@ -8,6 +8,10 @@ transport construction: Firefox uses a 3-byte source connection ID and enables
 the QUIC fork's fixed-bit/large-receive handling. Authentication, congestion
 control, stream framing, and UDP relay/fragmentation remain upstream code.
 
+The generated `client/mock_udpIO.go` is renamed to `client/mock_udpIO_test.go`
+(and `client/.mockery.yaml` sets the matching `filename`) so testify stays out
+of the non-test client package and therefore out of release binaries.
+
 This module replaces apernet/quic-go with the adjacent local snapshot and pins
 uTLS to the root project's version so standalone tests use the intended code.
 Run `go test ./client ./server` here. The independent fixture under
