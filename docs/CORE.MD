@@ -195,6 +195,8 @@ the Windows VPN process must still run with administrator privileges.
 | `hysteria2_auth_rejected` | The server rejected authentication. |
 | `hysteria2_udp_disabled` | The server accepted the connection but disabled UDP relay. |
 | `hysteria2_unknown` | Connection setup failed without a safely identifiable cause. |
+| `ssh_network_failed` | The SSH server was unreachable: timeout, refused or reset connection, unreachable route, or DNS failure. Retryable. |
+| `ssh_connection_failed` | SSH host-key verification, authentication, or transport setup failed. Terminal. Sessions that opt in to accept-new or run profile-only report `ssh_host_key_*` and `ssh_known_hosts_missing` instead (see `docs/android-ssh-auth.md`). |
 | `tcp_dial_failed`, `tcp_read_failed`, `dns_failed` | An individual flow failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |

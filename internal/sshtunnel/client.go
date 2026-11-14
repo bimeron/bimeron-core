@@ -48,6 +48,12 @@ func (c streamConn) CloseWrite() error { return c.closeWrite() }
 
 var _ transport.StreamDialer = (*Client)(nil)
 
+// ErrNetwork marks connection failures caused by the network path to the
+// server: timeouts, refused or reset connections, unreachable routes, and DNS
+// errors. Authentication, host-key, and configuration failures never match it,
+// so callers may retry exactly the errors for which errors.Is reports true.
+var ErrNetwork = errors.New("SSH server unavailable")
+
 // fileTrace observes filesystem access for tests; see SetFileTrace.
 var fileTrace atomic.Pointer[func(op, path string)]
 
@@ -91,6 +97,9 @@ func expand(path string, profileOnly bool) (string, error) {
 		home, err := userHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("SSH home directory unavailable")
+		}
+		if path == "~" {
+			return home, nil
 		}
 		return filepath.Join(home, path[2:]), nil
 	}
@@ -188,11 +197,20 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		hostFile = filepath.Join(home, ".ssh", "known_hosts")
 	}
 	var verify ssh.HostKeyCallback
+	// order chooses the host-key algorithms. In file-only mode it is a
+	// verifier without app-owned keys and without prompts, used only for
+	// algorithms: verification stays with verify.
+	order := policy
 	if policy == nil {
-		trace("read", hostFile)
+		data, err := readFile(hostFile)
+		if err != nil {
+			return nil, fmt.Errorf("SSH known_hosts unavailable")
+		}
 		if verify, err = knownhosts.New(hostFile); err != nil {
 			return nil, fmt.Errorf("SSH known_hosts unavailable")
 		}
+		order = &verifier{keys: &HostKeys{}, file: verify}
+		order.ca, _ = inspectHosts(data)
 	}
 	identity, err := expand(p.SSH.IdentityFile, o.ProfileOnly)
 	if err != nil {
@@ -267,14 +285,27 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		if agentConn != nil {
 			agentConn.Close()
 		}
-		return nil, fmt.Errorf("SSH server unavailable")
+		if a.network(err) {
+			return nil, ErrNetwork
+		}
+		return nil, fmt.Errorf("SSH server transport failed")
 	}
 	stop := context.AfterFunc(dialCtx, func() { _ = conn.Close() })
-	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, HostKeyCallback: verify, Timeout: 20 * time.Second}
+	callback := verify
 	if policy != nil {
 		policy.ctx, policy.prompt = ctx, prompt
-		config.HostKeyCallback = policy.check
-		config.HostKeyAlgorithms = policy.algorithms(address, conn.RemoteAddr())
+		callback = policy.check
+	}
+	var hostKeyFailed atomic.Bool
+	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, Timeout: 20 * time.Second,
+		HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
+			err := callback(host, remote, key)
+			if err != nil {
+				hostKeyFailed.Store(true)
+			}
+			return err
+		},
+		HostKeyAlgorithms: order.algorithms(address, conn.RemoteAddr()),
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
 	stop()
@@ -287,6 +318,11 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 			if e := policy.result(); e != nil {
 				return nil, e
 			}
+		}
+		// A rejected host key is never a network failure, even if the
+		// deadline passed while the connection was being torn down.
+		if !hostKeyFailed.Load() && a.network(err) {
+			return nil, ErrNetwork
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}

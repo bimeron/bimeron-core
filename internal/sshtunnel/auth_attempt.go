@@ -20,17 +20,21 @@ var promptTimeout = 60 * time.Second
 
 type attempt struct {
 	mu        sync.Mutex
+	parent    context.Context
 	ctx       context.Context
 	cancel    context.CancelFunc
 	timer     *time.Timer
 	remaining time.Duration
 	started   time.Time
 	rounds    int
+	// expired records that the network budget ran out; aborted records that
+	// local interaction failed. Both cancel ctx but classify differently.
+	expired, aborted bool
 }
 
 func newAttempt(ctx context.Context) *attempt {
-	ctx, cancel := context.WithCancel(ctx)
-	return &attempt{ctx: ctx, cancel: cancel, remaining: 20 * time.Second}
+	child, cancel := context.WithCancel(ctx)
+	return &attempt{parent: ctx, ctx: child, cancel: cancel, remaining: 20 * time.Second}
 }
 func (a *attempt) resume() {
 	a.mu.Lock()
@@ -39,20 +43,52 @@ func (a *attempt) resume() {
 		return
 	}
 	a.started = time.Now()
-	a.timer = time.AfterFunc(a.remaining, a.cancel)
+	a.timer = time.AfterFunc(a.remaining, a.expire)
+}
+func (a *attempt) expire() {
+	a.mu.Lock()
+	a.expired = true
+	a.mu.Unlock()
+	a.cancel()
+}
+func (a *attempt) abort() {
+	a.mu.Lock()
+	a.aborted = true
+	a.mu.Unlock()
+	a.cancel()
+}
+
+// network reports whether err came from the network path to the server
+// rather than from local interaction, authentication, or caller cancellation.
+func (a *attempt) network(err error) bool {
+	a.mu.Lock()
+	expired, aborted := a.expired, a.aborted
+	a.mu.Unlock()
+	switch {
+	case expired:
+		return true
+	case aborted || errors.Is(a.parent.Err(), context.Canceled):
+		return false
+	case errors.Is(a.parent.Err(), context.DeadlineExceeded):
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded)
 }
 func (a *attempt) prompt(p Prompt) Prompt {
 	return func(_ context.Context, c Challenge) ([]string, error) {
 		a.mu.Lock()
 		if a.ctx.Err() != nil || a.rounds >= 8 {
 			a.mu.Unlock()
-			a.cancel()
+			a.abort()
 			return nil, errors.New("SSH authentication unavailable")
 		}
 		a.rounds++
 		active := a.timer != nil
 		if active {
 			if !a.timer.Stop() {
+				// The budget timer already fired; expire may not have run yet.
+				a.expired = true
 				a.mu.Unlock()
 				a.cancel()
 				return nil, errors.New("SSH authentication unavailable")
@@ -65,7 +101,7 @@ func (a *attempt) prompt(p Prompt) Prompt {
 		answers, err := p(ctx, c)
 		cancel()
 		if err != nil {
-			a.cancel()
+			a.abort()
 			if errors.Is(err, ErrHostKeyDeclined) {
 				return nil, ErrHostKeyDeclined
 			}

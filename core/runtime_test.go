@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/hysteria2"
+	"bimeron/internal/sshtunnel"
 )
 
 func TestUnavailableKeyStopsWithoutRetry(t *testing.T) {
@@ -274,6 +276,32 @@ func TestHysteria2FailureContractBothModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSSHFailureRetryability(t *testing.T) {
+	hostKey := &sshtunnel.HostKeyError{Code: sshtunnel.HostKeyMismatch}
+	for _, c := range []SessionConfig{{}, {SSHProfileOnly: true}} {
+		// Host-key codes are exposed only to profile-only or opted-in sessions.
+		hostKeyCode := "ssh_connection_failed"
+		if c.SSHProfileOnly {
+			hostKeyCode = sshtunnel.HostKeyMismatch
+		}
+		for _, tc := range []struct {
+			err   error
+			code  string
+			retry bool
+		}{
+			{sshtunnel.ErrNetwork, "ssh_network_failed", true},
+			{fmt.Errorf("wrapped: %w", sshtunnel.ErrNetwork), "ssh_network_failed", true},
+			{errors.New("SSH handshake or host-key verification failed"), "ssh_connection_failed", false},
+			{errors.New("SSH authentication method unavailable"), "ssh_connection_failed", false},
+			{hostKey, hostKeyCode, false},
+		} {
+			if err := sshFault(tc.err, c); err.Error() != tc.code || retryable(err) != tc.retry {
+				t.Fatalf("profileOnly=%v %v: %v retry=%v", c.SSHProfileOnly, tc.err, err, retryable(err))
+			}
+		}
 	}
 }
 
