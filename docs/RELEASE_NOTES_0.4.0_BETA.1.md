@@ -1,8 +1,8 @@
 # Bimeron Core v0.4.0-beta.1
 
-**Draft — reviewed on 2026-11-14.** Finalize after the pending changes merge and the release candidate is validated. This document does not announce a published release.
+**Release notes — reviewed on 2026-11-14.** GUI compatibility and release-candidate validation remain release gates. This document does not announce a published release.
 
-The reviewed source range is `abd705b6..46a21da7` on master. `abd705b6` is the master equivalent of the previous release, v0.3.0-beta.2; its tag points to `66d84d8f`, outside master history.
+The reviewed source range is `abd705b6..7f9e3087` on master. `abd705b6` is the master equivalent of the previous release, v0.3.0-beta.2; its tag points to `66d84d8f`, outside master history.
 
 For package capabilities, see the [README at the planned release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.1/README.md). This future link must be verified during finalization.
 
@@ -35,6 +35,17 @@ For package capabilities, see the [README at the planned release tag](https://gi
 - Offline native enrollment primitives, reader and proof harness remain disabled and do not establish native acceptance ([#74](https://github.com/bimeron/bimeron-core/pull/74), [#75](https://github.com/bimeron/bimeron-core/pull/75), [#76](https://github.com/bimeron/bimeron-core/pull/76), [#77](https://github.com/bimeron/bimeron-core/pull/77), [#78](https://github.com/bimeron/bimeron-core/pull/78)).
 - SSH lifecycle evidence and Windows fixture improvements ([#87](https://github.com/bimeron/bimeron-core/pull/87)), Android NDK debug-path normalization ([#107](https://github.com/bimeron/bimeron-core/pull/107)), validation-only socket/goroutine regression coverage ([#108](https://github.com/bimeron/bimeron-core/pull/108)), and host-key documentation reference cleanup ([#110](https://github.com/bimeron/bimeron-core/pull/110)). These changes do not establish installed-package or live VPN acceptance for this candidate.
 
+### Platform, protocol and lifecycle fixes
+
+- Windows PowerShell output is decoded as UTF-8, preserving Unicode adapter names and localized diagnostics ([#123](https://github.com/bimeron/bimeron-core/pull/123)).
+- SSH fixes the bare `~` path panic, reports retryable network failures as `ssh_network_failed`, and prefers host key types from `known_hosts` in file-only mode. File-only mode no longer offers `ssh-dss`; each network retry re-prompts for interactive input such as passphrases ([#124](https://github.com/bimeron/bimeron-core/pull/124)).
+- Distribution Windows executables embed the Bimeron icon and VERSIONINFO; Apple builds include the icon in `BimeronCore.app` and its extension. Windows `build-dist` now requires a SemVer version. Plain `go build` does not embed Windows resources ([#125](https://github.com/bimeron/bimeron-core/pull/125)).
+- CLI/service lifecycle adds signal cleanup, resumable Windows uninstall, leftover-tolerant install and Wintun digest pinning. `watch` survives daemon restarts after its first connection; help exits 0 (the existing `errors -h` exception remains) ([#126](https://github.com/bimeron/bimeron-core/pull/126)).
+- Linux supports kernels booted with `ipv6.disable=1`, preserves retained kill switches on setup rollback and skips IPv6 direct throw routes when IPv6 is disabled. Leading-dot domain rules match the base domain and its subdomains consistently in the runtime and document editor ([#127](https://github.com/bimeron/bimeron-core/pull/127)).
+- Protocol fixes deliver UDP domain replies, honor Hysteria2 dial cancellation with sanitized `hysteria2_dial_rejected` errors, and fix TUIC cancellation races and buffered delivery. Linux and Windows lifecycle race checks were added; abandoned upstream Hysteria2 calls remain bounded by the QUIC connection lifetime ([#128](https://github.com/bimeron/bimeron-core/pull/128)). The rejection's Russian locale text is corrected ([#131](https://github.com/bimeron/bimeron-core/pull/131)).
+- Native enrollment permits outsider subdirectory-creation rights only at the held volume root while retaining strict descendant checks. Native proof remains unexecuted, enrollment remains disabled, and [issue #73](https://github.com/bimeron/bimeron-core/issues/73) stays open ([#79](https://github.com/bimeron/bimeron-core/pull/79)).
+- CI adds a lint job, pinned actions, job timeouts, checkout hardening and CLI artifact source-SHA verification, while preserving lifecycle race coverage ([#130](https://github.com/bimeron/bimeron-core/pull/130)).
+
 ## Experimental IKEv2 and known limitations
 
 Native Windows IKEv2 integration is merged ([#103](https://github.com/bimeron/bimeron-core/pull/103)) but remains experimental. It uses foreground execution and a current-user profile; daemon, proxy, split-routing and statistics support are unavailable. Offline authentication/failure/maintenance models are not production lifecycle support.
@@ -45,20 +56,15 @@ Windows 11, RRAS interoperability, physical network transitions, sleep/resume an
 
 IPC remains version **1** and profile format remains version **1**. New capabilities, document operations and structured errors require client integration review even though these version numbers are unchanged. Clients should check capabilities such as `daemon_session_guards`, `session_bound_stats`, `explicit_access` and `access_conversion` before using optional operations.
 
-**GUI version range and Desktop update channel: OPEN.** Await the Desktop compatibility investigation and actual candidate validation. The existing `release/compatibility.json` records GUI `[0.2.0, 0.2.1)`, `gui_reviewed: true`, IPC 1 and profile format 1. Those are existing values, not approval for this release; this draft does not change that file.
+**GUI compatibility range: to be finalized before tagging**
 
-## Pending — not included in the reviewed master
+## Upgrade notes / Desktop
 
-Retain these items until finalization, even if they merge while this draft is being prepared. Recheck their final commits and outcomes before moving them into the merged section.
+Published Desktop 0.2.0 and Desktop main at 516ea4b both pin Core v0.3.0-beta.2. The next Desktop release, 0.3.0, will bundle this Core release and needs the updated Core pin to deliver the new features. Current Desktop main already uses the configuration document API, `explicit_access` (#115) and `access_conversion` (#116).
 
-- Core icon ([issue #111](https://github.com/bimeron/bimeron-core/issues/111)).
-- Native enrollment volume-root rights ([PR #79](https://github.com/bimeron/bimeron-core/pull/79)).
-- SSH robustness: bare `~` panic and network retries.
-- Protocol lifecycle: UDP domain replies, Hysteria2 dial cancellation and TUIC races.
-- Linux network guards: `ipv6.disable=1`, kill-switch rollback and leading-dot domain rules.
-- CLI/service lifecycle: resumable Windows uninstall, Wintun digest pinning and watch across daemon restarts.
-- Windows PowerShell UTF-8 output.
-- CI hygiene.
+Desktop offers beta Core updates only when the user enables **Include beta core updates** for the current session. A service update alone does not replace the bundled CLI.
+
+The GUI compatibility range will be decided in `release/compatibility.json` together with the Desktop 0.3.0 release decisions; this document does not change that file. Versioning policy is postponed.
 
 ## Planned packages and verification
 
@@ -66,4 +72,4 @@ Confirm the final asset inventory during finalization. The expected layout follo
 
 Verify archives with `SHA256SUMS`. Windows/Linux service update clients can verify `update-manifest.json` with `update-manifest.json.sig` and a separately trusted Ed25519 public key. The service manifest covers Windows/Linux amd64 and arm64, not macOS or Android. Apple metadata preparation does not imply an approved Apple release.
 
-Before publication, reconcile pending changes, resolve GUI compatibility and the Desktop channel, validate the final candidate and signed assets, and verify the tag-specific README link. No new candidate tests, benchmarks or CI results are claimed by this documentation-only draft.
+Before publication, resolve GUI compatibility, validate the final candidate and signed assets, and verify the tag-specific README link. No new candidate tests, benchmarks or CI results are claimed by this documentation-only draft.
