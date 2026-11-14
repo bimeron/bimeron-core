@@ -35,21 +35,35 @@ func parseUpdateExpectation(args []string) (updateExpectation, error) {
 	return updateExpectation{*source, *version, strings.ToLower(*digest)}, nil
 }
 
-func verifyUpdateFile(path, want string) error {
+var errNotRegularFile = errors.New("not a regular file")
+
+// regularFileSHA256 returns the hex SHA-256 digest of a regular file.
+func regularFileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("update is not a regular file")
+		return "", errNotRegularFile
 	}
 	h := sha256.New()
 	if _, err = io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func verifyUpdateFile(path, want string) error {
+	got, err := regularFileSHA256(path)
+	if errors.Is(err, errNotRegularFile) {
+		return fmt.Errorf("update is not a regular file")
+	}
+	if err != nil {
 		return err
 	}
-	if hex.EncodeToString(h.Sum(nil)) != want {
+	if got != want {
 		return fmt.Errorf("staged executable SHA-256 mismatch")
 	}
 	return nil
