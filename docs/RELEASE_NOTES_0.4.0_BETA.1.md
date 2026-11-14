@@ -60,6 +60,11 @@ IPC remains version **1** and profile format remains version **1**. New capabili
 
 ## Upgrade notes / Desktop
 
+The repair broker embeds the reviewed compatibility policy from
+`release/compatibility.json`, so signed acquisition of its own release accepts
+the same exact GUI window as the publisher. This fixes rejection of the 0.3.0
+window by the previous hardcoded 0.2.0 repair policy.
+
 Published Desktop 0.2.0 and Desktop main at 516ea4b both pin Core v0.3.0-beta.2. The next Desktop release, 0.3.0, will bundle this Core release and needs the updated Core pin to deliver the new features. Current Desktop main already uses the configuration document API, `explicit_access` (#115) and `access_conversion` (#116).
 
 Desktop offers beta Core updates only when the user enables **Include beta core updates** for the current session. A service update alone does not replace the bundled CLI.

@@ -21,14 +21,7 @@ func TestRepairAcquisitionSignedPolicyNegatives(t *testing.T) {
 	pub := priv.Public().(ed25519.PublicKey)
 	kh := sha256.Sum256(pub)
 	base := repairManifest{Schema: 1, KeyID: hex.EncodeToString(kh[:8]), Tag: "v0.2.0", Version: "0.2.0", Channel: "stable"}
-	c := &base.Compatibility
-	c.Schema = 1
-	c.Reviewed = true
-	c.Min = "0.2.0"
-	c.Max = "0.2.1"
-	c.IPCMin = 1
-	c.IPCMax = 1
-	c.Profile = 1
+	base.Compatibility = repairCompatibilityFromSource(t)
 	for _, p := range []string{"windows", "linux"} {
 		for _, a := range []string{"amd64", "arm64"} {
 			base.Archives = append(base.Archives, repairArchive{p, a, "bimeron-v0.2.0-" + p + "-" + a + ".zip", 1, hex.EncodeToString(make([]byte, 32))})
@@ -47,18 +40,41 @@ func TestRepairAcquisitionSignedPolicyNegatives(t *testing.T) {
 	if e := verify(base, pub); e != nil {
 		t.Fatal(e)
 	}
+	for _, tc := range []struct {
+		name, min, max string
+		accept         bool
+	}{
+		{"current release", "0.3.0", "0.3.1", true},
+		{"previous release", "0.2.0", "0.2.1", false},
+		{"wider upper", "0.3.0", "0.4.0", false},
+		{"wider lower", "0.2.0", "0.3.1", false},
+		{"narrower upper", "0.3.0", "0.3.1-beta.1", false},
+		{"narrower lower", "0.3.1-beta.1", "0.3.1", false},
+		{"other window", "0.4.0", "0.4.1", false},
+		{"empty window", "0.3.0", "0.3.0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := base
+			m.Compatibility.Min, m.Compatibility.Max = tc.min, tc.max
+			if err := verify(m, pub); (err == nil) != tc.accept {
+				t.Fatalf("window [%s, %s): error=%v, want acceptance=%v", tc.min, tc.max, err, tc.accept)
+			}
+		})
+	}
 	cases := map[string]func(*repairManifest){
-		"key ID":        func(m *repairManifest) { m.KeyID = "0000000000000000" },
-		"version":       func(m *repairManifest) { m.Version = "0.2.1" },
-		"tag":           func(m *repairManifest) { m.Tag = "v0.2.1" },
-		"channel":       func(m *repairManifest) { m.Channel = "beta" },
-		"compat schema": func(m *repairManifest) { m.Compatibility.Schema = 2 },
-		"unreviewed":    func(m *repairManifest) { m.Compatibility.Reviewed = false },
-		"GUI minimum":   func(m *repairManifest) { m.Compatibility.Min = "0.1.0" },
-		"GUI maximum":   func(m *repairManifest) { m.Compatibility.Max = "0.3.0" },
-		"IPC minimum":   func(m *repairManifest) { m.Compatibility.IPCMin = 2 },
-		"IPC maximum":   func(m *repairManifest) { m.Compatibility.IPCMax = 0 },
-		"profile":       func(m *repairManifest) { m.Compatibility.Profile = 2 },
+		"manifest schema":   func(m *repairManifest) { m.Schema = 2 },
+		"key ID":            func(m *repairManifest) { m.KeyID = "0000000000000000" },
+		"version":           func(m *repairManifest) { m.Version = "0.2.1" },
+		"tag":               func(m *repairManifest) { m.Tag = "v0.2.1" },
+		"channel":           func(m *repairManifest) { m.Channel = "beta" },
+		"compat schema":     func(m *repairManifest) { m.Compatibility.Schema = 2 },
+		"unreviewed":        func(m *repairManifest) { m.Compatibility.Reviewed = false },
+		"GUI minimum":       func(m *repairManifest) { m.Compatibility.Min = "0.1.0" },
+		"GUI maximum":       func(m *repairManifest) { m.Compatibility.Max = "0.3.0" },
+		"IPC minimum":       func(m *repairManifest) { m.Compatibility.IPCMin = 2 },
+		"IPC maximum":       func(m *repairManifest) { m.Compatibility.IPCMax = 0 },
+		"wider IPC maximum": func(m *repairManifest) { m.Compatibility.IPCMax++ },
+		"profile":           func(m *repairManifest) { m.Compatibility.Profile = 2 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

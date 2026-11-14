@@ -218,9 +218,13 @@ select metadata, URL, version, key, digest or archive member. Production uses th
 existing Desktop Ed25519 public key (key ID `7370a2d8cf890e5e`), not a new trust root.
 
 `repair_acquire.go` verifies the existing signed update-manifest envelope, all four
-unique platform targets, exact release/channel, reviewed GUI window [0.2.0,0.2.1),
-IPC 1 and profile format 1, signed archive length and SHA-256. The deliberately
-narrow GUI-window policy rejects other windows rather than guessing compatibility.
+unique platform targets, exact release/channel, signed archive length and SHA-256.
+The entire compatibility block must equal `release/compatibility.json`, embedded
+in the broker at build time: schema, reviewed flag, exact GUI bounds, IPC bounds
+and profile format. Unreviewed embedded metadata disables acquisition. The
+publisher reads the same source file; plain `go build ./cmd/bimeron` embeds it too.
+The deliberately narrow GUI-window policy rejects other windows rather than
+guessing compatibility.
 Signatures cover exact manifest bytes; duplicate JSON keys are rejected. Downloads
 use HTTPS with no ambient proxy, fixed GitHub repository/tag paths, a restricted
 redirect host set, four-hop limit, 45-second request timeout and the existing
