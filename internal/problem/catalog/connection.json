@@ -75,6 +75,11 @@
       "en": "The server rejected the password. Check the password in the profile.",
       "ru": "Сервер не принял пароль. Проверьте пароль в профиле."
     },
+    "hysteria2_dial_rejected": {
+      "kind": "connection",
+      "en": "The Hysteria2 server rejected the destination connection. Check the destination and server policy.",
+      "ru": "The Hysteria2 server rejected the destination connection. Check the destination and server policy."
+    },
     "hysteria2_invalid_config": {
       "kind": "connection",
       "en": "The Hysteria2 settings in this profile cannot be used. Check the profile.",

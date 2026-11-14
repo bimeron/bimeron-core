@@ -5,11 +5,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
+	hy "github.com/apernet/hysteria/core/v2/client"
 	hyerrors "github.com/apernet/hysteria/core/v2/errors"
 )
 
@@ -91,5 +93,54 @@ func TestPacketDeadlineAndClose(t *testing.T) {
 	_, _, err = p.ReadFrom(b)
 	if !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("expected closed connection, got %v", err)
+	}
+}
+
+type blockingUpstream struct {
+	release chan struct{}
+	conn    net.Conn
+	err     error
+}
+
+func (u *blockingUpstream) TCP(string) (net.Conn, error) {
+	<-u.release
+	return u.conn, u.err
+}
+func (u *blockingUpstream) UDP() (hy.HyUDPConn, error) { return nil, errors.New("unsupported") }
+func (u *blockingUpstream) Close() error               { return nil }
+
+func TestDialStreamHonorsCancellation(t *testing.T) {
+	local, remote := net.Pipe()
+	defer remote.Close()
+	upstream := &blockingUpstream{release: make(chan struct{}), conn: local}
+	client := &Client{upstream: upstream}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := client.DialStream(ctx, "example.com:443"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DialStream error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("DialStream ignored cancellation for %v", elapsed)
+	}
+	// A late upstream result must be closed instead of leaking.
+	close(upstream.release)
+	_ = remote.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := remote.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("late connection was not closed: %v", err)
+	}
+}
+
+func TestDialStreamRejectionIsSanitized(t *testing.T) {
+	secret := "synthetic-secret 203.0.113.7"
+	upstream := &blockingUpstream{release: make(chan struct{}), err: hyerrors.DialError{Message: secret}}
+	close(upstream.release)
+	_, err := (&Client{upstream: upstream}).DialStream(context.Background(), "example.com:443")
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != "hysteria2_dial_rejected" || failure.Stage != "tcp_connect" || failure.Retry {
+		t.Fatalf("rejection: %#v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic-secret") {
+		t.Fatal("server message leaked")
 	}
 }
