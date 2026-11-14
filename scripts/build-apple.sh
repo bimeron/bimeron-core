@@ -39,7 +39,7 @@ app=root/'BimeronCore.app'/'Contents'
 extension=(app/'Library'/'SystemExtensions'/(bundle+'.packet.systemextension') if system else app/'PlugIns'/'BimeronPacketTunnel.appex')/'Contents'
 for directory in (app,extension): (directory/'MacOS').mkdir(parents=True,exist_ok=True)
 group=team+'.'+bundle if team else ''
-common={'CFBundleVersion':'1','CFBundleShortVersionString':'0.1.0','LSMinimumSystemVersion':'13.0','RLKeychainGroup':group,'RLExtensionKind':os.environ['APPLE_EXTENSION_KIND']}
+common={'CFBundleVersion':'1','CFBundleShortVersionString':'0.1.0','CFBundleIconFile':'Bimeron','LSMinimumSystemVersion':'13.0','RLKeychainGroup':group,'RLExtensionKind':os.environ['APPLE_EXTENSION_KIND']}
 host=dict(common,CFBundleIdentifier=bundle,CFBundleExecutable='BimeronControl',CFBundleName='Bimeron Core',CFBundlePackageType='APPL',LSUIElement=True)
 provider=dict(common,CFBundleIdentifier=bundle+'.packet',CFBundleExecutable='BimeronPacketTunnel',CFBundleName='Bimeron Packet Tunnel',CFBundlePackageType='XPC!',NSExtension={'NSExtensionPointIdentifier':'com.apple.networkextension.packet-tunnel','NSExtensionPrincipalClass':'BimeronPacketTunnel.PacketTunnelProvider'})
 if system:
@@ -68,6 +68,36 @@ else
     EXT_BUNDLE="$APP/PlugIns/BimeronPacketTunnel.appex"
 fi
 EXT="$EXT_BUNDLE/Contents"
+# Both bundles carry the Bimeron icon, built from the PNG images of
+# assets/brand/bimeron.ico (see assets/brand/README.md).
+ICONSET="$APPLE_BUILD_DIR/Bimeron.iconset"
+rm -rf "$ICONSET"
+python3 - assets/brand/bimeron.ico "$ICONSET" <<'PY'
+import pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_bytes()
+reserved, kind, count = struct.unpack_from('<HHH', data)
+if reserved != 0 or kind != 1 or count == 0:
+    raise SystemExit('bimeron.ico is not an icon file')
+images = {}
+for i in range(count):
+    width, height, _, _, _, _, size, offset = struct.unpack_from('<BBBBHHII', data, 6 + 16 * i)
+    width, height, image = width or 256, height or 256, data[offset:offset + size]
+    if width != height or len(image) != size or not image.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise SystemExit('bimeron.ico images must be square PNG images')
+    images[width] = image
+out = pathlib.Path(sys.argv[2])
+out.mkdir()
+for name, size in (('16x16', 16), ('16x16@2x', 32), ('32x32', 32), ('32x32@2x', 64), ('128x128', 128), ('128x128@2x', 256), ('256x256', 256)):
+    (out / ('icon_' + name + '.png')).write_bytes(images[size])
+PY
+mkdir -p "$APP/Resources" "$EXT/Resources"
+iconutil -c icns -o "$APP/Resources/Bimeron.icns" "$ICONSET"
+cp "$APP/Resources/Bimeron.icns" "$EXT/Resources/Bimeron.icns"
+rm -rf "$ICONSET"
+for bundle in "$APP" "$EXT"; do
+    test -s "$bundle/Resources/Bimeron.icns"
+    test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$bundle/Info.plist")" = Bimeron
+done
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 if test "$APPLE_EXTENSION_KIND" = system-extension; then
     swiftc -target "$APPLE_TARGET" -sdk "$SDK" -swift-version 5 -I "$APPLE_BUILD_DIR/bridge" -module-name BimeronPacketTunnel -parse-as-library apple/Shared/ProfileStore.swift apple/PacketTunnel/PacketTunnelProvider.swift apple/PacketTunnel/system-main.swift "$APPLE_BUILD_DIR/bridge/libBimeronCore.a" -lresolv -framework NetworkExtension -framework Network -framework Security -framework Foundation -o "$EXT/MacOS/BimeronPacketTunnel"
