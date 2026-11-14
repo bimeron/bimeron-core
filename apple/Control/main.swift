@@ -7,7 +7,7 @@ func fail(_ message: String) -> Never { fputs("error: \(message)\n", stderr); ex
 let args = CommandLine.arguments
 guard args.count >= 2 else { fail("version | activate | deactivate | install <conf> | start | stop | status | events | remove") }
 let command = args[1]
-let bundle = Bundle.main.bundleIdentifier ?? "org.bimeron.core.dev"
+let bundle = Bundle.main.bundleIdentifier ?? "com.noob-rp.bimeron"
 let providerBundle = bundle + ".packet"
 if command == "version" {
     if let p = RLVersion() { print(String(cString: p)); RLFree(p) }; exit(0)

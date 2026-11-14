@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 test "$(uname -s)" = Darwin
 export MACOSX_DEPLOYMENT_TARGET=13.0
-export BUNDLE_ID="${BUNDLE_ID:-org.bimeron.core.dev}"
+export BUNDLE_ID="${BUNDLE_ID:-com.noob-rp.bimeron}"
 export TEAM_ID="${TEAM_ID:-}"
 export APPLE_EXTENSION_KIND="${APPLE_EXTENSION_KIND:-system-extension}"
 case "$APPLE_EXTENSION_KIND" in app-extension|system-extension) ;; *) exit 1 ;; esac
