@@ -1,6 +1,6 @@
 # Bimeron Core v0.4.0-beta.1
 
-**Release notes — reviewed on 2026-11-14.** GUI compatibility and release-candidate validation remain release gates. This document does not announce a published release.
+**Release notes — reviewed on 2026-11-14.** Publication remains gated on VM acceptance of the Desktop 0.3.0 candidate with the Core candidate. This document does not announce a published release.
 
 The reviewed source range is `abd705b6..7f9e3087` on master. `abd705b6` is the master equivalent of the previous release, v0.3.0-beta.2; its tag points to `66d84d8f`, outside master history.
 
@@ -52,11 +52,11 @@ Native Windows IKEv2 integration is merged ([#103](https://github.com/bimeron/bi
 
 Windows 11, RRAS interoperability, physical network transitions, sleep/resume and public IPv6 remain unconfirmed. DNS can leak without native protection. The broader validation in [#66](https://github.com/bimeron/bimeron-core/issues/66) is deferred; merge does not imply that those checks passed.
 
-## Compatibility — review required
+## Compatibility
 
 IPC remains version **1** and profile format remains version **1**. New capabilities, document operations and structured errors require client integration review even though these version numbers are unchanged. Clients should check capabilities such as `daemon_session_guards`, `session_bound_stats`, `explicit_access` and `access_conversion` before using optional operations.
 
-**GUI compatibility range: to be finalized before tagging**
+**GUI compatibility range: [0.3.0, 0.3.1)**
 
 ## Upgrade notes / Desktop
 
@@ -64,7 +64,7 @@ Published Desktop 0.2.0 and Desktop main at 516ea4b both pin Core v0.3.0-beta.2.
 
 Desktop offers beta Core updates only when the user enables **Include beta core updates** for the current session. A service update alone does not replace the bundled CLI.
 
-The GUI compatibility range will be decided in `release/compatibility.json` together with the Desktop 0.3.0 release decisions; this document does not change that file. Versioning policy is postponed.
+The reviewed GUI range in `release/compatibility.json` intentionally excludes Desktop 0.2.0, which will not be offered this Core update. Its users receive Core v0.4.0-beta.1 by upgrading to Desktop 0.3.0, which bundles it and will be published as a GitHub pre-release. Desktop 0.3.0 requires both the bundled CLI and the service to report the `explicit_access` capability and structured problems; this Core release provides both. Publication is gated on VM acceptance of the Desktop 0.3.0 candidate with the Core candidate. Versioning policy is postponed.
 
 ## Planned packages and verification
 
@@ -72,4 +72,4 @@ Confirm the final asset inventory during finalization. The expected layout follo
 
 Verify archives with `SHA256SUMS`. Windows/Linux service update clients can verify `update-manifest.json` with `update-manifest.json.sig` and a separately trusted Ed25519 public key. The service manifest covers Windows/Linux amd64 and arm64, not macOS or Android. Apple metadata preparation does not imply an approved Apple release.
 
-Before publication, resolve GUI compatibility, validate the final candidate and signed assets, and verify the tag-specific README link. No new candidate tests, benchmarks or CI results are claimed by this documentation-only draft.
+Before publication, complete VM acceptance of the Desktop 0.3.0 candidate with the Core candidate, validate signed assets, and verify the tag-specific README link. These notes do not claim completed candidate acceptance or new benchmarks.
