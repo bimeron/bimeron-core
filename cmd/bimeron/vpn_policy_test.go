@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bimeron/internal/routing"
 	"net/netip"
 	"os"
 	"path/filepath"
-	"bimeron/internal/routing"
 	"testing"
 )
 

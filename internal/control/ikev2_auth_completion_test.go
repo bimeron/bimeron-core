@@ -172,6 +172,7 @@ func TestIKEAuthFullBoundsDiagnostics(t *testing.T) {
 	s.instance = b.instance
 	e.id = b.session
 	cfg := core.SessionConfig{IKEv2: &core.IKEv2Config{WindowsProfile: b.profile, ServerName: b.server}}
+	//lint:ignore SA1026 asserts secrets never leak through serialization.
 	before, _ := json.Marshal(cfg)
 	s.bindForegroundSession(context.Background(), cfg)
 	cfg.IKEv2.WindowsProfile = "mutated"
@@ -194,6 +195,7 @@ func TestIKEAuthFullBoundsDiagnostics(t *testing.T) {
 	for _, storage := range []ikeStorage{ikeWindowsStorage, ikeAttemptOnly} {
 		secret := ikeSecrets{[]byte(sentinel), []byte(sentinel)}
 		diagnostics := fmt.Sprintf("%v %+v %#v", secret, secret, secret)
+		//lint:ignore SA9005 asserts secrets never leak through serialization.
 		data, err := json.Marshal(secret)
 		diagnostics += string(data) + fmt.Sprint(err)
 		result := s.answerIKEAuth(ctx, b, ikePassword, storage, secret)
@@ -203,6 +205,7 @@ func TestIKEAuthFullBoundsDiagnostics(t *testing.T) {
 		if !bytes.Equal(secret.username, make([]byte, len(secret.username))) || !bytes.Equal(secret.password, make([]byte, len(secret.password))) {
 			t.Fatal("secret clearing")
 		}
+		//lint:ignore SA9005 asserts secrets never leak through serialization.
 		data, err = json.Marshal(result)
 		diagnostics += string(data) + fmt.Sprint(result, err)
 		for _, command := range []string{"status", "events"} {
@@ -210,6 +213,7 @@ func TestIKEAuthFullBoundsDiagnostics(t *testing.T) {
 			data, err = json.Marshal(r)
 			diagnostics += string(data) + fmt.Sprint(r.Error, err)
 		}
+		//lint:ignore SA1026 asserts secrets never leak through serialization.
 		data, err = json.Marshal(cfg)
 		diagnostics += string(data) + fmt.Sprint(err)
 		if strings.Contains(diagnostics, sentinel) {
@@ -221,6 +225,7 @@ func TestIKEAuthFullBoundsDiagnostics(t *testing.T) {
 	}
 	cfg.IKEv2.WindowsProfile = b.profile
 	cfg.IKEv2.ServerName = b.server
+	//lint:ignore SA1026 asserts secrets never leak through serialization.
 	after, _ := json.Marshal(cfg)
 	if !bytes.Equal(before, after) {
 		t.Fatal("config changed")

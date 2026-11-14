@@ -25,6 +25,7 @@ import (
 	"time"
 )
 
+//lint:ignore U1000 used by the Windows repair path.
 const repairUpdateKey = "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
 const repairDownloadLimit = 100 * 1024 * 1024
 
@@ -173,6 +174,8 @@ func extractRepairMember(data []byte, a repairArchive, member string) ([]byte, e
 	}
 	return result, nil
 }
+
+//lint:ignore U1000 used by the Windows repair path.
 func acquireRepairMember(ctx context.Context, member string) ([]byte, error) {
 	version := core.GetBuildInfo().Version
 	if !repairReleaseVersion.MatchString(version) {

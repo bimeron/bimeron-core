@@ -3,11 +3,11 @@
 package main
 
 import (
+	"bimeron/internal/macnet"
+	"bimeron/internal/unixutil"
 	"context"
 	"flag"
 	"fmt"
-	"bimeron/internal/macnet"
-	"bimeron/internal/unixutil"
 	"time"
 )
 

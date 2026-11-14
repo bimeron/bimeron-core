@@ -1,6 +1,7 @@
 package linuxnet
 
 import (
+	"bimeron/internal/routing"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"bimeron/internal/routing"
 	"strconv"
 	"strings"
 	"time"

@@ -43,7 +43,7 @@ func TestProfileOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "known_hosts"), []byte(knownhosts.Line([]string{address}, server.PublicKey())+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	dial := func(o Options, identity, hosts string) (error, []string) {
+	dial := func(o Options, identity, hosts string) ([]string, error) {
 		r := &traced{}
 		defer SetFileTrace(r.record)()
 		p, _ := accesskey.ParseSSH("ssh://alice@" + address)
@@ -52,10 +52,10 @@ func TestProfileOnly(t *testing.T) {
 		if c != nil {
 			c.Close()
 		}
-		return err, r.list()
+		return r.list(), err
 	}
 	// Control: without ProfileOnly the home known_hosts is used and traced.
-	if err, ops := dial(Options{DefaultKeys: true}, "", ""); err != nil || !strings.Contains(strings.Join(ops, "\n"), home) {
+	if ops, err := dial(Options{DefaultKeys: true}, "", ""); err != nil || !strings.Contains(strings.Join(ops, "\n"), home) {
 		t.Fatalf("control %v %v", err, ops)
 	}
 	for name, tc := range map[string]struct {
@@ -70,7 +70,7 @@ func TestProfileOnly(t *testing.T) {
 		"selected_hosts": {Options{ProfileOnly: true, DefaultKeys: true}, "", writeHosts(t, knownhosts.Line([]string{address}, server.PublicKey())), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err, ops := dial(tc.o, tc.identity, tc.file)
+			ops, err := dial(tc.o, tc.identity, tc.file)
 			for _, op := range ops {
 				if strings.HasPrefix(op, "home") || strings.HasPrefix(op, "agent") || strings.Contains(op, home) {
 					t.Fatalf("touched %q", op)

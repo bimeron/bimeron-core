@@ -3,10 +3,10 @@
 package main
 
 import (
-	"flag"
-	"fmt"
 	core "bimeron/core"
 	"bimeron/internal/dnsconfig"
+	"flag"
+	"fmt"
 )
 
 func connect(args []string) error {

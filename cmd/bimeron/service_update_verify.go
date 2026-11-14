@@ -76,9 +76,6 @@ func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string
 	return verifyUpdateFile(staged, wantSHA256)
 }
 
-func waitUpdatedService(wantVersion string) error {
-	return waitUpdatedServiceContext(context.Background(), wantVersion)
-}
 func waitUpdatedServiceContext(parent context.Context, wantVersion string) error {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()

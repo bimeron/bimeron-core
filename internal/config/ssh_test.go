@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestSSHProfiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p, err := c.Resolve(nil)
+			p, err := c.Resolve(context.Background())
 			if err != nil || p.Type != "ssh" || p.SSH.User != "alice" {
 				t.Fatalf("profile: %+v, %v", p, err)
 			}

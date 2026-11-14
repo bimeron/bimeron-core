@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestAnyTLSSource(t *testing.T) {
 	for _, source := range []string{"AnyTLS", "Key"} {
@@ -9,7 +12,7 @@ func TestAnyTLSSource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := c.Resolve(nil)
+		p, err := c.Resolve(context.Background())
 		if err != nil || p.Type != "anytls" {
 			t.Fatalf("AnyTLS config: %#v, %v", p, err)
 		}

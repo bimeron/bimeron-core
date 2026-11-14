@@ -22,7 +22,7 @@ func resolveAccess(t *testing.T, access string) accesskey.Profile {
 	if err != nil {
 		t.Fatalf("parse %q: %v", access, err)
 	}
-	p, err := c.Resolve(nil)
+	p, err := c.Resolve(t.Context())
 	if err != nil {
 		t.Fatalf("resolve %q: %v", access, err)
 	}

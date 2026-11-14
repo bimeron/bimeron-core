@@ -7,3 +7,4 @@ packages:
       udpIO:
         config:
           mockname: mockUDPIO
+          filename: mock_udpIO_test.go

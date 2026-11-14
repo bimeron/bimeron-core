@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestTUICSource(t *testing.T) {
 	base := "[Profile]\nVersion = 1\n[AccessKey]\nTUIC = tuic://123e4567-e89b-12d3-a456-426614174000:secret@example.com:443?udp_relay_mode=quic\n"
@@ -8,7 +11,7 @@ func TestTUICSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := c.Resolve(nil)
+	p, err := c.Resolve(context.Background())
 	if err != nil || p.Type != "tuic" {
 		t.Fatalf("TUIC config: %+v, %v", p, err)
 	}

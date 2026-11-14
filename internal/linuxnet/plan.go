@@ -2,10 +2,10 @@
 package linuxnet
 
 import (
-	"fmt"
-	"regexp"
 	"bimeron/internal/killswitch"
 	"bimeron/internal/routing"
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )

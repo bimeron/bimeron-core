@@ -19,9 +19,6 @@ import (
 
 const serviceDescription = "VPN core and local control"
 
-func waitServiceState(s *mgr.Service, want svc.State) error {
-	return waitServiceStateContext(context.Background(), s, want)
-}
 func waitServiceStateContext(ctx context.Context, s *mgr.Service, want svc.State) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
@@ -45,9 +42,6 @@ func waitServiceStateContext(ctx context.Context, s *mgr.Service, want svc.State
 		}
 	}
 	return fmt.Errorf("service state change timed out")
-}
-func stopUpdateService(s *mgr.Service) error {
-	return stopUpdateServiceContext(context.Background(), s)
 }
 func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
 	if err := ctx.Err(); err != nil {
