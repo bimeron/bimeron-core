@@ -204,5 +204,11 @@ these commands can still connect with an unencrypted selected key.
 - Local proxy mode does not automatically reconnect after the SSH session
   breaks. Stop and start the profile again; a future proxy reconnection policy
   can add automatic recovery.
+- A connection attempt that fails on the network path (timeout, refused or
+  reset connection, unreachable route, DNS failure) reports the retryable
+  `ssh_network_failed` code, and the session keeps retrying in `reconnecting`.
+  Each attempt asks again for any interactive input it needs, such as a key
+  passphrase. Host-key, authentication, and transport setup failures report
+  the terminal `ssh_connection_failed` code.
 - The system VPN, UDP traffic, SSH config aliases, agent forwarding, and
   password persistence are outside this version.

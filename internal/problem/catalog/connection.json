@@ -510,6 +510,11 @@
       "en": "No known_hosts file is selected for the SSH server. Import a known_hosts file into the profile or allow confirming new host keys.",
       "ru": "Для SSH-сервера не выбран файл known_hosts. Импортируйте файл known_hosts в профиль или разрешите подтверждение новых ключей хоста."
     },
+    "ssh_network_failed": {
+      "kind": "connection",
+      "en": "Cannot reach the SSH server. Check your internet connection and the server address and port.",
+      "ru": "Не удаётся связаться с SSH-сервером. Проверьте подключение к интернету, а также адрес и порт сервера."
+    },
     "transport_check_failed": {
       "kind": "connection",
       "en": "The server did not pass the connection test. Check the server address, port and key, and your internet connection.",

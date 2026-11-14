@@ -3,6 +3,7 @@ package sshtunnel
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 )
@@ -60,4 +61,52 @@ func TestAttemptParentDeadlineDuringPrompt(t *testing.T) {
 	if _, err := p(a.ctx, Challenge{}); err == nil || a.ctx.Err() == nil {
 		t.Fatal("parent deadline lost")
 	}
+}
+
+func TestAttemptNetworkClassification(t *testing.T) {
+	plain := errors.New("ssh: unable to authenticate")
+	refused := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+
+	a := newAttempt(context.Background())
+	if a.network(plain) || !a.network(refused) {
+		t.Fatal("error type misclassified")
+	}
+	a.close()
+
+	a = newAttempt(context.Background())
+	a.remaining = time.Millisecond
+	a.resume()
+	<-a.ctx.Done()
+	if !a.network(plain) {
+		t.Fatal("expired network budget is not a network failure")
+	}
+	a.close()
+
+	a = newAttempt(context.Background())
+	a.resume()
+	p := a.prompt(func(context.Context, Challenge) ([]string, error) { return nil, errors.New("dismissed") })
+	if _, err := p(a.ctx, Challenge{}); err == nil {
+		t.Fatal("prompt failure accepted")
+	}
+	if a.network(refused) {
+		t.Fatal("dismissed prompt classified as network failure")
+	}
+	a.close()
+
+	parent, cancel := context.WithCancel(context.Background())
+	a = newAttempt(parent)
+	cancel()
+	if a.network(refused) {
+		t.Fatal("caller cancellation classified as network failure")
+	}
+	a.close()
+
+	parent, cancel = context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	a = newAttempt(parent)
+	<-parent.Done()
+	if !a.network(plain) {
+		t.Fatal("caller deadline is not a network failure")
+	}
+	a.close()
 }
