@@ -124,3 +124,44 @@ fallback is 0.1.0-dev. VCS data may be absent.
 TCP statistics update after every successful write, not only when a connection
 closes. Adding optional fields is compatible: the GUI must ignore unknown response
 fields. The GUI must not assume that every platform has identical capabilities.
+
+## Bounded reconnect recovery (Desktop 0.3.0)
+
+Core allows three reconnect attempts after a failed initial Open or a later
+interruption. The initial Open is excluded. Both ordinary close/open recovery
+and persistent tunnel transport recovery use this policy. Successful connection
+resets the recovery budget for the next interruption. Nonretryable failures stop
+immediately. Stop cancels pending backoff and recovery. After the third failure,
+Core cleans up and enters `failed` with the final `LastError` and `ErrorStage`;
+a cleanup failure takes precedence. No fourth attempt is scheduled.
+
+Status and every Event add optional capitalized integer fields:
+
+- `ReconnectAttempt`: upcoming/current recovery attempt, 1 through 3. Published
+  before its backoff, retained after exhaustion, reset on success/disconnection
+  and a new Start. A cleanup transition can precede scheduling the first retry.
+- `ReconnectLimit`: 3 while recovery progress is present; omitted when reset.
+
+Zero values are omitted. `Attempt` retains its cumulative per-Start semantics,
+including initial Open and transport generations; it is not a recovery counter.
+`reconnect_attempt` events publish progress even when state/error did not change.
+Status remains authoritative if events are dropped. `LastError` carries the last
+catalog code, not the generic retry log message. Localize it through the error
+catalog and retain its textual code in the tooltip, including terminal failure.
+
+These fields are additive: IPC remains version 1, profile format remains 1 and
+`release/compatibility.json` is unchanged (GUI `[0.3.0, 0.3.1)`, IPC 1/1).
+Older services can omit both fields; GUIs must not infer a `/3` limit from
+`Attempt`, count log messages, or terminate a service-owned connection locally.
+The frozen e1cada7d candidate is unchanged; Desktop 0.3.0 requires a new reviewed
+Core master candidate containing this change before release acceptance.
+
+Local validation for issue #136: Windows amd64 `go vet ./...` and
+`go test -p 1 ./...` passed; `go test -race ./core ./internal/control` passed.
+The core suite also passed ten consecutive runs. Added tests assert both wire
+field names in status/events, exact exhaustion, cleanup priority, reset on
+success, cancellation during backoff and omission after reset. Existing
+persistent-success and cancellation fixtures remain green. Diff review found no
+compatibility/profile version changes. Benchmarks/profiling are not applicable
+to this bounded control-flow correction. Cross-platform CI, a merge commit on
+master and new-candidate Desktop VM acceptance remain release gates.
