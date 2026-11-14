@@ -7,8 +7,6 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"os"
-	"os/signal"
 
 	"bimeron/internal/control"
 	"bimeron/internal/systemvpn"
@@ -24,7 +22,7 @@ func foregroundCommand(args []string) error {
 	if flags.Parse(args) != nil || flags.NArg() != 0 || uint64(*requester) > 0xffffffff {
 		return errors.New("invalid_foreground_arguments")
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := notifyShutdown(context.Background())
 	defer cancel()
 	return control.RunForeground(ctx, control.ForegroundOptions{Config: *config, SHA256: *digest, RequesterPID: uint32(*requester), RequesterCreated: *created})
 }
