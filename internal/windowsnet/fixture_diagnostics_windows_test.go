@@ -71,12 +71,17 @@ while($true) { [Threading.Thread]::Sleep(100) }
 func TestFixtureDiagnosticsSanitizesFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd, err := PowerShellCommand(ctx, fixtureSource(Config{Name: "config-secret"}, `[Console]::Out.Write('stdout-secret'); [Console]::Error.WriteLine(('stderr-secret'*1000)); throw 'exception-secret'`))
+	// Sanitization must not depend on cold JSON cmdlet/module initialization.
+	// TestFixtureConfigJSONRoundTrip independently covers configuration parsing.
+	source := fixtureEntry + `function ConvertFrom-Json { throw 'unexpected-json-secret' }
+[Console]::Error.WriteLine('diag:fixture');
+[Console]::Out.Write('stdout-secret'); [Console]::Error.WriteLine(('stderr-secret'*1000)); throw 'exception-secret'`
+	cmd, err := PowerShellCommand(ctx, source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, err, diagnostic := runFixture(ctx, cmd, nil)
-	if err == nil || !bytes.Contains(out, []byte("stdout-secret")) || !strings.Contains(diagnostic, "process=exit=1") || !strings.Contains(diagnostic, "diag:fixture") || !strings.Contains(diagnostic, "diag:json-done") || strings.Contains(diagnostic, "secret") || len(diagnostic) > 1024 {
+	if err == nil || ctx.Err() != nil || !bytes.Contains(out, []byte("stdout-secret")) || !strings.Contains(diagnostic, "process=exit=1") || !strings.Contains(diagnostic, "diag:fixture") || strings.Contains(diagnostic, "diag:json-") || strings.Contains(diagnostic, "secret") || len(diagnostic) > 1024 {
 		t.Fatalf("failure diagnostic lost bounded sanitized evidence: %s", diagnostic)
 	}
 }

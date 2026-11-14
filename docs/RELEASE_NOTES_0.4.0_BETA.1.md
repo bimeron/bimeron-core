@@ -78,3 +78,16 @@ Confirm the final asset inventory during finalization. The expected layout follo
 Verify archives with `SHA256SUMS`. Windows/Linux service update clients can verify `update-manifest.json` with `update-manifest.json.sig` and a separately trusted Ed25519 public key. The service manifest covers Windows/Linux amd64 and arm64, not macOS or Android. Apple metadata preparation does not imply an approved Apple release.
 
 Before publication, complete VM acceptance of the Desktop 0.3.0 candidate with the Core candidate, validate signed assets, and verify the tag-specific README link. These notes do not claim completed candidate acceptance or new benchmarks.
+
+## Reconnect recovery correction
+
+Reconnect recovery is limited to three attempts after initial failure or an
+interruption, for ordinary and persistent transport sessions. Success resets the
+budget; exhaustion cleans up and reports the last failure (cleanup errors take
+precedence). Optional `ReconnectAttempt` and `ReconnectLimit` fields expose
+progress in status/events for Desktop 0.3.0. Existing `Attempt` semantics, IPC 1,
+profile 1 and release/compatibility.json remain unchanged. See [control contract](CONTROL.MD#bounded-reconnect-recovery-desktop-030).
+
+This correction requires a new candidate built from the merged Core master
+commit and renewed Desktop 0.3.0 acceptance; frozen e1cada7d artifacts are not
+modified. Tracked by issue #136.

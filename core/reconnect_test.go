@@ -45,6 +45,9 @@ func TestPersistentRetryKeepsSession(t *testing.T) {
 	}
 	awaitState(t, e, Reconnecting)
 	awaitState(t, e, Connected)
+	if status := e.Status(); status.ReconnectAttempt != 0 || status.ReconnectLimit != 0 {
+		t.Fatal("successful recovery did not reset progress", status)
+	}
 	if opens.Load() != 1 || closes.Load() != 0 || s.retries.Load() != 3 || s.suspends.Load() != 1 {
 		t.Fatal("link recreated during transport retries")
 	}
