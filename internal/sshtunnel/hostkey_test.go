@@ -264,6 +264,36 @@ func TestHostKeyPrefersKnownType(t *testing.T) {
 	}
 }
 
+// TestHostKeyFileOnlyPrefersKnownType covers golang/go#29286 without opt-in:
+// the library prefers ECDSA, so a file trusting only Ed25519 must steer
+// negotiation to Ed25519 instead of failing as an unknown key.
+func TestHostKeyFileOnlyPrefersKnownType(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	ed := hostSigner(t)
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecSigner, _ := ssh.NewSignerFromKey(ec)
+	address := hostKeyServer(t, ecSigner, ed)
+	_, user, _ := ed25519.GenerateKey(rand.Reader)
+	block, _ := ssh.MarshalPrivateKey(user, "")
+	identity := filepath.Join(t.TempDir(), "id")
+	if err := os.WriteFile(identity, pem.EncodeToMemory(block), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := accesskey.ParseSSH("ssh://alice@" + address)
+	p.SSH.IdentityFile = identity
+	p.SSH.KnownHostsFile = writeHosts(t, knownhosts.Line([]string{address}, ed.PublicKey()))
+	c, err := New(context.Background(), p, net.Dialer{}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	// The file still decides: a key of a type it does not trust fails.
+	p.SSH.KnownHostsFile = writeHosts(t, knownhosts.Line([]string{address}, hostSigner(t).PublicKey()))
+	if _, err := New(context.Background(), p, net.Dialer{}, nil, false); err == nil || errors.Is(err, ErrNetwork) {
+		t.Fatalf("untrusted key %v", err)
+	}
+}
+
 func TestHostKeyNoOptIn(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	address := hostKeyServer(t, hostSigner(t))

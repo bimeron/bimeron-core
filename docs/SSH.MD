@@ -136,6 +136,14 @@ compare its fingerprint with the trusted value before using it. A changed key
 causes connection failure until investigated and corrected. Do not remove an
 old entry solely to silence that failure.
 
+During negotiation Bimeron first asks the server for the host key types
+recorded for it in `known_hosts`, like OpenSSH. An `ssh-ed25519` entry
+therefore works even when the server also offers ECDSA, which the SSH library
+would otherwise prefer. The remaining types follow in the order Ed25519,
+ECDSA, RSA, then certificates; the insecure `ssh-dss` type is not offered.
+When the file contains an `@cert-authority` line, the library's default order
+is used instead. Verification itself does not change.
+
 The embedded Android Session can opt in to OpenSSH-style `accept-new` (ADR
 0037, `docs/android-ssh-auth.md`). An unknown host is then shown to the user as
 a fingerprint offer, and the app stores accepted keys itself. A changed key is
@@ -204,5 +212,11 @@ these commands can still connect with an unencrypted selected key.
 - Local proxy mode does not automatically reconnect after the SSH session
   breaks. Stop and start the profile again; a future proxy reconnection policy
   can add automatic recovery.
+- A connection attempt that fails on the network path (timeout, refused or
+  reset connection, unreachable route, DNS failure) reports the retryable
+  `ssh_network_failed` code, and the session keeps retrying in `reconnecting`.
+  Each attempt asks again for any interactive input it needs, such as a key
+  passphrase. Host-key, authentication, and transport setup failures report
+  the terminal `ssh_connection_failed` code.
 - The system VPN, UDP traffic, SSH config aliases, agent forwarding, and
   password persistence are outside this version.

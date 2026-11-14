@@ -20,6 +20,12 @@ Add accept-new host-key handling as an explicit opt-in. Only the embedded
 Android Session opts in, through `Session.AcceptNewHostKeys(trustedKnownHosts)`
 before `Start`. CLI, daemon, desktop and Apple consumers keep known_hosts-only
 verification, their error text and the single `ssh_connection_failed` fault.
+Amendment (issue #120): failures on the network path to the server are
+reported by every consumer as the retryable `ssh_network_failed`, so
+`ssh_connection_failed` now covers only terminal failures. File-only
+verification also uses the host-key algorithm order described below, so a
+`known_hosts` file with only an Ed25519 entry works against a server that also
+offers ECDSA.
 
 For an opted-in connection:
 

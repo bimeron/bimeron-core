@@ -168,7 +168,9 @@ does not revoke the acceptance; this matches OpenSSH `accept-new`.
 
 With opt-in, `Status.LastError` uses these host-key faults. Other SSH
 failures stay `ssh_connection_failed`, except `ssh_known_hosts_missing` (see
-"Files Core uses on Android"), which needs no opt-in.
+"Files Core uses on Android"), which needs no opt-in, and `ssh_network_failed`
+(a timeout, refused or reset connection, unreachable route or DNS failure on
+the way to the server), which every consumer reports and Core retries.
 
 | LastError | Meaning | Suggested app code |
 |---|---|---|
