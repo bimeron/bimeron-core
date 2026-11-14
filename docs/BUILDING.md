@@ -62,3 +62,47 @@ Without an Apple Developer account, these are **unsigned** builds for inspection
 NetworkExtension execution requires signing and provisioning. See the
 [Apple NetworkExtension guide](APPLE_NETWORK_EXTENSION.MD) for the integration contract and
 deployment requirements.
+
+## Icons and version information
+
+Core carries the Bimeron icon from [`assets/brand/bimeron.ico`](../assets/brand/README.md)
+wherever the platform has an executable or bundle icon:
+
+| Artifact | Icon | Mechanism |
+| --- | --- | --- |
+| `dist/windows-*/bimeron.exe` | Yes, with VERSIONINFO | PE resources linked by `build-dist.go` |
+| `BimeronCore.app` and its packet tunnel extension | Yes | `Contents/Resources/Bimeron.icns` and `CFBundleIconFile` |
+| `dist/macos-*/bimeron` | No | A Mach-O executable outside a bundle has no icon |
+| `dist/linux-*/bimeron` | No | ELF has no icon; packages supply desktop entries and icons |
+| `dist/android/bimeron-core.aar` | No | A library; the host app owns the launcher icon |
+
+For each Windows target, `build-dist.go` generates a COFF object with
+[`internal/winres`](../internal/winres), writes it to
+`cmd/bimeron/zz_bimeron_resource_windows_<arch>.syso` for the duration of that
+`go build` and then deletes it. The object holds the icon group and a
+VERSIONINFO with product name and file description "Bimeron Core", company
+"Bimeron contributors" and the copyright from `LICENSE`. The file and product
+version strings are the version passed to `-X bimeron/core.Version`, for example
+`0.4.0-beta.1`; the numeric file version is `0.4.0.0`, with the prerelease flag
+set for prerelease versions. A Windows build therefore requires
+`BIMERON_VERSION` (or the last `v*` tag) to be a semantic version; without any
+version the strings read `dev`. The generator adds no dependency and its output
+is deterministic. `.gitignore` excludes the temporary object, so it does not
+mark the build as modified; an interrupted build leaves one behind, and the next
+`build-dist.go` run deletes it.
+
+A plain `go build ./cmd/bimeron` works without this step and produces a Windows
+executable without an icon or version information. `check-dist.go` requires
+each Windows executable to keep its PE architecture, to contain every image of
+`bimeron.ico` byte for byte and the expected VERSIONINFO, and, when
+`BIMERON_VERSION` is set, that exact version.
+
+`build-apple.sh` extracts the 16 to 256 px PNG images of `bimeron.ico` into an
+iconset, converts it with the system `iconutil` and copies `Bimeron.icns` into
+both bundles. The source has no 512 px image, so Finder scales the 256 px image
+for the largest icon views. The Apple bundles have no version derived from the
+Core release; `CFBundleShortVersionString` is unchanged.
+
+The Windows Services console shows the same generic icon for every service; the
+icon appears in Explorer, Task Manager and elevation prompts, and Task Manager
+lists the process as "Bimeron Core".
