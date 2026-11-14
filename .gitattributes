@@ -8,3 +8,5 @@ release/applemanifest/testdata/synthetic-vector.json text eol=lf
 # Preserve the exact signed interop bytes through every checkout.
 release/applemanifest/testdata/synthetic-reviewed-manifest.json -text
 release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig -text
+# The icon is hash-recorded in assets/brand/README.md.
+*.ico binary
