@@ -13,11 +13,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"bimeron/internal/winres"
 )
 
 const wintunURL = "https://www.wintun.net/builds/wintun-0.14.1.zip"
 const wintunSHA256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
 const wintunSize = 750540
+
+// The Windows resource object is written next to cmd/bimeron only for the
+// duration of one go build; .gitignore keeps it out of vcs.modified.
+const resourcePattern = "zz_bimeron_resource_windows_*.syso"
 
 func main() {
 	if err := run(); err != nil {
@@ -51,6 +57,10 @@ func run() error {
 	if len(os.Args) > 2 || (mode != "all" && mode != "windows" && mode != "windows-amd64" && mode != "windows-arm64" && mode != "linux" && mode != "macos") {
 		return fmt.Errorf("usage: go run scripts/build-dist.go [all|windows|windows-amd64|windows-arm64|linux|macos]")
 	}
+	coreVersion := strings.TrimPrefix(version, "v")
+	if err := removeResources(root); err != nil {
+		return err
+	}
 	for _, target := range []struct{ os, arch, name string }{
 		{"windows", "amd64", "bimeron-windows-amd64.exe"}, {"windows", "arm64", "bimeron-windows-arm64.exe"},
 		{"linux", "amd64", "bimeron-linux-amd64"}, {"linux", "arm64", "bimeron-linux-arm64"},
@@ -65,14 +75,14 @@ func run() error {
 		}
 		ldflags := "-s -w"
 		if version != "" {
-			ldflags += " -X bimeron/core.Version=" + strings.TrimPrefix(version, "v")
+			ldflags += " -X bimeron/core.Version=" + coreVersion
 		}
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "./cmd/bimeron")
 		cmd.Dir = root
 		cmd.Env = append(filteredEnv(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		fmt.Printf("Building %s/%s\n", target.os, target.arch)
-		if err := cmd.Run(); err != nil {
+		if err := buildWithResources(root, target.os, target.arch, coreVersion, cmd); err != nil {
 			return err
 		}
 		label := target.os
@@ -132,6 +142,47 @@ func run() error {
 		}
 	}
 	fmt.Println("Prepared CLI distributions in dist/.")
+	return nil
+}
+
+// buildWithResources runs a go build of ./cmd/bimeron. For Windows it first
+// writes the icon and VERSIONINFO object for the target architecture into
+// cmd/bimeron and removes it afterwards, even if the build fails.
+func buildWithResources(root, goos, goarch, version string, cmd *exec.Cmd) error {
+	if goos != "windows" {
+		return cmd.Run()
+	}
+	ico, err := os.ReadFile(filepath.Join(root, "assets", "brand", "bimeron.ico"))
+	if err != nil {
+		return err
+	}
+	obj, err := winres.Object(goarch, ico, version)
+	if err != nil {
+		return fmt.Errorf("Windows resources: %w", err)
+	}
+	syso := filepath.Join(root, "cmd", "bimeron", strings.Replace(resourcePattern, "*", goarch, 1))
+	if err := os.WriteFile(syso, obj, 0644); err != nil {
+		return err
+	}
+	err = cmd.Run()
+	if removeErr := os.Remove(syso); err == nil {
+		err = removeErr
+	}
+	return err
+}
+
+// removeResources deletes resource objects left by an interrupted build so
+// they cannot leak into later builds.
+func removeResources(root string) error {
+	stale, err := filepath.Glob(filepath.Join(root, "cmd", "bimeron", resourcePattern))
+	if err != nil {
+		return err
+	}
+	for _, path := range stale {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
