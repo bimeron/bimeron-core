@@ -52,6 +52,24 @@ func uriSeeds() map[string]string {
 		seeds["uri-"+name] = "[Profile]\nVersion = 1\nName = Seed\n\n[AccessKey]\n" + key + "\n\n[Interface]\nMode = " + mode + "\n\n[Routing]\nDefault = proxy\n\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n\n[Rule]\nDomain = example.org\nAction = proxy\n"
 	}
 	seeds["explicit-ss-shadowtls"] = "[Profile]\nVersion = 1\n\n[AccessKey]\nType = shadowsocks\nServer = example.com\nPort = 443\nMethod = aes-256-gcm\nPassword = " + sentinel + "\n\n[ShadowTLS]\nServerName = handshake.example.com\nPassword = " + sentinel + "\n\n[Interface]\nMode = vpn\nIPv6 = disable\nKillSwitch = true\nMTU = 1400\nDNS = 1.1.1.1, 8.8.8.8\nName = Tun0\n"
+	uuid := "123e4567-e89b-12d3-a456-426614174000"
+	explicit := map[string]string{
+		"hysteria2":     "Type = hysteria2\nServer = example.com\nPort = 443\nPassword = " + sentinel + "\nServerName = front.example\nALPN = h3\nFingerprint = chrome",
+		"tuic":          "Type = tuic\nServer = example.com\nPort = 443\nID = " + uuid + "\nPassword = " + sentinel + "\nServerName = front.example\nALPN = h3",
+		"anytls":        "Type = anytls\nServer = example.com\nPort = 443\nPassword = " + sentinel + "\nServerName = front.example",
+		"vmess-ws":      "Type = vmess\nServer = example.com\nPort = 443\nID = " + uuid + "\nEncryption = auto\nNetwork = ws\nSecurity = tls\nServerName = front.example\nALPN = http/1.1\nWSPath = /ws\nWSHost = cdn.example.com",
+		"vmess-grpc":    "Type = vmess\nServer = example.com\nPort = 443\nID = " + uuid + "\nNetwork = grpc\nSecurity = tls\nGRPCServiceName = svc\nGRPCAuthority = auth.example\nGRPCMultiMode = true",
+		"vmess-xhttp":   "Type = vmess\nServer = example.com\nPort = 443\nID = " + uuid + "\nNetwork = xhttp\nSecurity = tls\nALPN = h2\nXHTTPPath = /x\nXHTTPHost = cdn.example.com\nXHTTPMode = packet-up",
+		"vmess-reality": "Type = vmess\nServer = example.com\nPort = 443\nID = " + uuid + "\nSecurity = reality\nServerName = front.example\nFingerprint = chrome\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nShortID = abcd",
+		"naive-quic":    "Type = naive\nServer = example.com\nPort = 443\nUsername = alice\nPassword = " + sentinel + "\nNetwork = quic",
+	}
+	for name, access := range explicit {
+		mode := "vpn"
+		if name == "naive-quic" {
+			mode = "proxy"
+		}
+		seeds["explicit-"+name] = "[Profile]\nVersion = 1\nName = Seed\n\n[AccessKey]\n" + access + "\n\n[Interface]\nMode = " + mode + "\n"
+	}
 	return seeds
 }
 

@@ -367,20 +367,56 @@ func supportedFingerprint(name string) bool {
 
 // SetXHTTPConfField maps simple .conf fields to the same model as link extra.
 func (o *XHTTPOptions) SetXHTTPConfField(key, value string) error {
-	field := strings.TrimPrefix(key, "XHTTP")
+	field, name, raw, err := xhttpConfMember(key, value)
+	if err != nil {
+		return err
+	}
+	data, _ := json.Marshal(map[string]json.RawMessage{name: raw})
+	parsed, err := ParseXHTTPExtra(string(data))
+	if err != nil {
+		if p, ok := problem.As(err); ok {
+			p.At(key)
+		}
+		return err
+	}
+	reflect.ValueOf(o).Elem().FieldByName(field).Set(reflect.ValueOf(parsed).Elem().FieldByName(field))
+	o.separate = true
+	return nil
+}
+
+// XHTTPExtraJSON combines separate XHTTP<Name> options into the equivalent
+// XHTTPExtra object. Path, host and mode are not extra options.
+func XHTTPExtraJSON(options map[string]string) (string, error) {
+	members := map[string]json.RawMessage{}
+	for key, value := range options {
+		_, name, raw, err := xhttpConfMember(key, value)
+		if err != nil {
+			return "", err
+		}
+		members[name] = raw
+	}
+	data, _ := json.Marshal(members)
+	if _, err := ParseXHTTPExtra(string(data)); err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// xhttpConfMember converts one separate XHTTP option to its extra JSON member.
+func xhttpConfMember(key, value string) (field, name string, raw json.RawMessage, err error) {
+	field = strings.TrimPrefix(key, "XHTTP")
 	if field == "" {
-		return problem.New("option_unknown", "unknown XHTTP option").At(key)
+		return "", "", nil, problem.New("option_unknown", "unknown XHTTP option").At(key)
 	}
-	name := strings.ToLower(field[:1]) + field[1:]
-	target := reflect.ValueOf(o).Elem().FieldByName(field)
+	name = strings.ToLower(field[:1]) + field[1:]
+	target := reflect.ValueOf(&XHTTPOptions{}).Elem().FieldByName(field)
 	if !target.IsValid() || !target.CanSet() {
-		return problem.New("option_unknown", "unknown XHTTP option").At(key)
+		return "", "", nil, problem.New("option_unknown", "unknown XHTTP option").At(key)
 	}
-	var raw json.RawMessage
 	switch {
 	case target.Kind() == reflect.Bool:
 		if value != "true" && value != "false" {
-			return problem.New("boolean_invalid", "invalid XHTTP boolean").At(key)
+			return "", "", nil, problem.New("boolean_invalid", "invalid XHTTP boolean").At(key)
 		}
 		raw = []byte(value)
 	case target.Kind() == reflect.Int || target.Type() == reflect.TypeOf(XHTTPRange{}):
@@ -394,15 +430,5 @@ func (o *XHTTPOptions) SetXHTTPConfField(key, value string) error {
 	default:
 		raw, _ = json.Marshal(value)
 	}
-	data, _ := json.Marshal(map[string]json.RawMessage{name: raw})
-	parsed, err := ParseXHTTPExtra(string(data))
-	if err != nil {
-		if p, ok := problem.As(err); ok {
-			p.At(key)
-		}
-		return err
-	}
-	target.Set(reflect.ValueOf(parsed).Elem().FieldByName(field))
-	o.separate = true
-	return nil
+	return field, name, raw, nil
 }
