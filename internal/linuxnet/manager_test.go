@@ -174,6 +174,85 @@ func TestRollbackAfterPartialSetup(t *testing.T) {
 		t.Fatal("partial setup not rolled back", f.calls)
 	}
 }
+func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
+	m, f, original := testManager(t)
+	ctx := context.Background()
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err != nil {
+		t.Fatal(err)
+	}
+	// Crash, then the next session's Acquire retains the kill switch.
+	if err := m.Recover(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	f.fail = "-6 rule add pref 10901"
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err == nil {
+		t.Fatal("expected setup failure")
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "delete table inet bimeron_core") {
+			t.Fatal("rollback removed retained protection", f.calls)
+		}
+	}
+	b, _ := os.ReadFile(m.Resolver)
+	if string(b) != string(original) || !f.guard || len(f.rules["-4"]) != 0 || len(f.rules["-6"]) != 0 {
+		t.Fatal("rollback lost protection or left routing", f.calls)
+	}
+	if s, err := m.Load(); err != nil || s == nil || !s.Guard || s.Routing {
+		t.Fatal("journal must keep only the guard", s, err)
+	}
+}
+func TestDisabledIPv6DirectPrefixesStayInTunnel(t *testing.T) {
+	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "2001:db8::/32", Action: routing.Direct}, {CIDR: "192.168.1.0/24", Action: routing.Direct}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, disable := range []bool{true, false} {
+		m, f, _ := testManager(t)
+		if err := m.Configure(context.Background(), "Bimeron", 1420, p, disable, false); err != nil {
+			t.Fatal(err)
+		}
+		throw6 := false
+		for _, call := range f.calls {
+			if strings.Contains(call, "-6 route add throw 2001:db8::/32") {
+				throw6 = true
+			}
+		}
+		if throw6 == disable || len(f.routes["-4"]) != 2 {
+			t.Fatal("unexpected IPv6 bypass", disable, f.calls)
+		}
+	}
+}
+func TestKernelWithoutIPv6SkipsIPv6Commands(t *testing.T) {
+	m, f, original := testManager(t)
+	m.NoIPv6 = func() bool { return true }
+	ctx := context.Background()
+	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "2001:db8::/32", Action: routing.Direct}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Preflight(ctx, "Bimeron2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Configure(ctx, "Bimeron", 1420, p, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.guard || len(f.rules["-4"]) != 3 {
+		t.Fatal("IPv4 protection not configured", f.calls)
+	}
+	if err := m.Recover(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(m.Resolver)
+	if string(b) != string(original) || f.guard || len(f.rules["-4"]) != 0 {
+		t.Fatal("recovery incomplete", f.calls)
+	}
+	for _, call := range f.calls {
+		if strings.HasPrefix(call, "ip -6 ") {
+			t.Fatal("IPv6 command on a kernel without IPv6", call)
+		}
+	}
+}
 func TestExternalDNSChangeKeepsProtection(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()

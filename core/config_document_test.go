@@ -144,6 +144,17 @@ func TestConfigDocumentEdit(t *testing.T) {
 	}
 }
 
+// A leading dot is a valid Domain spelling for both the editor and the compiler.
+func TestConfigDocumentLeadingDotDomain(t *testing.T) {
+	d := ParseConfigDocument([]byte("[Rule]\nDomain=example.org\nAction=direct\n"))
+	if err := d.SetRule(0, "Domain", ".example.com", "proxy"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "[Rule]\nDomain=.example.com\nAction=proxy\n"; string(d.Bytes()) != want {
+		t.Fatalf("got %q want %q", d.Bytes(), want)
+	}
+}
+
 func TestConfigDocumentMove(t *testing.T) {
 	a := "[Rule]\nDomain = first.org\n# first comment\nAction = direct\n"
 	b := "# [Rule]\n# GeoSite = ads\n# # inner\n# Action = block\n"
