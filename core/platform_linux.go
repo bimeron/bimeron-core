@@ -74,15 +74,18 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 	}
 	owned.add(func() error { s.Destroy(); return nil })
 	owned.add(func() error { h.Close(); return nil })
+	configured := false
 	owned.add(func() error {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		return p.manager.Recover(cleanCtx, false)
+		// A failed setup keeps protection retained by Acquire; a stop releases it.
+		return p.manager.Recover(cleanCtx, p.killSwitch && !configured)
 	})
 	report("network_setup", "Configuring Linux policy routes and tunnel DNS")
 	if err = p.manager.Configure(ctx, d.Name(), c.MTU, c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
 		return nil, codeFault(err, "linux_network_setup_failed", false)
 	}
+	configured = true
 	if c.KillSwitch {
 		report("kill_switch_active", "nftables kill switch active; protection survives process termination")
 	}

@@ -107,7 +107,19 @@ func checkRule(r Rule, rule int) error {
 	}
 	return nil
 }
-func normalize(s string) string { return strings.ToLower(strings.TrimSuffix(s, ".")) }
+
+// normalize drops a trailing root dot and a single leading dot: ".example.com"
+// is the conventional suffix spelling of example.com and its subdomains.
+func normalize(s string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSuffix(s, "."), "."))
+}
+
+// ValidDomain reports whether s is an acceptable Domain rule value, so
+// editors validate exactly what Compile accepts.
+func ValidDomain(s string) bool {
+	d := normalize(s)
+	return d != "" && !strings.ContainsAny(d, " /*:\t\r\n")
+}
 func matchesDomain(domain, rule string) bool {
 	return domain == rule || strings.HasSuffix(domain, "."+rule)
 }
@@ -165,10 +177,10 @@ func CompileWithGeoData(c Config, data *GeoData) (*Policy, error) {
 			}
 			continue
 		} else {
-			cr.domain = normalize(r.Domain)
-			if cr.domain == "" || strings.ContainsAny(cr.domain, " /*:\t\r\n") {
+			if !ValidDomain(r.Domain) {
 				return nil, problem.New("domain_invalid", fmt.Sprintf("invalid domain in rule %d", i+1)).In("Rule").At("Domain").AtRule(i + 1)
 			}
+			cr.domain = normalize(r.Domain)
 		}
 		p.rules = append(p.rules, cr)
 	}
