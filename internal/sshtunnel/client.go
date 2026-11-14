@@ -48,6 +48,12 @@ func (c streamConn) CloseWrite() error { return c.closeWrite() }
 
 var _ transport.StreamDialer = (*Client)(nil)
 
+// ErrNetwork marks connection failures caused by the network path to the
+// server: timeouts, refused or reset connections, unreachable routes, and DNS
+// errors. Authentication, host-key, and configuration failures never match it,
+// so callers may retry exactly the errors for which errors.Is reports true.
+var ErrNetwork = errors.New("SSH server unavailable")
+
 // fileTrace observes filesystem access for tests; see SetFileTrace.
 var fileTrace atomic.Pointer[func(op, path string)]
 
@@ -270,13 +276,27 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		if agentConn != nil {
 			agentConn.Close()
 		}
-		return nil, fmt.Errorf("SSH server unavailable")
+		if a.network(err) {
+			return nil, ErrNetwork
+		}
+		return nil, fmt.Errorf("SSH server transport failed")
 	}
 	stop := context.AfterFunc(dialCtx, func() { _ = conn.Close() })
-	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, HostKeyCallback: verify, Timeout: 20 * time.Second}
+	callback := verify
 	if policy != nil {
 		policy.ctx, policy.prompt = ctx, prompt
-		config.HostKeyCallback = policy.check
+		callback = policy.check
+	}
+	var hostKeyFailed atomic.Bool
+	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, Timeout: 20 * time.Second,
+		HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
+			err := callback(host, remote, key)
+			if err != nil {
+				hostKeyFailed.Store(true)
+			}
+			return err
+		}}
+	if policy != nil {
 		config.HostKeyAlgorithms = policy.algorithms(address, conn.RemoteAddr())
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
@@ -290,6 +310,11 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 			if e := policy.result(); e != nil {
 				return nil, e
 			}
+		}
+		// A rejected host key is never a network failure, even if the
+		// deadline passed while the connection was being torn down.
+		if !hostKeyFailed.Load() && a.network(err) {
+			return nil, ErrNetwork
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}

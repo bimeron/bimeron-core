@@ -57,13 +57,18 @@ func sshOptions(c SessionConfig) sshtunnel.Options {
 	return sshtunnel.Options{DefaultKeys: c.SSHDefaultKeys, HostKeys: c.SSHHostKeys, ProfileOnly: c.SSHProfileOnly}
 }
 
-// sshFault keeps the single ssh_connection_failed code unless the session
-// opted in to host-key handling (ssh_host_key_* codes) or is profile-only
-// (ssh_known_hosts_missing).
+// sshFault maps a failed SSH connection to a fault. Failures on the network
+// path to the server are the retryable ssh_network_failed. Host-key,
+// authentication and configuration failures are terminal: the single
+// ssh_connection_failed code, unless the session opted in to host-key handling
+// (ssh_host_key_* codes) or is profile-only (ssh_known_hosts_missing).
 func sshFault(err error, c SessionConfig) error {
 	var hostKey *sshtunnel.HostKeyError
 	if (c.SSHHostKeys != nil || c.SSHProfileOnly) && errors.As(err, &hostKey) {
 		return fault(hostKey.Code, false)
+	}
+	if errors.Is(err, sshtunnel.ErrNetwork) {
+		return fault("ssh_network_failed", true)
 	}
 	return fault("ssh_connection_failed", false)
 }
