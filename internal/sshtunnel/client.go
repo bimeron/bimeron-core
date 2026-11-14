@@ -92,6 +92,9 @@ func expand(path string, profileOnly bool) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("SSH home directory unavailable")
 		}
+		if path == "~" {
+			return home, nil
+		}
 		return filepath.Join(home, path[2:]), nil
 	}
 	return path, nil
