@@ -78,7 +78,7 @@
     "hysteria2_dial_rejected": {
       "kind": "connection",
       "en": "The Hysteria2 server rejected the destination connection. Check the destination and server policy.",
-      "ru": "The Hysteria2 server rejected the destination connection. Check the destination and server policy."
+      "ru": "Сервер Hysteria2 отклонил подключение к адресу назначения. Проверьте адрес назначения и правила сервера."
     },
     "hysteria2_invalid_config": {
       "kind": "connection",
