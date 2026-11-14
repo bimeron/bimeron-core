@@ -117,3 +117,26 @@ func TestVerifiedSSHForwarding(t *testing.T) {
 		t.Fatalf("untrusted host accepted: %v", err)
 	}
 }
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("home directory unavailable")
+	}
+	for in, want := range map[string]string{
+		"":               "",
+		"~":              home,
+		"~/.ssh/id":      filepath.Join(home, ".ssh", "id"),
+		`~\.ssh\id`:      filepath.Join(home, `.ssh\id`),
+		"~alice/id":      "~alice/id",
+		"relative/hosts": "relative/hosts",
+	} {
+		got, err := expand(in, false)
+		if err != nil || got != want {
+			t.Errorf("expand(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if got, err := expand("~", true); err == nil {
+		t.Errorf("profile-only expand(\"~\") = %q, want an error", got)
+	}
+}
