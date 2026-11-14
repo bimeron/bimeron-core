@@ -17,5 +17,7 @@
 .continue/
 /doctor-report*.json
 /dist/
+# Temporary Windows resource objects written by scripts/build-dist.go.
+/cmd/bimeron/zz_bimeron_resource_windows_*.syso
 
 /core/apple-version.record

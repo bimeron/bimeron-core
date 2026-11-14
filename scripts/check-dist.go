@@ -14,6 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+
+	"bimeron/internal/winres"
 )
 
 func main() {
@@ -60,6 +63,9 @@ func check() error {
 				return err
 			}
 			if platform == "windows" {
+				if err := resources(filepath.Join(dir, binary)); err != nil {
+					return err
+				}
 				if err := machine(filepath.Join(dir, "wintun.dll"), platform, arch); err != nil {
 					return err
 				}
@@ -96,6 +102,24 @@ func check() error {
 		if !slices.Equal(abis, []string{"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}) {
 			return fmt.Errorf("Android AAR has unexpected ABIs: %v", abis)
 		}
+	}
+	return nil
+}
+
+// resources checks the icon and VERSIONINFO of a Windows executable. A set
+// BIMERON_VERSION must match the embedded version exactly.
+func resources(path string) error {
+	ico, err := os.ReadFile(filepath.Join("assets", "brand", "bimeron.ico"))
+	if err != nil {
+		return err
+	}
+	file, err := pe.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := winres.Verify(file, ico, strings.TrimPrefix(os.Getenv("BIMERON_VERSION"), "v")); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
 }
