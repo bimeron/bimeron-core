@@ -23,24 +23,31 @@ const (
 	Failed       State = "failed"
 )
 
+const reconnectLimit = 3
+
 // Event contains only bounded diagnostic codes and messages, never destinations
 // or credentials. Events may be dropped if the consumer is slow; Status is authoritative.
+
 type Event struct {
-	Time          time.Time
-	State         State
-	Code, Message string
-	Attempt       int
-	LastError     string
-	ErrorStage    string `json:",omitempty"`
+	ReconnectAttempt int `json:",omitempty"`
+	ReconnectLimit   int `json:",omitempty"`
+	Time             time.Time
+	State            State
+	Code, Message    string
+	Attempt          int
+	LastError        string
+	ErrorStage       string `json:",omitempty"`
 }
 type Status struct {
-	Native     *NativeStatus `json:"native,omitempty"`
-	Session    *SessionInfo  `json:"Session,omitempty"`
-	State      State
-	Attempt    int
-	Since      time.Time
-	LastError  string
-	ErrorStage string `json:",omitempty"`
+	ReconnectAttempt int           `json:",omitempty"`
+	ReconnectLimit   int           `json:",omitempty"`
+	Native           *NativeStatus `json:"native,omitempty"`
+	Session          *SessionInfo  `json:"Session,omitempty"`
+	State            State
+	Attempt          int
+	Since            time.Time
+	LastError        string
+	ErrorStage       string `json:",omitempty"`
 }
 
 // StatsSnapshot binds cumulative counters to a per-Start session.
@@ -190,7 +197,7 @@ func (e *Engine) Events() <-chan Event { return e.events }
 func (e *Engine) EventDrops() uint64 { e.mu.Lock(); defer e.mu.Unlock(); return e.eventDrops }
 func (e *Engine) emitLocked(code, message string) {
 	select {
-	case e.events <- Event{Time: time.Now(), State: e.status.State, Code: code, Message: message, Attempt: e.status.Attempt, LastError: e.status.LastError, ErrorStage: e.status.ErrorStage}:
+	case e.events <- Event{Time: time.Now(), State: e.status.State, Code: code, Message: message, Attempt: e.status.Attempt, LastError: e.status.LastError, ErrorStage: e.status.ErrorStage, ReconnectAttempt: e.status.ReconnectAttempt, ReconnectLimit: e.status.ReconnectLimit}:
 	default:
 		e.eventDrops++
 	}
@@ -220,10 +227,29 @@ func (e *Engine) transitionLocked(state State, err error) {
 		}
 	} else if state == Connected || state == Disconnected {
 		e.status.LastError = ""
+		e.status.ReconnectAttempt = 0
+		e.status.ReconnectLimit = 0
 		e.status.ErrorStage = ""
 	}
 	e.emitLocked("state", string(state))
 }
+
+// prepareReconnect publishes the upcoming attempt before its backoff. Status is
+// authoritative even if events are dropped. A successful connection resets it.
+func (e *Engine) prepareReconnect(err error) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.status.State == Stopping || e.status.ReconnectAttempt >= reconnectLimit {
+		return false
+	}
+	e.status.ReconnectAttempt++
+	e.status.ReconnectLimit = reconnectLimit
+	e.transitionLocked(Reconnecting, err)
+	// The state/error can be unchanged between retries; still publish progress.
+	e.emitLocked("reconnect_attempt", "Reconnect attempt scheduled")
+	return true
+}
+
 func (e *Engine) report(code, message string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -409,7 +435,13 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 			result = fault("session_stopped_unexpectedly", false)
 			return
 		}
-		e.transition(Reconnecting, err)
+		if !e.prepareReconnect(err) {
+			if ctx.Err() != nil {
+				return
+			}
+			result = err
+			return
+		}
 		e.report("retry", "Connection interrupted; retrying after cleanup")
 		timer := time.NewTimer(delay)
 		select {
@@ -446,10 +478,12 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 		if time.Since(connectedAt) >= time.Minute {
 			delay = e.opts.RetryMin
 		}
-		e.transition(Reconnecting, err)
 		p.Suspend()
 		e.report("transport_suspend", "Tunnel retained; proxy traffic blocked during recovery")
 		for {
+			if !e.prepareReconnect(err) {
+				return err
+			}
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
