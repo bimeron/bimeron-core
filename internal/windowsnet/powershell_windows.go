@@ -29,7 +29,9 @@ func PowerShellCommand(ctx context.Context, body string) (*exec.Cmd, error) {
 	modules := filepath.Join(home, "Modules")
 	// Windows PowerShell can expand PSModulePath at startup. Reset it inside the
 	// script before the first autoloaded cmdlet, as well as in the child environment.
-	prefix := "$env:PSModulePath=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + base64.StdEncoding.EncodeToString([]byte(modules)) + "'));\n"
+	// Console streams otherwise use the OEM code page (for example CP866), which
+	// turns non-ASCII names and localized error text into '?' before Go reads it.
+	prefix := "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);$env:PSModulePath=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + base64.StdEncoding.EncodeToString([]byte(modules)) + "'));\n"
 	units := utf16.Encode([]rune(prefix + body))
 	encoded := make([]byte, len(units)*2)
 	for i, u := range units {
