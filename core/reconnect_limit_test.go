@@ -56,6 +56,17 @@ func TestReconnectBudgetExhaustion(t *testing.T) {
 			if status.State != Failed || status.LastError != expected || status.ReconnectAttempt != 3 || status.ReconnectLimit != 3 {
 				t.Fatal(status)
 			}
+			// A later Stop (daemon shutdown, CLI stop) reports only teardown: settled
+			// exhaustion is clean, while a failed Close must stay visible.
+			if err := e.Stop(ctx); (err != nil) != (mode == "cleanup") {
+				t.Fatal("stop after terminal failure", err)
+			}
+			if again := e.Status(); again.State != Failed || again.LastError != expected {
+				t.Fatal("stop changed terminal status", again)
+			}
+			if err := e.Wait(ctx); err == nil {
+				t.Fatal("wait lost terminal error")
+			}
 			if mode == "initial" || mode == "ordinary" {
 				if opens.Load() != 4 || status.Attempt != 4 {
 					t.Fatal("expected initial + three retries", opens.Load(), status)
@@ -161,5 +172,24 @@ func TestStopDuringReconnectBackoffClearsProgress(t *testing.T) {
 	}
 	if _, present := wire["ReconnectAttempt"]; present {
 		t.Fatal(string(data))
+	}
+}
+
+func TestStopAfterUnexpectedSessionEndIsClean(t *testing.T) {
+	e := testEngine(fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{wait: func(context.Context) error { return nil }}, nil
+	}})
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, testConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Wait(ctx); err == nil {
+		t.Fatal("missing terminal error")
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.Status(); s.State != Failed || s.LastError != "session_stopped_unexpectedly" {
+		t.Fatal(s)
 	}
 }
