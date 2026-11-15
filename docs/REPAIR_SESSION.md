@@ -423,3 +423,11 @@ state; temporary tasks, account and verification files were removed. No checkpoi
 was restored/deleted, no frozen candidate was modified. Release acceptance must
 repeat actual GUI UAC under a standard user and alternate administrator with the
 new pinned production bytes.
+## Windows abnormal stopped exit recovery
+
+A stopped owned Windows service with PID zero now selects consent-gated owned
+network recovery when its SCM exit code cannot prove clean completion, even if
+no WFP/NRPT markers remain. Marker absence alone does not authorize ordinary
+start after a crash. Recovery and cleanup proof must succeed before start and
+IPC readiness in the same elevated session. See
+[specification and local VM evidence](workstreams/windows-first-repair.md).
