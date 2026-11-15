@@ -140,7 +140,7 @@ jobs:
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
           go -C "$xray_dir" build -o "$RUNNER_TEMP/xray" ./main
-          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXray(VMessAEAD|VLESSGRPC)$' -count=1 -v
+          CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/vmess -run '^TestXray(VMessAEAD|VLESS)$' -count=1 -v
       - name: Trojan TCP, WebSocket, and gRPC interoperability with Xray
         run: CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/trojan -run '^TestXrayTrojanInterop$' -count=1 -v
       - name: Shadowsocks 2022 SIP022 and SIP023 interoperability with Xray

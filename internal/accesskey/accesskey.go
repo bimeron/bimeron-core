@@ -505,7 +505,7 @@ func (v VLESS) Validate(host string, port int) error {
 	}
 	if v.ALPN != "" {
 		for _, protocol := range strings.Split(v.ALPN, ",") {
-			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && protocol != "h2" && protocol != "h3" && protocol != "http/1.1") || (v.Network == "xhttp" && strings.Contains(v.ALPN, ",") && v.ALPN != "h2,http/1.1") {
+			if protocol == "" || strings.ContainsAny(protocol, " \t\r\n") || (v.Network == "ws" && protocol != "http/1.1") || (v.Network == "grpc" && protocol != "h2") || (v.Network == "xhttp" && v.ALPN != "h2" && v.ALPN != "h3" && v.ALPN != "h2,http/1.1") {
 				return alpnProblem("invalid VLESS ALPN", v.Network)
 			}
 		}
@@ -1079,7 +1079,7 @@ func wsPathProblem(message, value string) error {
 
 // alpnProblem reports an ALPN list that the transport does not accept.
 func alpnProblem(message, network string) error {
-	allowed := map[string]string{"ws": "http/1.1", "grpc": "h2", "xhttp": "h2; h3; http/1.1; h2,http/1.1"}[network]
+	allowed := map[string]string{"ws": "http/1.1", "grpc": "h2", "xhttp": "h2; h3; h2,http/1.1"}[network]
 	if allowed == "" {
 		return problem.New("value_invalid", message).At("ALPN")
 	}
