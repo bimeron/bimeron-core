@@ -63,7 +63,7 @@ File = test.key
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
 `ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
-`hysteria2://...`, `anytls://...`, `ssh://...`, or `tuic://...` key. Relative paths are resolved against the `.conf` directory,
+`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key. Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -241,7 +241,7 @@ For WebSocket, set `type=ws` and optionally `path` (default `/`) and `host`
 `http/1.1` when specified. Early data accepts `ed=1..8192`, either as a link
 query option or inside the encoded `path` query. For gRPC, set `type=grpc` and
 `serviceName`; optional `mode=multi` selects `TunMulti`. For XHTTP, set
-`type=xhttp` and `mode=packet-up`, `stream-up` or `auto` with TLS, or
+`type=xhttp` and `mode=packet-up`, `stream-up`, `stream-one` or `auto` with TLS, or
 `mode=stream-one`, `stream-up` or `auto` with REALITY. gRPC uses HTTP/2;
 XHTTP uses HTTP/2 by default and `alpn=h3` selects HTTP/3 with TLS.
 Extended XHTTP settings can be supplied as a percent-encoded JSON `extra`
@@ -669,7 +669,7 @@ the next server. `NXDOMAIN` is final and does not trigger fallback. If every
 server is unavailable, the client receives `SERVFAIL`. DNS over UDP and TCP is
 supported. If `DNS` is omitted, `1.1.1.1` is used. IPv6 server addresses,
 DoH, and DoT are not yet supported by this option. Servers must be reachable from
-the Outline server.
+the upstream server.
 
 Physical-adapter DNS settings are preserved. Applications with their own DNS,
 including DoH, use normal IP routing and are not subject to the system DNS rule.
@@ -678,7 +678,7 @@ bypassing the VPN. This mode does not change physical-adapter IPv6 settings.
 Applications with their own DNS/DoH may receive IPv6 addresses, but their IPv6
 connections in the tunnel are blocked. Existing more specific routes may still
 bypass the tunnel. With `IPv6 = enable`, IPv6 destination availability depends
-on the Outline server.
+on the upstream server.
 
 ## [Routing]
 
@@ -688,7 +688,7 @@ on the Outline server.
 
 | Action | Behavior |
 |---|---|
-| `proxy` | Send through Outline. |
+| `proxy` | Send through the upstream server. |
 | `direct` | Connect directly through the original network interface. |
 | `block` | Deny the connection. |
 
@@ -704,8 +704,10 @@ the first match**. Rules are optional; without them, `Default` applies.
 
 | Option | Required | Meaning |
 |---|---|---|
-| `CIDR` | Exactly one of `CIDR` / `Domain` | One IPv4/IPv6 subnet or a comma-separated list, such as `8.8.4.0/24, 8.8.8.0/24`. A single IPv4 address means `/32`; a single IPv6 address means `/128`. |
-| `Domain` | Exactly one of `CIDR` / `Domain` | A domain and its subdomains, such as `example.com`. Available for SOCKS5 and system VPN. |
+| `CIDR` | Exactly one matcher | One IPv4/IPv6 subnet or a comma-separated list, such as `8.8.4.0/24, 8.8.8.0/24`. A single IPv4 address means `/32`; a single IPv6 address means `/128`. |
+| `Domain` | Exactly one matcher | A domain and its subdomains, such as `example.com`. Available for SOCKS5 and system VPN. |
+| `GeoIP` | Exactly one matcher | Comma-separated GeoIP group IDs, such as `ru, by`. Requires `[GeoData] GeoIPFile`. |
+| `GeoSite` | Exactly one matcher | Comma-separated GeoSite group IDs, such as `github`. Requires `[GeoData] GeoSiteFile`. |
 | `Action` | Required | `proxy`, `direct`, or `block`. |
 
 Example rules (illustrative addresses):
@@ -751,15 +753,30 @@ rules and `Default` apply to them. See [DNS_METADATA.MD](DNS_METADATA.MD) for
 detailed limitations.
 
 System rules apply to traffic captured by the tunnel interface. Local networks
-and other more specific system routes may bypass the tunnel. Outline does not
+and other more specific system routes may bypass the tunnel. The tunnel does not
 carry ICMP; `ping` does not test the transport.
+
+## [GeoData]
+
+Optional. Points to the datasets used by `GeoIP` and `GeoSite` rules.
+
+| Option | Meaning |
+|---|---|
+| `GeoIPFile` | Path to a V2Ray GeoIPList protobuf file (`geoip.dat`). |
+| `GeoSiteFile` | Path to a V2Ray GeoSiteList protobuf file (`geosite.dat`). |
+
+Relative paths are resolved against the `.conf` directory. A file is read only
+when an active rule needs it; a missing or unreadable dataset fails with
+`geodata_required` or `geodata_unreadable`. See [GEODATA.MD](GEODATA.MD) for the
+format, limits, and host APIs.
 
 ## File syntax
 
 - UTF-8, with an optional BOM; LF and CRLF line endings.
 - Section and option names are case-sensitive: `SSConf`, `MTU`, `CIDR`.
 - Each section except `[Rule]` may appear once; options cannot repeat within a section.
-- `[Profile] Version = 1` and one source in `[AccessKey]` are required.
+- `[Profile] Version = 1` and one source in `[AccessKey]` are required, except in
+  `[IKEv2]` profiles, which have no `[AccessKey]`.
 - Unknown sections, options, versions, and duplicates are rejected.
 - The `.conf` size limit is 64 KiB.
 - Comments begin with `#` or `;` **on a separate line**.
@@ -777,7 +794,7 @@ dist\windows-amd64\bimeron.exe run profiles\main.conf
 ```
 
 `validate`: check the file, rules, static-key format, or dynamic-key URL;
-reads `File` when specified. Makes no network requests or Windows settings changes.
+reads `File` and any GeoIP/GeoSite datasets that active rules need. Makes no network requests or Windows settings changes.
 `check`: test real TCP/TLS through the selected upstream and print the external IP;
 where DNS checks apply, use the profile's packet transport or DNS-over-TCP for
 a TCP-only profile. Does not change system settings.
@@ -794,4 +811,3 @@ After a crash, remove a remaining DNS rule from an administrator CMD:
 ```cmd
 dist\windows-amd64\bimeron.exe recover
 ```
-

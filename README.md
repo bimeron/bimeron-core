@@ -1,4 +1,4 @@
-# Bimeron Core
+# <img src="assets/brand/bimeron.png" alt="" width="32" height="32" align="absmiddle"> Bimeron Core
 
 Bimeron Core is a Go networking engine that turns a supported access profile into a local
 SOCKS5 proxy or a system VPN.
@@ -12,7 +12,7 @@ recovery. Bimeron Core handles these tasks for its CLI and for applications usin
 Go API, or a platform packet API. You provide the upstream access profile. GUI projects integrate
 the core from separate repositories.
 
-**Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status)
+**Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status) · [All documentation](docs/README.md)
 
 **Choose documentation for your version.** This README and its linked guides describe the
 Git revision you are viewing. For a downloaded package, open its entry in
@@ -35,16 +35,6 @@ Git revision you are viewing. For a downloaded package, open its entry in
 
 ## Supported upstreams
 
-An additional [experimental Windows IKEv2/IPsec backend](docs/IKEV2.MD) controls
-a pre-provisioned system profile. It requires an elevated foreground process,
-has no local SOCKS mode or packet routing rules/statistics. Optional native
-`[IKEv2] KillSwitch = true` enables persistent traffic protection and tunnel DNS.
-Use `bimeron ikev2 profile` to preview and explicitly prepare an owned Windows
-profile; CA trust and initial credential setup remain in Windows.
-Initial [Windows 10/strongSwan checks](docs/IKEV2_LIVE_VALIDATION.MD)
-passed; profile-owned routes enabled internal IPv6 on Windows 10. Captures found
-DNS leakage in unprotected mode; broader interoperability remains unverified.
-
 Support below applies to this source revision; check the tagged README for a release package.
 
 All upstreams shown here support TCP. The UDP column describes system VPN mode; the local
@@ -54,8 +44,8 @@ SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIAT
 | --- | --- | --- |
 | Shadowsocks | TCP, UDP | Yes |
 | Shadowsocks 2022 (including SIP023 AES identity chains) | TCP, UDP | Yes |
-| Shadowsocks / 2022 + v2ray-plugin | WebSocket, WebSocket/TLS; embedded Mux | No; DNS is forwarded over TCP |
-| Shadowsocks / 2022 + simple-obfs | Embedded HTTP or TLS-shaped obfuscation (`obfs-local`) | No; DNS is forwarded over TCP |
+| Shadowsocks or Shadowsocks 2022 + v2ray-plugin | WebSocket, WebSocket/TLS; embedded Mux | No; DNS is forwarded over TCP |
+| Shadowsocks or Shadowsocks 2022 + simple-obfs | Embedded HTTP or TLS-shaped obfuscation (`obfs-local`) | No; DNS is forwarded over TCP |
 | VLESS | TCP, WebSocket, gRPC, XHTTP | Yes |
 | VMess AEAD | TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP | Yes |
 | Trojan | TCP, WebSocket, gRPC over TLS | Yes |
@@ -75,18 +65,26 @@ wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
-[MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded NaiveProxy-compatible client does not
-claim Chromium-identical TLS, HTTP/2, or QUIC behavior. Connections to a remote SOCKS5 upstream are not
-encrypted by the core. HTTP CONNECT accepts `https://` proxies with certificate and server-name
-verification. With `http://`, proxy traffic and Basic credentials use plaintext transport.
-Not every combination has passed live interoperability testing.
+[Trojan transports](docs/TROJAN_TRANSPORTS.MD), [MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded
+NaiveProxy-compatible client does not claim Chromium-identical TLS, HTTP/2, or QUIC behavior.
+Connections to a remote SOCKS5 upstream are not encrypted by the core. HTTP CONNECT accepts
+`https://` proxies with certificate and server-name verification. With `http://`, proxy traffic
+and Basic credentials use plaintext transport. Not every combination has passed live
+interoperability testing.
+
+On Windows, an [experimental IKEv2/IPsec backend](docs/IKEV2.MD) controls a pre-provisioned
+system profile instead of an upstream from the table. It requires an elevated foreground process
+and has no local SOCKS mode, routing rules, or traffic statistics. `bimeron ikev2 profile`
+previews and prepares an owned Windows profile; CA trust and initial credentials remain in
+Windows. Optional `[IKEv2] KillSwitch = true` enables persistent traffic protection and tunnel
+DNS. Initial [Windows 10/strongSwan checks](docs/IKEV2_LIVE_VALIDATION.MD) passed, but captures
+found DNS leakage without that protection; broader interoperability remains unverified.
 
 ## Try a local proxy
 
 This quick start runs **from source**. You need Git, Go 1.26.9 or newer, `curl`, and a working
 access URI for a supported upstream. It runs without administrator privileges or a system
-tunnel. Go is not required to use a prebuilt CLI package; use that release's tagged README
-and configuration guide for its supported commands and profiles.
+tunnel. Go is not required for a prebuilt CLI package; see the note after step 4.
 
 1. Get the source and create a directory for local profiles:
 
@@ -161,6 +159,12 @@ and configuration guide for its supported commands and profiles.
 
    Stop the core with Ctrl+C in its terminal.
 
+**With a release package instead of source:** download the ZIP for your platform from
+[Releases](https://github.com/bimeron/bimeron-core/releases), check it against `SHA256SUMS`, and
+unpack it. Skip step 1, create `profiles/` next to the `bimeron` executable (`bimeron.exe` on
+Windows), and run that executable in place of `go run ./cmd/bimeron`. If a command or profile
+field is rejected, follow the README at that release's tag.
+
 For system VPN, set `Mode = vpn` and use the [Windows CLI](docs/CONF.MD#commands),
 [Linux](docs/LINUX.MD), or [macOS](docs/MACOS.MD) guide. System network changes require elevated
 privileges; the Windows distribution also includes the matching Wintun DLL.
@@ -176,7 +180,8 @@ Windows-only experimental path; see its [requirements and limits](docs/IKEV2.MD)
 | Linux amd64/arm64 | TUN | nftables; does not survive reboot |
 | macOS Intel/Apple Silicon | Experimental CLI VPN via utun | Not implemented |
 
-All three desktop targets support the local SOCKS5 proxy and service/daemon control. IPC uses
+All three desktop targets support the local SOCKS5 proxy and background control: a service
+on Windows and Linux, a root daemon on macOS. IPC uses
 named pipes on Windows and Unix sockets on Linux/macOS. Application-based split routing is
 not available.
 
@@ -188,7 +193,8 @@ not available.
 
 Platform capabilities describe compiled support, not the availability of a driver, permission,
 or compatible server on a particular device. See [desktop integration](docs/GUI_INTEGRATION.MD)
-for the service contract and platform limits. Platform-hosted packet engines are described below.
+for the service contract and platform limits. Platform-hosted packet engines are covered in
+[Integrate the core](#integrate-the-core).
 
 ## Integrate the core
 

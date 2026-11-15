@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Bimeron contributors.
+// Copyright (c) 2026 Bimeron Network.
 // BSD-3-Clause; see LICENSE.
 package wf
 

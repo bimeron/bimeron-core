@@ -1,294 +1,292 @@
-# Terms of Reference: Release and Validation of Apple NetworkExtension
+# Specification: releasing and validating the Apple NetworkExtension
 
 ## 1. Purpose
 
-This document describes the work that needs to be done after gaining access
-to the paid Apple Developer Program team. The result should be a signed and
-verified Bimeron system VPN for macOS based on `NetworkExtension`, which:
+This document describes the work that remains once a paid Apple Developer
+Program team is available. The result should be a signed and verified Bimeron
+system VPN for macOS based on `NetworkExtension` that:
 
-- appears in the VPN system section;
-- starts and stops using standard macOS tools;
-- transmits IPv4 and IPv6 packets between `NEPacketTunnelProvider` and the common Go core;
-- supports Bimeron `ss://`, `ssconf://`, DNS, and IP/CIDR policies;
-- correctly survives network changes, sleep, awakening and restarting of the provider;
-- does not save keys in VPN preferences and does not display them in logs;
-- allows for signed, notarized and reproducible assembly.
+- appears in the system VPN settings;
+- starts and stops with standard macOS tools;
+- passes IPv4 and IPv6 packets between `NEPacketTunnelProvider` and the shared Go core;
+- supports Bimeron access profiles (for example `ss://` and `ssconf://`), DNS, and IP/CIDR policies;
+- survives network changes, sleep, wake, and provider restarts;
+- never stores keys in VPN preferences or prints them in logs;
+- supports signed, notarized, and reproducible builds.
 
-GUI is not included in the scope of this task. Management is carried out by technical
-console shell and macOS system tools.
+A GUI is out of scope. Control uses the technical console shell and macOS system
+tools.
 
-All implementation of this job is done inside the current repository
-`bimeron-core`: Go core, C ABI, Swift provider, technical shell, build
-scripts, tests, and documentation. Separate repository or standalone
-the project for NetworkExtension is not created. If Apple tools require
-Xcode project, it must be part of this repository and use existing ones
-sources, rather than forming a separate code base.
+All work happens in the `bimeron-core` repository: the Go core, C ABI, Swift
+provider, technical shell, build scripts, tests, and documentation. No separate
+repository or standalone NetworkExtension project is created. If Apple tooling
+requires an Xcode project, it lives in this repository and uses the existing
+sources instead of forming a separate code base.
 
-## 2. Initial state
+## 2. Starting point
 
-Before the paid stage begins, the following must remain operational in the repository:
+Before the paid stage begins, the repository must keep working:
 
-- common Go core and package backend `core.NewPacketEngine`;
-- C ABI `cmd/bimeron-apple`;
-- `NEPacketTunnelProvider` and technical shell `BimeronControl`;
-- unsigned assembly of system extension and app extension;
-- C ABI smoke test;
-- separate working macOS backend based on `utun`.
+- the shared Go core and the packet backend `core.NewPacketEngine`;
+- the C ABI in `cmd/bimeron-apple`;
+- the `NEPacketTunnelProvider` and the technical shell `BimeronControl`;
+- unsigned system extension and app extension builds;
+- the C ABI smoke test;
+- the separate, working macOS `utun` backend.
 
-An unsigned build confirms compilation and the ABI contract, but does not confirm
-NetworkExtension health, system routing, or signing rights.
+An unsigned build confirms compilation and the ABI contract. It does not confirm
+that the NetworkExtension works, that system routing is correct, or that signing
+rights are in place.
 
 ## 3. Prerequisites
 
-Before implementation begins, the Apple Team Owner must provide:
+Before implementation, the Apple team owner must provide:
 
 1. Active membership in the Apple Developer Program.
-2. Developer access to the required command in Xcode and Apple Developer Account.
-3. Separate explicit App IDs for the host application and packet tunnel provider.
-4. Allowed capability Network Extensions for both App IDs.
-5. Registered test Mac for development profiles.
-6. Apple Development Certificate for test builds.
+2. Developer access to the team in Xcode and the Apple Developer account.
+3. Separate explicit App IDs for the host application and the packet tunnel provider.
+4. The Network Extensions capability enabled for both App IDs.
+5. A test Mac registered for development profiles.
+6. An Apple Development certificate for test builds.
 7. For direct distribution outside the Mac App Store:
-- Developer ID Application certificate;
-- Developer ID provisioning profiles for host and provider;
-- access to Apple's notarization service.
-8. Selected constant bundle identifiers. After public release, change them
-It’s impossible without a migration plan.
+   - a Developer ID Application certificate;
+   - Developer ID provisioning profiles for the host and the provider;
+   - access to Apple's notarization service.
+8. Final bundle identifiers. After a public release they cannot change without a
+   migration plan.
 
-Signature secrets, private keys, passwords, API keys and provisioning profiles are not
-are added to Git.
+Signing secrets, private keys, passwords, API keys, and provisioning profiles are
+never committed to Git.
 
-## 4. Distribution option
+## 4. Distribution format
 
-The main option for direct distribution of macOS is packet tunnel provider in
-system extension format. Entitlement is used for it
-`packet-tunnel-provider-systemextension`.
+The primary format for direct macOS distribution is a packet tunnel provider
+packaged as a system extension, using the
+`packet-tunnel-provider-systemextension` entitlement.
 
-App extension with entitlement `packet-tunnel-provider` remains a separate option
-for development and possible distribution through the Mac App Store. Decision on
-publications in the Mac App Store are accepted separately and should not complicate the first
-Developer ID release.
+An app extension with the `packet-tunnel-provider` entitlement remains a separate
+option for development and possible Mac App Store distribution. A Mac App Store
+release is decided separately and must not complicate the first Developer ID
+release.
 
-Before release, you need to confirm the selected option using current documentation
-Apple:
+Before release, confirm the chosen format against Apple's current documentation:
 
-- [Deploy Network Extension](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
-- [Entitlement Network Extensions](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.networkextension)
-- [Installing system extension](https://developer.apple.com/documentation/systemextensions/installing-system-extensions-and-drivers)
+- [Network Extension provider deployment](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
+- [Network Extensions entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.networkextension)
+- [Installing system extensions and drivers](https://developer.apple.com/documentation/systemextensions/installing-system-extensions-and-drivers)
 
-## 5. Identifiers, rights and profiles
+## 5. Identifiers, entitlements, and profiles
 
-We need to create and test a matrix for two executable components:
+Create and test the following matrix for the two executables:
 
 | Component | Required data |
 | --- | --- |
-| Host | App ID, bundle ID, Team ID, profile, right to install system extension, access to Keychain |
-| Provider | App ID, bundle ID, Team ID, profile, NetworkExtension entitlement, sandbox and network rights |
+| Host | App ID, bundle ID, Team ID, profile, system extension installation entitlement, Keychain access |
+| Provider | App ID, bundle ID, Team ID, profile, NetworkExtension entitlement, sandbox and network entitlements |
 
-The assembly script must check before signing:
+Before signing, the build script must check:
 
-- Team ID match;
-- exact match of application identifier;
-- required NetworkExtension type;
-- validity period of each profile;
-- compliance with the certificate provisioning profile;
-- presence of `com.apple.developer.system-extension.install` in the host;
-- permitted Keychain access groups where they are used;
-- absence of unnecessary entitlement not provided for by the architecture.
+- that the Team IDs match;
+- that the application identifiers match exactly;
+- the required NetworkExtension type;
+- the validity period of each profile;
+- that each provisioning profile matches the certificate;
+- that the host has `com.apple.developer.system-extension.install`;
+- the allowed Keychain access groups where they are used;
+- that no entitlements beyond those the architecture needs are present.
 
-After signing, you need to automatically check the attached signatures via `codesign`,
-rights via `codesign -d --entitlements`, certificate chain and app integrity
-bundle.
+After signing, automatically verify the signatures with `codesign`, the
+entitlements with `codesign -d --entitlements`, the certificate chain, and the
+app bundle's integrity.
 
-## 6. Assembly and signature
+## 6. Building and signing
 
-It is necessary to bring `scripts/build-apple.sh` to two explicit modes:
+Extend `scripts/build-apple.sh` with two explicit modes:
 
-1. `unsigned` - local or automated verification without signing secrets.
-2. `development` or `distribution` - signature with appropriate certificates and
-profiles.
+1. `unsigned`: local or automated verification without signing secrets.
+2. `development` or `distribution`: signing with the matching certificates and
+   profiles.
 
-The signed assembly must:
+A signed build must:
 
-- use the product version and build number from one source;
+- take the product version and build number from a single source;
 - sign the provider first, then the host;
-- enable hardened runtime for the Developer ID build, if required by the selected one
-distribution scheme;
-- fail with an error if the profiles or entitlement do not match;
-- do not print secrets and profile contents;
-- create a separate catalog of artifacts without the original `.conf` and keys.
+- enable the hardened runtime for Developer ID builds when the chosen
+  distribution scheme requires it;
+- fail if profiles or entitlements do not match;
+- never print secrets or profile contents;
+- write a separate artifact directory without the original `.conf` files or keys.
 
 ## 7. Installation and activation
 
-Commands `activate`, `deactivate`, `install`, `remove`, `start`, `stop`, `status` and
-`events` must be idempotent or return a clear diagnostic error.
+The `activate`, `deactivate`, `install`, `remove`, `start`, `stop`, `status`, and
+`events` commands must be idempotent or return a clear diagnostic error.
 
-You need to check all the results of `OSSystemExtensionRequest`:
+Handle every `OSSystemExtensionRequest` outcome:
 
 - successful activation;
-- the need for confirmation by the user;
-- need to reboot;
-- installed newer or older version;
+- user approval required;
+- reboot required;
+- a newer or older version already installed;
 - system failure;
-- replacement of the existing version;
+- replacing the existing version;
 - deactivation and removal.
 
-After activation, the host must create exactly one configuration
-`NETunnelProviderManager`. Repeated `install` updates owned by Bimeron
-configuration and does not affect other VPN configurations.
+After activation, the host creates exactly one `NETunnelProviderManager`
+configuration. Running `install` again updates only the Bimeron-owned
+configuration and leaves other VPN configurations untouched.
 
-## 8. Storing profile and keys
+## 8. Storing profiles and keys
 
-VPN preferences are only allowed to store the unclassified profile ID and
-service settings. Full `ss://`, `ssconf://`, password and decrypted data
-It is prohibited to store your profile there.
+VPN preferences may store only the non-secret profile ID and service settings.
+Complete `ss://` or `ssconf://` keys, passwords, and decrypted profile data must
+never be stored there.
 
-For app extension, a common Keychain access group host and provider is allowed.
+An app extension may share a Keychain access group between the host and the
+provider.
 
-System extension works outside the user context. Current safe
-the minimum is to transfer the profile via `startTunnel(options:)` when launched explicitly.
-Before implementing automatic recovery, you must separately select and
-agree on a secret storage model:
+A system extension runs outside the user context. The current safe minimum is to
+pass the profile through `startTunnel(options:)` on an explicit start. Before
+implementing automatic recovery, choose and agree on a secret storage model:
 
 - who creates and deletes the record;
-- which process and user have access;
-- what happens after the user logs out and reboots;
-- how the secret is prevented from being read by other applications or users;
-- how migration and revocation of old records is performed.
+- which process and user can access it;
+- what happens after the user logs out and after a reboot;
+- how other applications and users are prevented from reading the secret;
+- how old records are migrated and revoked.
 
-Before adopting this model, system extension automatically starts after reboot
-is not implemented.
+Until that model is adopted, the system extension does not start automatically
+after a reboot.
 
-## 9. Starting a packet tunnel
+## 9. Starting the packet tunnel
 
-At the first signed launch, you need to confirm the following order:
+On the first signed launch, confirm this sequence:
 
-1. Provider receives and checks the inline configuration.
+1. The provider receives and validates the inline configuration.
 2. `RLCreate` creates one session without changing macOS network settings.
-3. Provider applies `NEPacketTunnelNetworkSettings`.
-4. `RLStart` launches the common core.
-5. Readiness is confirmed by the `connected` state, after which it completes
-   `startTunnel`.
-6. Packets from `packetFlow.readPackets` are transmitted to `RLWritePacket`.
-7. Packets from `RLReadPacket` are returned via `packetFlow.writePackets` with
-the correct family of addresses.
-8. Stop cancels the read, terminates the core and frees the handle.
+3. The provider applies `NEPacketTunnelNetworkSettings`.
+4. `RLStart` starts the shared core.
+5. `startTunnel` completes only after the `connected` state confirms readiness.
+6. Packets from `packetFlow.readPackets` go to `RLWritePacket`.
+7. Packets from `RLReadPacket` return through `packetFlow.writePackets` with the
+   correct address family.
+8. Stop cancels the pending read, stops the core, and releases the handle.
 
-Need to check queue limit, packet loss due to overflow, cancellation
-blocking read and lack of Go pointers outside the C ABI boundary.
+Also verify the queue limit, packet drops on overflow, cancellation of a blocked
+read, and that no Go pointers cross the C ABI boundary.
 
 ## 10. Routing and outgoing sockets
 
-Critical criterion - outgoing Outline and direct rules sockets should not
-return to the captured tunnel.
+The critical requirement is that the core's outgoing sockets, both upstream and
+`direct`, never loop back into the captured tunnel.
 
-The check should include:
+Test:
 
 - IPv4 and IPv6;
 - TCP and UDP;
-- `proxy`, `direct` and `block`;
-- full tunnel;
+- `proxy`, `direct`, and `block`;
+- a full tunnel;
 - several IP/CIDR rules;
-- changing Wi-Fi to Ethernet and vice versa;
-- unavailable server and subsequent recovery.
+- switching between Wi-Fi and Ethernet;
+- an unavailable server and subsequent recovery.
 
-If regular provider-originated sockets do not provide stable bypass,
-The outbound transport architecture needs to be reconsidered before further development.
-Bypass through unconfirmed exclusion routes is not accepted.
+If regular provider-originated sockets do not bypass the tunnel reliably,
+reconsider the outbound transport architecture before further development.
+Bypassing through unconfirmed exclusion routes is not acceptable.
 
 ## 11. DNS
 
-Need to check:
+Test:
 
-- system DNS requests through the virtual address Bimeron;
-- several upstream DNS with fallback;
-- AAAA filtering at `IPv6 = disable`;
-- default behavior for `proxy`, `direct` and `block`;
-- recovery after network change;
-- conflict with WARP and other DNS/VPN providers;
-- no DNS leak when restoring transport.
+- system DNS queries through the Bimeron virtual address;
+- several upstream DNS servers with fallback;
+- AAAA filtering with `IPv6 = disable`;
+- default behavior for `proxy`, `direct`, and `block`;
+- recovery after a network change;
+- conflicts with WARP and other DNS or VPN providers;
+- no DNS leak while the transport recovers.
 
-When an active incompatible DNS provider is detected, Bimeron should return
-diagnostic error, rather than silently changing someone else's configuration.
+When an incompatible active DNS provider is detected, Bimeron must return a
+diagnostic error instead of silently changing another provider's configuration.
 
-## 12. Life cycle and recovery
+## 12. Lifecycle and recovery
 
-Required scripts:
+Required scenarios:
 
 - regular start and stop;
-- repeated start after stop;
+- start again after stop;
 - stop during startup;
-- error applying network settings;
-- core launch error;
-- loss of Wi-Fi;
-- Wi-Fi/Ethernet transition;
-- sleep and awakening;
-- updating dynamic `ssconf://` during reconnection;
-- completion of the provider system;
-- system extension update;
-- reboot Mac;
-- damaged or deleted profile entry.
+- failure to apply network settings;
+- core startup failure;
+- Wi-Fi loss;
+- switching between Wi-Fi and Ethernet;
+- sleep and wake;
+- updating a dynamic `ssconf://` key during reconnection;
+- the system terminating the provider;
+- updating the system extension;
+- rebooting the Mac;
+- a damaged or deleted profile record.
 
-Each scenario must end in one specific state, not leave
-stuck handles and issue a safe repeated recovery command.
+Each scenario must end in one defined state, leave no stuck handles, and offer a
+safe, repeatable recovery command.
 
 ## 13. Kill switch
 
-`KillSwitch = true` remains prohibited for NetworkExtension until a separate
-architectural design and testing.
+`KillSwitch = true` stays rejected for NetworkExtension until a separate
+architecture design and testing are complete.
 
-Before implementation you need to determine:
+Before implementation, determine:
 
-- which Apple APIs guarantee blocking at startup, reconnection and crash;
-- whether the blocking is valid after the completion of host and provider;
-- how access to the local network is maintained;
-- how emergency shutdown is performed;
-- what happens when updating and deleting an extension;
-- what restrictions differ between system extension and app extension.
+- which Apple APIs guarantee blocking during startup, reconnection, and crashes;
+- whether blocking persists after the host and provider exit;
+- how local network access is preserved;
+- how an emergency shutdown works;
+- what happens when the extension is updated or removed;
+- how the limits differ between system and app extensions.
 
-You cannot declare a kill switch ready based solely on included routes or
-successful unit test.
+A kill switch cannot be declared ready based only on included routes or a passing
+unit test.
 
 ## 14. Diagnostics and logs
 
-It is necessary to provide:
+Provide:
 
-- stable error codes for host, provider and Go core;
-- reading status and events without freezing;
-- version of host, provider and core in diagnostics;
-- secure system logs without keys, dynamic key URLs and passwords;
-- distinguish between signature, profile, user permission, route, DNS and
-transport;
-- instructions for collecting diagnostics by the user.
+- stable error codes for the host, provider, and Go core;
+- status and event reads that never hang;
+- host, provider, and core versions in diagnostics;
+- safe system logs without keys, dynamic key URLs, or passwords;
+- clear separation of signing, profile, user permission, routing, DNS, and
+  transport failures;
+- instructions for users to collect diagnostics.
 
 ## 15. Security
 
-A separate review is required before release:
+Before release, a separate review must cover:
 
-- Swift, C ABI and Go trust boundaries;
-- sizes and lifetime of all buffers;
-- parallel start/stop/message operations;
-- processing of damaged configuration;
-- Keychain and app bundle file rights;
-- lack of secrets in process arguments, preferences and logs;
+- the Swift, C ABI, and Go trust boundaries;
+- the sizes and lifetimes of all buffers;
+- concurrent start, stop, and message operations;
+- handling of damaged configurations;
+- Keychain and app bundle file permissions;
+- no secrets in process arguments, preferences, or logs;
 - secure profile deletion;
 - behavior when the bundle is replaced or damaged;
-- minimum set of entitlement.
+- the minimal set of entitlements.
 
 ## 16. Testing
 
-### Automatic checks
+### Automated checks
 
 - Go unit and integration tests;
-- race detector;
-- C ABI smoke test;
-- unsigned assembly of both extension options;
-- tests for parsing configuration and C ABI errors;
-- checking entitlement and signatures on a dedicated macOS runner;
-- checking that artifacts do not contain keys and provisioning profiles in excess
-the necessary embedded profiles of the signed bundle.
+- the race detector;
+- the C ABI smoke test;
+- unsigned builds of both extension variants;
+- tests for configuration parsing and C ABI errors;
+- entitlement and signature checks on a dedicated macOS runner;
+- a check that artifacts contain no keys or provisioning profiles beyond the
+  profiles embedded in the signed bundle.
 
-### macOS Manual Matrix
+### Manual macOS matrix
 
 - clean installation;
 - update over the previous version;
@@ -296,85 +294,85 @@ the necessary embedded profiles of the signed bundle.
 - Apple Silicon;
 - supported macOS versions;
 - Wi-Fi and Ethernet;
-- IPv4-only, dual stack and unavailable IPv6;
-- sleep, awakening and reboot;
-- WARP or other VPN/DNS provider;
+- IPv4-only, dual stack, and unavailable IPv6;
+- sleep, wake, and reboot;
+- WARP or another VPN or DNS provider;
 - full tunnel and split routing;
-- static and dynamic key;
+- static and dynamic keys;
 - server failure and recovery.
 
 ## 17. Notarization and distribution
 
-For direct distribution you need:
+For direct distribution:
 
-1. Collect and sign the bundle with the Developer ID Application certificate.
-2. Check signatures locally.
-3. Package the artifact in a supported way.
-4. Send it via `notarytool`.
-5. Check the notarization log.
-6. Attach the ticket to the artifact.
+1. Build and sign the bundle with the Developer ID Application certificate.
+2. Verify the signatures locally.
+3. Package the artifact in a supported format.
+4. Submit it with `notarytool`.
+5. Review the notarization log.
+6. Staple the ticket to the artifact.
 7. Test Gatekeeper on a clean Mac.
-8. Publish checksum and installation/removal instructions.
+8. Publish checksums and installation and removal instructions.
 
-Links:
+References:
 
-- [Software Notarization for macOS](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-- [Setting up the notarization process](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+- [Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
+- [Customizing the notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 
 ## 18. Build automation and secrets
 
-Public runners only perform unsigned builds and tests without Apple secrets.
+Public runners perform only unsigned builds and tests without Apple secrets.
 
-The signed build runs on a controlled macOS runner or a separate one
-protected process. Secrets should have minimal rights, not be shared
-logs and deleted from the temporary Keychain after job.
+Signed builds run on a controlled macOS runner or in a separate protected
+process. Secrets have minimal permissions, never appear in logs, and are removed
+from the temporary Keychain after the job.
 
-The release is published only after successful tests, signature verification,
-notarization and manual smoke test.
+A release is published only after tests, signature verification, notarization,
+and a manual smoke test pass.
 
-## 19. Participation of the project owner
+## 19. Project owner involvement
 
-A project owner will be required for the following:
+The project owner is needed to:
 
-- joining the Apple Developer Program or providing access to the team;
-- approval of bundle identifiers and distribution method;
-- creation or confirmation of App ID, certificates and profiles;
-- confirmation of system extension in macOS settings;
-- confirmation of adding a VPN configuration;
-- manual check of VPN system switch, browser, sleep and network change;
-- approval of the secret storage model and kill switch requirements;
-- decision on publication and release.
+- join the Apple Developer Program or grant access to the team;
+- approve the bundle identifiers and the distribution method;
+- create or confirm the App IDs, certificates, and profiles;
+- approve the system extension in macOS settings;
+- approve adding the VPN configuration;
+- manually check the system VPN switch, browsing, sleep, and network changes;
+- approve the secret storage model and kill switch requirements;
+- decide on publication and release.
 
-## 20. Readiness criteria
+## 20. Completion criteria
 
-The work is considered completed when the following conditions are simultaneously met:
+The work is complete when all of the following hold:
 
-- the signed provider is activated in the normal way;
-- Bimeron is displayed in the VPN system section;
-- real TCP/UDP and DNS traffic passes through Outline;
-- IPv4, IPv6 and split routing correspond to the configuration;
-- outgoing sockets are not looped into the tunnel;
-- stop, sleep, wake, network change and restart pass without state leaks;
-- secrets are missing in preferences, logs and diagnostics;
-- the signed bundle undergoes automatic checks and notarization;
-- manual matrix is ​​documented and executed;
-- kill switch and autorun restrictions are either eliminated or explicitly reflected in
-product capabilities.
+- the signed provider activates the standard way;
+- Bimeron appears in the system VPN settings;
+- real TCP/UDP and DNS traffic passes through the upstream server;
+- IPv4, IPv6, and split routing match the configuration;
+- outgoing sockets do not loop into the tunnel;
+- stop, sleep, wake, network changes, and restarts leave no stale state;
+- no secrets appear in preferences, logs, or diagnostics;
+- the signed bundle passes automated checks and notarization;
+- the manual matrix is documented and executed;
+- the kill switch and automatic start limitations are either resolved or
+  explicitly reflected in the product capabilities.
 
 ## 21. Proposed task breakdown
 
 Track the remaining work as separate tasks:
 
-1. Apple Team, App ID, certificates and provisioning profiles.
-2. Development signature and first activation of the system extension.
-3. Real packet flow and bypass check of outgoing sockets.
-4. DNS, split routing and network conflicts.
-5. Lifecycle: network change, sleep, restart and update.
+1. Apple team, App IDs, certificates, and provisioning profiles.
+2. Development signing and first activation of the system extension.
+3. Real packet flow and verification that outgoing sockets bypass the tunnel.
+4. DNS, split routing, and network conflicts.
+5. Lifecycle: network changes, sleep, restart, and updates.
 6. Secret storage model and automatic recovery.
-7. Architecture and testing of kill switch.
-8. Developer ID assembly, hardened runtime and notarization.
+7. Kill switch architecture and testing.
+8. Developer ID build, hardened runtime, and notarization.
 9. Signed build and release process.
 10. Final security review and acceptance matrix.
 
-Each significant task is performed in a separate branch and is issued in a separate
-pull request after architecture approval.
+Implement each significant task on a separate branch and submit it as a separate
+pull request after the architecture is approved.

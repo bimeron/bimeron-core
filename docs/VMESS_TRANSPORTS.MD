@@ -26,7 +26,7 @@ default. XHTTP `extra` is a JSON string with the validated settings described
 in [XHTTP transport options](VLESS_TRANSPORTS.MD).
 
 Xray accepts `raw`/`tcp`, XHTTP, mKCP, gRPC, WebSocket, HTTPUpgrade, and
-Hysteria transport names. It rejects the removed HTTP/2 and QUIC transports.
+Hysteria transport names; Bimeron accepts only the `tcp` spelling of the first. It rejects the removed HTTP/2 and QUIC transports.
 Legacy `alterId > 0` and unprotected connections are outside this project
 scope. `scy=zero` is rejected because it loses UDP packet boundaries in the
 VPN's stream-to-packet adapter; a local Xray test merged two datagrams.

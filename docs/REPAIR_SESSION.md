@@ -134,7 +134,6 @@ stopping states cannot report ready. Healthy connected/connecting/reconnecting
 service states are preserved. Unreachable speculative live-daemon reconciliation
 was removed after review: v1 journals cannot establish a lost live process identity.
 
-
 Repair-specific updater mode activates and verifies even an initially stopped
 service before committing the executable backup. Legacy `service update` keeps
 its previous stopped-service behavior. This distinction is essential when a DLL

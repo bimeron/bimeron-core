@@ -8,8 +8,7 @@ successful IKEv2 connection or recovery. Active lab recovery is outside this wor
 ## Evidence and scope
 
 Inspected clean Core `plan/ikev2-safe-update-spec` at
-`8ef0110326c86c1621a0c274dfb06a30b123324b`. T3 branch/path match Git;
-provider/model are `codex_petr` / `gpt-6-astra`, medium reasoning. Read repository
+`8ef0110326c86c1621a0c274dfb06a30b123324b`. Read repository
 instructions and the complete [build guide](BUILDING.md). This is a documentation
 slice; no build, native call, service operation or network experiment is required.
 

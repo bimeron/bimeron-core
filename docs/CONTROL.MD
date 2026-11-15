@@ -4,7 +4,6 @@ The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FORE
 is available in development source. It does not change daemon start, the beta.1
 baseline, published assets or Desktop compatibility approval.
 
-
 Native Windows IKEv2 requires foreground execution. Daemon `start` rejects
 such profiles with `ikev2_requires_foreground_user_session`. The optional
 `capabilities.ikev2` object describes native support independently of the
@@ -22,9 +21,13 @@ remain `.conf` files.
 
 Request: `version: 1`, `command`, optional `id` (up to 64 bytes),
 `config` for start (an absolute path), and `after` for events (an event number).
+Optional `instance` and `session` guard daemon mutations (see
+[Daemon session guards](#daemon-session-guards)); `challenge_id` and `answers`
+are used only by `auth_reply`.
 Response: `version`, the same `id`, `instance` (the daemon process identifier),
-`status`, and optional `error`, `events`, `cursor`, `dropped`, `stats`,
-and `capabilities`. Existing Status/Event fields retain their capitalized Go
+`status`, and optional `error`, `problems`, `events`, `cursor`, `dropped`,
+`stats`, `stats_snapshot`, `capabilities`, `core`, `auth`,
+`session_bound_stats`, and `daemon_session_guards`. Existing Status/Event fields retain their capitalized Go
 names, such as `State`, `LastError`, and `Time`; other fields use JSON tags.
 
 The GUI first sends `hello` to obtain the version, instance identifier, platform
@@ -48,6 +51,8 @@ reports selected IPs after checking the transport and updates them on reconnect.
 If the key used a domain name, Session.server_tcp_name/server_udp_name contain
 that original name for display alongside the selected IP.
 SOCKS reports the configured TCP endpoint; the dialer performs DNS resolution.
+MASQUE in SOCKS mode also reports `server_udp`, because its local listener
+accepts UDP `ASSOCIATE`.
 Show endpoints as an active connection only in the connected state.
 These local details are not included in doctor output or the event log.
 
@@ -59,6 +64,8 @@ These local details are not included in doctor output or the event log.
 | status | Current state and LastError diagnostic code |
 | events | Events after after and a new cursor |
 | stats | Counters from the last Start, retained after Stop |
+| stats_snapshot | Counters bound to a session; see [below](#optional-session-bound-statistics) |
+| auth_pending / auth_reply | Interactive SSH authentication; see [SSH.MD](SSH.MD) |
 | stop | Waits for session cleanup; the daemon remains available |
 | shutdown | Waits for cleanup and exits the daemon; remains available on error |
 
@@ -68,14 +75,18 @@ Starting an active session again returns session_already_running.
 ID provides correlation, not request deduplication. If a start response is lost,
 check status first. If a stop response is lost, repeat stop.
 
-Error codes: unsupported_protocol, invalid_request, invalid_cursor,
-absolute_config_path_required, invalid_configuration, session_already_running,
-session_start_failed, session_stop_failed, daemon_shutting_down, unknown_command.
+Error codes: `unsupported_protocol`, `invalid_request`, `invalid_cursor`,
+`absolute_config_path_required`, `invalid_configuration`, `session_already_running`,
+`session_start_failed`, `session_stop_failed`, `daemon_shutting_down`,
+`unknown_command`, `response_too_large`, `stale_instance`, `stale_session`,
+`invalid_auth_challenge`, `invalid_auth_response`, and
+`ikev2_requires_foreground_user_session`.
 Check the code, not console text. Connection-failure details are available through
 Status.LastError and events; display a generic message for an unknown diagnostic
 code. Responses do not contain secrets or configuration contents.
 
-Response `error` values are catalog codes of kind `control`. `Status.LastError`
+Response `error` values are catalog codes, of kind `control` except
+`ikev2_requires_foreground_user_session`, which is of kind `connection`. `Status.LastError`
 and event `LastError` values are catalog codes, usually of kind `connection`;
 a failure without a specific code is reported as `connection_failed`, never as
 free text. English and Russian texts come from the catalog described in
@@ -84,7 +95,35 @@ codes.
 
 Changes to required fields or existing command semantics require a new version.
 
-### Optional session-bound statistics
+## Daemon session guards
+
+A daemon (not a foreground owner) reports `daemon_session_guards: true` on
+hello/version. Without the flag, do not send guards. A guarded client copies
+`instance` from hello into mutating requests:
+
+```json
+{"version":1,"id":"start-1","command":"start","instance":"<hello.instance>","config":"/absolute/profile.conf"}
+{"version":1,"id":"stop-1","command":"stop","instance":"<hello.instance>","session":"<status.Session.id>"}
+```
+
+- `start` succeeds only for the current instance with no active session; omit
+  `session`.
+- `stop` requires the current instance and the ID of the active session.
+- `stale_instance`: the daemon restarted. `stale_session`: the session was
+  replaced or already stopped. A guarded start during an active session returns
+  `session_already_running`.
+- `invalid_request`: `session` without `instance`, guarded stop without
+  `session`, or guards on any other command, including `shutdown`.
+
+Guard fields must be non-null strings: an empty `instance`, a `null` identity, or
+`session` without `instance` is rejected before any command runs, and such
+malformed requests never fall back to unguarded execution. An instance mismatch
+takes precedence over a session mismatch. Rejections
+include the current `instance` and a fresh `status`, and never load the
+configuration or change the session. Requests without `instance` and `session`
+stay unguarded; the CLI uses this mode, and unguarded stop remains idempotent.
+
+## Optional session-bound statistics
 
 Servers implementing the optional snapshot provider return
 `session_bound_stats: true` on hello/capabilities. Older servers omit it.

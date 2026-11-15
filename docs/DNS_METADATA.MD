@@ -39,8 +39,8 @@ Metadata exists only in memory for one VPN session and is shared across handler
 generations during reconnect. Stopping the session removes the table.
 
 Each IP has a set of normalized domains and an expiration time for each
-association. Only domains that can match at least one domain rule in the active
-policy enter the table. This reduces memory use and avoids unnecessary browsing
+association. Only domains that can match at least one `Domain` or `GeoSite` rule in
+the active policy enter the table. This reduces memory use and avoids unnecessary browsing
 history.
 
 Current limits:
@@ -76,9 +76,9 @@ implementation does not extract metadata from them.
 Policy receives an IP and its set of valid domains. It still applies the first
 matching rule:
 
-1. Compare CIDR with the IP.
-2. Compare Domain with every domain in the set, including subdomains under the
-   existing normalization rules.
+1. Compare `CIDR` and `GeoIP` with the IP.
+2. Compare `Domain` and `GeoSite` with every domain in the set, including
+   subdomains under the existing normalization rules.
 3. If the rule does not match, continue to the next rule.
 4. If none match, use `Default`.
 

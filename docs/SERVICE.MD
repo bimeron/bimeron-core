@@ -164,4 +164,3 @@ production DACL: the owner's token receives access, while a DACL with an unrelat
 SID rejects the same token. A native test of the owner connecting to a separate
 pipe passed without elevation. This checks ACLs, not interactive login with a
 second account. These tests did not modify the working service.
-

@@ -64,8 +64,8 @@ settings or callbacks while the session is running.
 `Status()` returns the state, attempt number, transition time, last error
 code, and `ErrorStage`. `Events()` is a bounded event queue for one consumer. It lives as long as
 the Engine and does not close between starts. A slow consumer may miss events;
-the current state is always available through `Status`. Identical diagnostic
-messages are limited to one every 5 seconds. Events contain no keys, passwords,
+the current state is always available through `Status`. Each diagnostic event
+code is reported at most once every 5 seconds. Events contain no keys, passwords,
 `ssconf` URLs, or addresses of visited sites.
 
 `Stats()` returns a snapshot of counters since the last `Start`: TCP and UDP
@@ -90,8 +90,8 @@ with -daemon, it describes the running service/daemon.
 (system VPN, kill switch, IP and domain split routing). Application-based split
 routing is not implemented; macOS does not advertise a kill switch until it is
 implemented and verified. The CLI prints events to the console. Windows, Linux,
-and macOS support `start`, `status`, `watch`, `stats`, `capabilities`,
-`stop`, and `shutdown` through a local daemon:
+and macOS support `start`, `status`, `watch`, `stats`, `stop`, and `shutdown`
+through a local daemon; `capabilities` runs locally without one:
 see [DAEMON.MD](DAEMON.MD) and [LINUX.MD](LINUX.MD).
 
 ## DNS metadata for domain rules
@@ -120,7 +120,7 @@ removes the adapter, the session fails with `tunnel_adapter_lost`.
 Every 30 seconds, TCP/TLS is checked through `https://api.ipify.org` and DNS
 through the configured resolvers. Three consecutive failures trigger reconnection.
 The check site's own unavailability also counts as a failed check.
-Checks use Outline and bind to the original interface.
+Checks use the upstream transport and bind to the original interface.
 
 Recovery sequence:
 
@@ -131,11 +131,11 @@ Recovery sequence:
 4. Detect the interface again and resolve the key, including fetching current `ssconf` data.
 5. Check the transport and attach a new flow handler to the same tunnel.
 
-Fetching `ssconf` and resolving the Outline server use a transport bound to the
+Fetching `ssconf` and resolving the upstream server use a transport bound to the
 physical interface. Service DNS queries use that interface's DNS servers; if
 the list is empty, they use addresses from the configuration. These queries
 bypass the VPN so recovery does not depend on VPN availability. User DNS queries
-continue through Outline and may receive `SERVFAIL` during recovery.
+continue through the upstream transport and may receive `SERVFAIL` during recovery.
 Applications with their own DNS retain the existing rule semantics.
 
 After one minute of stable operation, the delay resets. Without a network, startup
@@ -160,7 +160,7 @@ described above apply to `Mode = vpn`.
 ## Platform boundaries
 
 - `core/engine.go`: states, concurrent Start/Stop, events, and retry delays.
-- `core/runtime.go`: Outline, rules, DNS, SOCKS, and availability monitoring.
+- `core/runtime.go`: upstream transports, rules, DNS, SOCKS, and availability monitoring.
 - `core/platform_windows.go`, `internal/windowsnet`: Windows, Wintun, routes, and NRPT.
 - `core/platform_linux.go`, `internal/linuxnet`: Linux TUN, routes, DNS, and nftables.
 - `core/platform_darwin.go`, `internal/macnet`: experimental macOS utun, routes, and DNS; no kill switch.
@@ -181,10 +181,10 @@ the Windows VPN process must still run with administrator privileges.
 | `conflicting_dns_policy` | Incompatible NRPT rules were detected. |
 | `macos_dns_changed_externally` | Another macOS provider became the effective DNS provider; the session exits and cleans up Bimeron-owned settings. |
 | `access_key_resolve_failed` | Could not read or resolve the key/ssconf. |
-| `endpoint_dns_failed` | Could not resolve the Outline server address. |
+| `endpoint_dns_failed` | Could not resolve the upstream server address. |
 | `network_inspect_failed`, `network_unavailable` | No original network path is available, or network state could not be read. |
 | `network_changed`, `resume_detected` | The network changed or the process resumed after a long pause. |
-| `transport_suspend`, `transport_retry` | The tunnel is retained while the transport refreshes; `proxy` traffic does not go directly. |
+| `transport_suspend`, `transport_retry` | Event only. The tunnel is retained while the transport refreshes; `proxy` traffic does not go directly. |
 | `tunnel_adapter_lost` | The tunnel adapter disappeared; the session failed. |
 | `transport_check_failed`, `transport_unavailable` | Upstream TCP/TLS or UDP/DNS checks are failing. |
 | `hysteria2_invalid_config` | The Hysteria2 profile or fingerprint is invalid. |
@@ -197,14 +197,14 @@ the Windows VPN process must still run with administrator privileges.
 | `hysteria2_unknown` | Connection setup failed without a safely identifiable cause. |
 | `ssh_network_failed` | The SSH server was unreachable: timeout, refused or reset connection, unreachable route, or DNS failure. Retryable. |
 | `ssh_connection_failed` | SSH host-key verification, authentication, or transport setup failed. Terminal. Sessions that opt in to accept-new or run profile-only report `ssh_host_key_*` and `ssh_known_hosts_missing` instead (see `docs/android-ssh-auth.md`). |
-| `tcp_dial_failed`, `tcp_read_failed`, `dns_failed` | An individual flow failed; this does not necessarily mean the whole session failed. |
+| `dns_failed` | Event only. An individual DNS query failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |
 
 ### Hysteria2 error contract for desktop clients
 
-`Status.LastError` and `Event.LastError` contain a stable code from the table
-above. `Status.ErrorStage` and `Event.ErrorStage` contain a bounded stage name:
+`Status.LastError` and `Event.LastError` contain a stable catalog code from the
+table above; codes marked "Event only" appear only in `Event.Code`. `Status.ErrorStage` and `Event.ErrorStage` contain a bounded stage name:
 `configuration`, `endpoint_resolution`, `outbound_socket`, `connection`, `tls`,
 `authentication`, or `udp_capability`. The event `Code` remains `state` for
 state transitions; use `LastError` for the failure category. Both `ErrorStage`
@@ -221,12 +221,6 @@ authentication headers must never be included in these fields or messages.
 For a real connection failure, record the code, stage, attempt count, selected
 fingerprint, outbound interface selection, and server-side result separately.
 The code alone cannot establish a server or fingerprint defect.
-
-Messages for `tcp_dial_failed` and `tcp_read_failed` include the `direct` or
-`proxy` direction and a safe cause category, such as
-`(direct: connection refused)` or `(proxy: timeout)`. An unrecognized cause is
-reported as `unknown`. Raw network errors, destination addresses, and keys are
-not included.
 
 ## Windows validation
 
@@ -258,4 +252,3 @@ projects for each platform; the integration contract is in
 adapter, library API, Go/Swift bridge, Apple extension target, and technical app
 bundle with console-based VPN registration and no windows. The GUI remains a
 separate project. Console startup of the existing core backend is preserved.
-
