@@ -23,7 +23,7 @@ import (
 
 type windowsPlatform struct{ killSwitch bool }
 
-func init() { winTun.WintunTunnelType = "Bimeron" }
+func init() { winTun.WintunTunnelType = windowsnet.TunnelType }
 
 func newPlatform(c SessionConfig) platform { return windowsPlatform{killSwitch: c.KillSwitch} }
 func (p windowsPlatform) Acquire(ctx context.Context) (func(), error) {
@@ -89,7 +89,15 @@ func (windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter,
 		}
 	}()
 	report("adapter_create", "Creating Wintun adapter")
+	// A stale interface left by an unclean exit is recreated under its GUID,
+	// which keeps the name; a foreign interface still conflicts.
+	stale, err := windowsnet.ReclaimStaleTunnel(c.Name)
+	if err != nil {
+		return nil, fault("adapter_name_in_use", false)
+	}
+	winTun.WintunStaticRequestedGUID = stale
 	d, err := tun.Open(c.Name, uint32(c.MTU))
+	winTun.WintunStaticRequestedGUID = nil
 	if err != nil {
 		return nil, fault("adapter_create_failed", false)
 	}

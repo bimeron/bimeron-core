@@ -60,7 +60,8 @@ func nativeObserve(ctx context.Context, name string, startup bool) (Snapshot, er
 	physical := make(map[uint32]bool)
 	foundTunnel := false
 	for _, row := range unsafe.Slice(&interfaces.Table[0], interfaces.NumEntries) {
-		if strings.EqualFold(windows.UTF16ToString(row.Alias[:]), name) {
+		// At startup a stale Bimeron interface does not conflict: Open reclaims it.
+		if strings.EqualFold(windows.UTF16ToString(row.Alias[:]), name) && (!startup || !staleTunnelRow(&row, name)) {
 			foundTunnel = true
 		}
 		// MIB_IF_ROW2.InterfaceAndOperStatusFlags bit 0 is HardwareInterface.

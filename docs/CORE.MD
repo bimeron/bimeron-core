@@ -177,7 +177,7 @@ the Windows VPN process must still run with administrator privileges.
 | `administrator_required` | Run the command from an administrator CMD. |
 | `wintun_dll_missing` | `wintun.dll` is missing next to the executable. |
 | `session_lock_failed` | Could not acquire the exclusive VPN lock; check for another instance. |
-| `adapter_name_in_use` | The adapter name is already in use. |
+| `adapter_name_in_use` | Another adapter already uses the tunnel name. On Windows, a stale Bimeron Wintun interface left by an unclean exit (killed process, power loss) does not count: the session reuses it under its original GUID and a clean disconnect removes it. |
 | `conflicting_dns_policy` | Incompatible NRPT rules were detected. |
 | `macos_dns_changed_externally` | Another macOS provider became the effective DNS provider; the session exits and cleans up Bimeron-owned settings. |
 | `access_key_resolve_failed` | Could not read or resolve the key/ssconf. |
