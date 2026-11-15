@@ -115,7 +115,10 @@ hello/version. Without the flag, do not send guards. A guarded client copies
 - `invalid_request`: `session` without `instance`, guarded stop without
   `session`, or guards on any other command, including `shutdown`.
 
-An instance mismatch takes precedence over a session mismatch. Rejections
+Guard fields must be non-null strings: an empty `instance`, a `null` identity, or
+`session` without `instance` is rejected before any command runs, and such
+malformed requests never fall back to unguarded execution. An instance mismatch
+takes precedence over a session mismatch. Rejections
 include the current `instance` and a fresh `status`, and never load the
 configuration or change the session. Requests without `instance` and `session`
 stay unguarded; the CLI uses this mode, and unguarded stop remains idempotent.

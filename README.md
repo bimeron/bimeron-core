@@ -12,7 +12,7 @@ recovery. Bimeron Core handles these tasks for its CLI and for applications usin
 Go API, or a platform packet API. You provide the upstream access profile. GUI projects integrate
 the core from separate repositories.
 
-**Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status)
+**Start here:** [Try a local proxy](#try-a-local-proxy) · [Integrate the core](#integrate-the-core) · [Check platform status](#platform-status) · [All documentation](docs/README.md)
 
 **Choose documentation for your version.** This README and its linked guides describe the
 Git revision you are viewing. For a downloaded package, open its entry in

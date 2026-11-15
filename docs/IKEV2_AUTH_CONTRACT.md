@@ -95,9 +95,7 @@ separate reviewed implementation. No native API is executed here.
   inspect test selection to exclude real RAS/WFP/profile/credential operations.
   Existing CI picks up ordinary Go tests; no live validation claim follows.
 
-Implementation is delegated at LOW to codex_petr/gpt-6-astra only. One worker at a
-time; stop/report on provider quota exhaustion. No commits unless separately
-requested. Record concrete results and limitations below, then stop this stage.
+No commits unless separately requested. Record concrete results and limitations below, then stop this stage.
 
 ## Final focused test-pass record
 
