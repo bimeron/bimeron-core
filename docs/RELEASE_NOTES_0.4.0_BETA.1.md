@@ -124,3 +124,21 @@ re-provision a missing package-owned broker in its protected bootstrap, and fix
 its UTF-8 round-trip import check to accept a leading BOM (Core already does).
 Repeat corrupted-image, alternate-admin and bootstrap VM acceptance. IPC 1,
 profile 1 and the reviewed GUI range [0.3.0, 0.3.1) are unchanged. Tracked by #140.
+
+## Stale Windows tunnel adapter correction
+
+After an unclean exit, such as a killed process, a VM reset or a power loss, a
+Wintun adapter's device node stays behind as not present, and Windows keeps its
+interface alias across reboots. Every later Windows session then failed with
+`adapter_name_in_use` before Wintun could run, so no profile with that tunnel
+name could connect.
+
+At startup Core now treats an interface holding the tunnel name as its own stale
+adapter only when it is a virtual interface with the Bimeron Wintun description,
+its connection record points to the Wintun device with the same GUID, and no
+present device backs it. Core removes the absent device node and recreates the
+adapter with the same GUID, so the interface keeps its name; a clean disconnect
+then removes it completely. Any other interface with the name, including a
+present Bimeron adapter, still fails with `adapter_name_in_use`. Linux TUN
+devices are nonpersistent and vanish with the process, so Linux needs no change.
+Tracked by #135.
