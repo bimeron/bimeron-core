@@ -4,8 +4,7 @@
 
 The canonical decision proposal is Desktop
 `docs/ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle`
-on the paired `plan/ikev2-installation-contract` branch, coordinated in
-[Step 4](t3-thread://v1/mcp:d8ce536e-1c05-4247-9eed-8215bedf7a6a).
+on the paired `plan/ikev2-installation-contract` branch.
 It conditionally recommends B: existing foreground/provisioning owners, offline
 MSI payload servicing and Core-owned runtime enrollment, RAS/DNS/WFP and recovery.
 No new resident broker, exact deferred-action attestation or managed-host policy
@@ -348,9 +347,7 @@ proposal; do not weaken refusal or claim first-GUI readiness.
 ## Step 3 selection and acceptance boundary
 
 Inspected again on the same HEAD and existing worktree, preserving all three
-uncommitted Step 2 documents. T3 binding was independently verified as Core
-project `1f5b8de3-79ba-4357-971b-eca7e285d6d8`, thread
-`mcp:9aa0a236-9f66-4d64-a12c-29040cfa3fae`. The paired Desktop coordinator accepted
+uncommitted Step 2 documents. The paired Desktop review accepted
 the shared storage/wire choices as **engineering selections for documentation**.
 That is neither user/security acceptance nor native validation. No new accepted
 ADR, release approval, production command or packaging canonical is created.
@@ -728,10 +725,9 @@ fourth solution. No conditional policy candidate is accepted or deployed here.
 
 ## Appendix D: dependency slices and reviewable negative evidence
 
-Recommended next authorization is **low reasoning, disconnected offline
-storage/codec only**, with no Windows writer or admission integration. Keep this
-design/review at medium; unresolved native trust decisions warrant a focused
-security review rather than a lower-effort implementation guess. Track the slice
+Recommended next authorization is a **disconnected offline storage/codec slice
+only**, with no Windows writer or admission integration. Unresolved native trust
+decisions warrant a focused security review rather than an implementation guess. Track the slice
 under enrollment issue #73 or a linked scoped issue when implementation is
 authorized; no issue/PR/commit is opened in this design stage.
 
@@ -806,7 +802,7 @@ benchmark, commit or push was executed. Prior draft/frozen evidence remains inta
 
 ## Step 3 independent review record
 
-One read-only paired review (Astra/codex_petr, low) found missing controller owner
+One read-only paired review found missing controller owner
 identity in Intent, ambiguous live first-enrollment failure retirement and differing
 unknown-wire-version behavior. The paired contracts now persist/revalidate owner,
 permit verified live Retire with ReleaseComplete, prohibit restored settlement

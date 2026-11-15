@@ -7,7 +7,6 @@ import (
 	"bimeron/internal/linuxnet"
 	"bimeron/internal/unixutil"
 	"context"
-	"debug/elf"
 	"fmt"
 
 	"os"
@@ -126,10 +125,11 @@ func (b *linuxRepairBackend) Inspect(ctx context.Context) (repairObservation, er
 	switch strings.TrimSpace(state) {
 	case "inactive", "failed":
 		b.observedStopped = true
-		image, imageErr := elf.Open(linuxServiceExecutable)
-		if imageErr == nil {
-			image.Close()
-		} else {
+		differs, imageErr := repairPayloadDiffers(linuxServiceExecutable)
+		if imageErr != nil {
+			return repairObservation{}, imageErr
+		}
+		if differs {
 			b.damaged = true
 			if err := repairLinuxConflictGate(); err != nil {
 				return repairObservation{}, err
@@ -169,6 +169,14 @@ func (b *linuxRepairBackend) Inspect(ctx context.Context) (repairObservation, er
 		}
 		return repairObservation{Owned: true, Stopped: true}, nil
 	case "active":
+		differs, digestErr := repairPayloadDiffers(linuxServiceExecutable)
+		if digestErr != nil {
+			return repairObservation{}, digestErr
+		}
+		if differs {
+			b.damaged = true
+			return repairObservation{Owned: true, ReplacementRequired: true, Unresponsive: true}, nil
+		}
 		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		hello, helloErr := control.CallService(probe, control.Request{Command: "hello"})

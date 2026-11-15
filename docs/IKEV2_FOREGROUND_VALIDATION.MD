@@ -184,7 +184,7 @@ Passed locally:
   windowsnet on Linux correctly rejected that Windows-only package; the corrected
   applicable matrix passed.
 - `git diff --check`. Existing CI includes these tests in its full suites and
-  control/windowsnet race jobs; hosted exact-head results remain for the parent
+  control/windowsnet race jobs; hosted exact-head results remain for the reviewer
   reviewer to inspect before merge.
 
 Coverage includes both activation/close and apply/close orderings, accepted close
@@ -258,5 +258,4 @@ module initialization remain hypotheses only. No retries or deadline inflation
 were added. Markers cannot identify stalls before script entry, distinguish all
 internal module-loading stages, or recover records beyond the capture cap;
 unrecognized paths and arbitrary process error details are intentionally omitted.
-Hosted exact-head CI, independent review and merge remain with the coordinating
-parent. No manual CI run, VM credentials or host network mutation was used.
+Hosted exact-head CI, independent review and merge are tracked separately. No manual CI run, VM credentials or host network mutation was used.

@@ -12,8 +12,8 @@ import (
 // Product strings written to the VERSIONINFO block of bimeron.exe.
 const (
 	ProductName      = "Bimeron Core"
-	CompanyName      = "Bimeron contributors"
-	LegalCopyright   = "Copyright (c) 2026 Bimeron contributors"
+	CompanyName      = "Bimeron Network"
+	LegalCopyright   = "Copyright (c) 2026 Bimeron Network"
 	OriginalFilename = "bimeron.exe"
 	InternalName     = "bimeron"
 )

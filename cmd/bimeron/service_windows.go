@@ -52,7 +52,20 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- control.NewServer(core.New(core.Options{})).Serve(ctx, l) }()
+	server := control.NewServer(core.New(core.Options{}))
+	if h.listen == nil {
+		readiness, err := control.ListenServiceReadiness()
+		if err != nil {
+			l.Close()
+			return true, 1
+		}
+		go func() {
+			if err := server.ServeReadiness(ctx, readiness); err != nil {
+				cancel()
+			}
+		}()
+	}
+	go func() { done <- server.Serve(ctx, l) }()
 	status := svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	changes <- status
 	if log != nil {

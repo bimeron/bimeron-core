@@ -74,7 +74,7 @@ return the catalog embedded in that core build:
   "version": 1,
   "languages": ["en", "ru"],
   "secret_fields": ["Password", "ID", "..."],
-  "uri_fields": {"ObfsPassword": ["Hysteria2"]},
+  "uri_fields": {"Insecure": ["AnyTLS", "Hysteria2"], "...": ["..."]},
   "codes": {
     "interface_name_invalid": {
       "kind": "config",
@@ -111,7 +111,8 @@ Connection failures keep using `Status.LastError` and event `LastError` values;
 each value is a catalog code, usually of kind `connection`. Platform text that
 is not a catalog code is replaced by a generic code for that step, and any
 remaining uncoded failure is reported as `connection_failed`. Local control
-response `error` values are catalog codes of kind `control`. Codes ending in
+response `error` values are catalog codes of kind `control`, except
+`ikev2_requires_foreground_user_session`, which is of kind `connection`. Codes ending in
 `_run_recover` tell the user to run network recovery.
 
 ## Compatibility

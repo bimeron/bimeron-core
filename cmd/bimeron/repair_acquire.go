@@ -6,6 +6,7 @@ package main
 import (
 	"archive/zip"
 	"bimeron/core"
+	"bimeron/release"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -39,21 +40,13 @@ type repairArchive struct {
 	SHA256 string `json:"sha256"`
 }
 type repairManifest struct {
-	Schema        int    `json:"schema"`
-	KeyID         string `json:"key_id"`
-	Tag           string `json:"tag"`
-	Version       string `json:"core_version"`
-	Channel       string `json:"channel"`
-	Compatibility struct {
-		Schema   int    `json:"schema"`
-		Reviewed bool   `json:"gui_reviewed"`
-		Min      string `json:"gui_min"`
-		Max      string `json:"gui_max_exclusive"`
-		IPCMin   int    `json:"ipc_min"`
-		IPCMax   int    `json:"ipc_max"`
-		Profile  int    `json:"profile_format"`
-	} `json:"compatibility"`
-	Archives []repairArchive `json:"archives"`
+	Schema        int                   `json:"schema"`
+	KeyID         string                `json:"key_id"`
+	Tag           string                `json:"tag"`
+	Version       string                `json:"core_version"`
+	Channel       string                `json:"channel"`
+	Compatibility release.Compatibility `json:"compatibility"`
+	Archives      []repairArchive       `json:"archives"`
 }
 
 func verifyRepairManifest(data, signature, key []byte, version, platform, arch string) (repairArchive, error) {
@@ -70,10 +63,10 @@ func verifyRepairManifest(data, signature, key []byte, version, platform, arch s
 		return fail()
 	}
 	digest := sha256.Sum256(key)
-	c := m.Compatibility
-	// This broker is reviewed with Desktop 0.2.0. Until shared semantic-version
-	// policy is provisioned, accept only the exact reviewed compatibility window.
-	if m.Schema != 1 || m.KeyID != hex.EncodeToString(digest[:8]) || !repairReleaseVersion.MatchString(version) || m.Version != version || m.Tag != "v"+version || c.Schema != 1 || !c.Reviewed || c.Min != "0.2.0" || c.Max != "0.2.1" || c.IPCMin != 1 || c.IPCMax < 1 || c.Profile != 1 || len(m.Archives) != 4 {
+	// Repair acquires this broker's exact release, so its entire compatibility
+	// policy must match the reviewed metadata embedded from the same source.
+	expected, err := release.ReviewedCompatibility()
+	if err != nil || m.Schema != 1 || m.KeyID != hex.EncodeToString(digest[:8]) || !repairReleaseVersion.MatchString(version) || m.Version != version || m.Tag != "v"+version || m.Compatibility != expected || len(m.Archives) != 4 {
 		return fail()
 	}
 	channel := "stable"

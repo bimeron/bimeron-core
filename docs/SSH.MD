@@ -56,7 +56,7 @@ bimeron run profiles/ssh.conf
 ```
 
 `validate` checks syntax without connecting. `check` establishes SSH and tests
-a TCP/TLS request through it. `run` starts the local proxy in the foreground.
+a TCP/TLS request and DNS over TCP through it. `run` starts the local proxy in the foreground.
 The equivalent explicit command is `bimeron proxy -config profiles/ssh.conf`.
 Once it reports that the SOCKS5 listener is ready, a test client can use:
 
@@ -218,5 +218,5 @@ these commands can still connect with an unencrypted selected key.
   Each attempt asks again for any interactive input it needs, such as a key
   passphrase. Host-key, authentication, and transport setup failures report
   the terminal `ssh_connection_failed` code.
-- The system VPN, UDP traffic, SSH config aliases, agent forwarding, and
-  password persistence are outside this version.
+- UDP relay, SSH config aliases, agent forwarding, and password persistence
+  are outside this version; system VPN mode is TCP-only.

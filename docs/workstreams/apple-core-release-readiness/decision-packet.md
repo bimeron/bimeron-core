@@ -199,12 +199,12 @@ at `888f7a9`/`0d5fd06`. The 348-vector corpus is finite regression coverage,
 not proof for all possible archives. The temporary logs were not re-read for this
 reconciliation.
 
-Separately, the coordinator supplied verified hosted source-CI provenance:
+Separately, the reviewer supplied verified hosted source-CI provenance:
 Apple commit `888f7a945dd0f12d26ca4eb4ce62f0636fd69b18` has a successful
 [build check](https://github.com/bimeron/bimeron-apple/actions/runs/42013491023/job/127198083962),
 reported from the GitHub commit check-runs API. This exact-baseline source CI does
 not establish a selected release artifact, independent pin, compatibility approval
-or live acceptance. The coordinator queried existing check metadata only; this
+or live acceptance. The reviewer queried existing check metadata only; this
 reconciliation did not rerun CI.
 
 This update inspected source, documentation and existing check metadata; it ran no experiments,
@@ -224,7 +224,7 @@ builds, tests, artifact execution or acceptance work.
    resource acceptance scope. Signing/publication mechanics remain subsequent
    authorized decisions; this packet selects no architecture or role owner.
 
-Parent review should use the exact current source identities above and the merged
+Independent review should use the exact current source identities above and the merged
 staging API, retain both CPU evidence independently, and report missing built-app
 identity. Neither the historical proposal, synthetic regressions nor hosted source
 CI supplies candidate approval. No version, pin, role assignment or compatibility

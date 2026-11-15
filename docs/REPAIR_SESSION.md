@@ -62,9 +62,8 @@ privilege boundary. External downloaded executable paths are not accepted.
   recovery APIs, verify owned artifacts absent, start and readiness. Linux uses
   the protected canonical recovery journal; Windows observes owned WFP/NRPT
   markers. Unknown endpoints, locks and ownership fail closed.
-- Incompatible IPC: replace from protected broker image transactionally. Healthy
-  IPC-compatible Core release versions are preserved; semantic version difference
-  alone is not incompatibility. The updater verifies exact replacement version
+- Incompatible IPC: replace from protected broker image transactionally. During explicit repair, installed executable bytes must match the protected
+  broker, including otherwise IPC-compatible release versions. The updater verifies exact replacement version
   and fresh status before committing its backup.
 - Missing/invalid owned service executable: verify canonical configuration,
   protected parent and exited process/cleanup evidence, stage broker image,
@@ -134,7 +133,6 @@ also requires a recognized authoritative status state: omitted, failed and
 stopping states cannot report ready. Healthy connected/connecting/reconnecting
 service states are preserved. Unreachable speculative live-daemon reconciliation
 was removed after review: v1 journals cannot establish a lost live process identity.
-
 
 Repair-specific updater mode activates and verifies even an initially stopped
 service before committing the executable backup. Legacy `service update` keeps
@@ -218,9 +216,13 @@ select metadata, URL, version, key, digest or archive member. Production uses th
 existing Desktop Ed25519 public key (key ID `7370a2d8cf890e5e`), not a new trust root.
 
 `repair_acquire.go` verifies the existing signed update-manifest envelope, all four
-unique platform targets, exact release/channel, reviewed GUI window [0.2.0,0.2.1),
-IPC 1 and profile format 1, signed archive length and SHA-256. The deliberately
-narrow GUI-window policy rejects other windows rather than guessing compatibility.
+unique platform targets, exact release/channel, signed archive length and SHA-256.
+The entire compatibility block must equal `release/compatibility.json`, embedded
+in the broker at build time: schema, reviewed flag, exact GUI bounds, IPC bounds
+and profile format. Unreviewed embedded metadata disables acquisition. The
+publisher reads the same source file; plain `go build ./cmd/bimeron` embeds it too.
+The deliberately narrow GUI-window policy rejects other windows rather than
+guessing compatibility.
 Signatures cover exact manifest bytes; duplicate JSON keys are rejected. Downloads
 use HTTPS with no ambient proxy, fixed GitHub repository/tag paths, a restricted
 redirect host set, four-hop limit, 45-second request timeout and the existing
@@ -327,3 +329,96 @@ BIMERON_DIST_DIR=build/ci-cli-dist. All six CLI platform/architecture payloads
 were built and checked. Darwin amd64 and arm64 command test binaries compiled,
 including the unsupported-backend/transport fixture; native macOS execution is
 left to CI. No workflow target, packaging flow or release format changed.
+
+## Final VM release blockers: integrity and alternate administrator (#140)
+
+The November 15 Windows acceptance found two failures in candidate d1fc1f48:
+a runnable image with 512 XORed bytes at offset 0x1000 survived repair, and a
+zeroed 4096-byte header failed startup without replacement. Inspect now compares
+SHA-256 of the installed image with the protected running broker on Windows and
+Linux. Missing or differing bytes select the existing staged, hash-verified
+replacement transaction. Format parseability and version strings are not
+integrity evidence. Read errors fail closed. A running differing image requires
+disruption consent, graceful stop and cleanup proof; stopped images retain the
+existing ownership, protected-path, conflict, exit and network-recovery gates.
+Failed activation/readiness restores the backup, or removes the newly installed
+image when there was no original. Explicit repair can therefore replace a
+healthy but byte-different compatible release with the bundled broker version.
+This supersedes the earlier compatible-version preservation policy for explicit
+repair; ordinary service operation and legacy update policy are unchanged.
+
+Alternate-administrator UAC preserved the requesting user's service owner but
+could not open that owner's control pipe. The chosen minimal boundary is a
+separate Windows maintenance pipe, `Bimeron.Core.Readiness`, with a protected
+SYSTEM/Administrators-only DACL and go-winio's local, exclusive first-instance
+creation. It exposes only hello (build and instance) and status (state and
+instance). It never calls command dispatch, returns profile/session/network or
+authentication details, or accepts mutation commands. Requests and time are
+bounded. The broker validates canonical SCM configuration/owner/account, requires
+Running with a nonzero PID, and matches the pipe server PID to SCM before reading
+responses. Hello and status must share the instance and an authoritative ready
+state. Repair-mode updater verification uses this same channel before committing
+backups, including sidecar-only replacement; legacy updates retain their control
+channel. Failure remains failure and triggers existing rollback.
+
+Alternatives: widening the main pipe to Administrators would grant cross-user
+control and expose user data; SCM Running alone would lose application readiness
+and IPC compatibility checks; GUI confirmation adds a new protocol and a GUI
+lifetime dependency; caller-token impersonation adds credential/token handling
+and Windows thread-affinity complexity. The dedicated read-only channel grants
+all elevated local administrators only the minimum build/state observation,
+rather than granting a broker temporary mutation access. It does not change the
+main pipe DACL (SYSTEM and authenticated owner only), IPC 1 or request ownership.
+
+Linux has no equivalent alternate-admin access failure: pkexec executes the
+broker as UID 0 regardless of the administrator authorizing it, and the existing
+Unix listener explicitly admits root in addition to its owner (SO_PEERCRED).
+The authenticated requesting UID still controls service registration. No socket
+permission or polkit policy relaxation is needed; image digest repair applies on
+both platforms. Real polkit credential-dialog acceptance remains outstanding.
+
+### Desktop responsibilities: broker bootstrap and UTF-8 BOM
+
+The missing-broker acceptance used Desktop's bundled CLI fallback, not an
+installed broker. Core receives no authenticated package installation directory
+or embedded payload and cannot infer which Desktop installation owns a missing
+broker. Writing a guessed path or accepting a caller-selected path would expand
+the privileged contract. Re-provisioning is feasible in Desktop's protected
+bootstrap, which knows the package path and verified embedded bytes: exclusively
+stage those bytes under the protected package repair directory, verify digest
+and protection, then install atomically without an additional elevation. Core
+does not re-provision the package-owned Windows `repair/bimeron-repair.exe` or
+Linux `/usr/libexec/bimeron/repair/bimeron-repair`; Desktop/installer must handle it.
+
+Core already accepts and strips a leading UTF-8 BOM in `internal/config.parse`,
+covered by `TestUTF8BOM`; the configuration document API also preserves BOM-aware
+editing. The reported import error comes from Desktop `src/MainWindow.cpp`:
+`QString::fromUtf8(imported).toUtf8() != imported` rejects the BOM removed by Qt's
+decoder. Desktop must strip one leading UTF-8 BOM before its round-trip validation
+while retaining invalid UTF-8 rejection and the 64 KiB input limit. Core's profile
+format remains 1; no Core parser change is needed.
+
+### Validation boundary
+
+Regression fixtures cover exact/missing/XOR/header-zero payloads, successful
+replacement and failed-readiness rollback; read-only command rejection, redacted
+responses and shared instance; and Windows native pipe ACL/PID checks. Existing
+repair consent, ownership, lifecycle and transaction suites remain applicable.
+These fixtures do not establish real alternate-admin credential UAC, polkit,
+Desktop bootstrap re-provisioning or GUI import acceptance. New candidates and
+rebuilt Desktop embedded broker/CLI bytes require focused release VM acceptance.
+
+Local verification for #140: native Windows `go test ./...` passed; focused
+`go vet ./cmd/bimeron ./internal/control` passed. Windows/Linux amd64/arm64
+CGO-disabled builds passed. WSL executed the Linux Repair/Update/lifecycle and
+Readiness/Unix test selections successfully. On Hyper-V Windows 10 STD,
+PowerShell Direct ran the new native readiness tests successfully, including
+elevated pipe access, PID mismatch rejection and command denial. An attempted
+end-to-end broker check could not start its authenticated caller because no
+interactive `test` session was available after boot; no end-to-end repair PASS
+is claimed. Its finally block restored the original service digest
+`47eda06629cba12e15f69564b9aa5ed144ba37127ab42d772326ddd1c40c9575` and Running
+state; temporary tasks, account and verification files were removed. No checkpoint
+was restored/deleted, no frozen candidate was modified. Release acceptance must
+repeat actual GUI UAC under a standard user and alternate administrator with the
+new pinned production bytes.

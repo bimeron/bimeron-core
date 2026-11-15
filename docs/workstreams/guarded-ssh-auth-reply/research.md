@@ -48,7 +48,7 @@ Any stricter late-reply rejection changes a legacy edge case even if the wire sh
 
 ## Local experiment evidence
 
-The LOW child authored the initial five tests; coordinator review added an explicit expiry-state model and a stop barrier. `internal/control/ssh_auth_lifecycle_experiment_test.go` covers:
+The initial version had five tests; review added an explicit expiry-state model and a stop barrier. `internal/control/ssh_auth_lifecycle_experiment_test.go` covers:
 
 - Cancelled old ID rejected after cleanup while a new challenge remains usable; consumed ID rejected on reuse.
 - Cancellation wins the real prompt select, with a custom Context.Err barrier delaying return/cleanup. Dispatch still accepts the reply, while the callback subsequently returns context.Canceled with zero answers. This is a deterministic enqueue-versus-delivery counterexample, not SSH authentication evidence. The custom context intentionally stretches an otherwise scheduling-dependent interval.
@@ -57,7 +57,7 @@ The LOW child authored the initial five tests; coordinator review added an expli
 - Fake Stop blocks while holding command admission. Auth reply still runs independently, rejects a wrong ID, and consumes the original callback once. Fake restart cannot reuse it. This fake deliberately does not cancel or own its prompt context; it demonstrates control-layer admission separation, not real Engine lifecycle behavior.
 - Explicit expiry model installs the pending state representing timer-fired-before-cleanup. Dispatch accepts once. This executes real dispatch against a modeled state; it does not execute the production two-minute timer and proves no timing frequency.
 
-The child and coordinator both observed the system Go 1.22.0 fail before compilation with `go.mod:58: unknown directive: tool` using GOTOOLCHAIN=local. The coordinator used the already cached Go 1.26.9 with GOPROXY=off, without installing or downloading a toolchain. Initial five tests passed under the race detector. Final six-test plus existing one-use regression validation is recorded below.
+The system Go 1.22.0 failed before compilation with `go.mod:58: unknown directive: tool` using GOTOOLCHAIN=local. The tests used the already cached Go 1.26.9 with GOPROXY=off, without installing or downloading a toolchain. Initial five tests passed under the race detector. Final six-test plus existing one-use regression validation is recorded below.
 
 No framing/socket tests or broad package suite were run: existing package tests can open listeners. Real Engine/backend stop-and-restart is source-inspected, not experimentally exercised here. Real two-minute expiry, Apple behavior, daemon startup, keys, network transport and production SSH success remain untested. No source-built evidence is release/live/hosted acceptance.
 
