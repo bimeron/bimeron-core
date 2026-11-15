@@ -135,6 +135,13 @@ immediately. Stop cancels pending backoff and recovery. After the third failure,
 Core cleans up and enters `failed` with the final `LastError` and `ErrorStage`;
 a cleanup failure takes precedence. No fourth attempt is scheduled.
 
+A later `stop`, `shutdown` or service stop reports only teardown. After reconnect
+exhaustion or `session_stopped_unexpectedly`, teardown has already completed:
+`stop` and `shutdown` succeed, and the daemon exits with status 0. `Status` keeps
+`failed`, `LastError` and recovery progress. A session that ended with a cleanup
+failure still returns `session_stop_failed` and a nonzero daemon exit, because
+service repair uses that exit status as cleanup evidence.
+
 Status and every Event add optional capitalized integer fields:
 
 - `ReconnectAttempt`: upcoming/current recovery attempt, 1 through 3. Published

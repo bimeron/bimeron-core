@@ -140,6 +140,9 @@ func (e *Engine) Stats() telemetry.Snapshot {
 type runResult struct {
 	done chan struct{}
 	err  error
+	// settled marks a terminal session failure whose teardown already
+	// completed. Wait still reports err; a later Stop has nothing left to clean.
+	settled bool
 }
 
 func New(options Options) *Engine {
@@ -325,6 +328,11 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	select {
 	case <-r.done:
+		// Stop reports its own teardown, not an earlier settled session failure;
+		// daemon exit status is used as service cleanup evidence.
+		if r.settled {
+			return nil
+		}
 		return r.err
 	case <-ctx.Done():
 		return ctx.Err()
@@ -431,8 +439,10 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Both terminal failures below follow a successful Close or Open rollback.
 		if err == nil {
 			result = fault("session_stopped_unexpectedly", false)
+			r.settled = true
 			return
 		}
 		if !e.prepareReconnect(err) {
@@ -440,6 +450,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 				return
 			}
 			result = err
+			r.settled = true
 			return
 		}
 		e.report("retry", "Connection interrupted; retrying after cleanup")

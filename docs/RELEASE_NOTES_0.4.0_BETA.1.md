@@ -91,3 +91,15 @@ profile 1 and release/compatibility.json remain unchanged. See [control contract
 This correction requires a new candidate built from the merged Core master
 commit and renewed Desktop 0.3.0 acceptance; frozen e1cada7d artifacts are not
 modified. Tracked by issue #136.
+
+## Stop after terminal failure correction
+
+Linux VM acceptance of the Desktop 0.3.0 candidate found that stopping the
+service after reconnect exhaustion exited with status 1. The daemon reported the
+earlier session failure as a shutdown failure, so repair rejected the stopped
+service as lacking cleanup evidence. `stop`, `shutdown` and daemon exit now
+report only teardown: a terminal failure whose cleanup already completed no
+longer fails them, while cleanup failures keep failing them. Status still shows
+the terminal failure. See [control contract](CONTROL.MD#bounded-reconnect-recovery-desktop-030).
+This also requires a new candidate and renewed Desktop 0.3.0 acceptance.
+Tracked by issue #138.
