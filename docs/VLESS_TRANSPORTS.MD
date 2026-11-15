@@ -3,9 +3,9 @@
 This document describes the VLESS formats implemented by Bimeron Core. It is
 intended for external GUI projects such as bimeron-desktop. A GUI can copy this
 document, but the installed core's `validate` command remains authoritative.
-The transport extensions below have local protocol tests; interoperability with
-independent gRPC and XHTTP servers and system VPN on physical devices still
-requires control profiles.
+The transport extensions below have local protocol tests and pass the pinned
+Xray reference matrix; system VPN on physical devices and independent production
+servers still require control profiles.
 
 ## Supported combinations
 
@@ -15,7 +15,7 @@ requires control profiles.
 | `tcp` | `tls` | Empty | Optional `sni`, `fp`, `alpn` |
 | `ws` | `tls` | Empty | Optional `path`, `host`, `ed`; `alpn` must be `http/1.1` if supplied |
 | `grpc` | `tls` or `reality` | Empty | Required `serviceName`; optional `authority`, `mode=multi`; REALITY requires `sni`, `fp`, `pbk`; `alpn` must be `h2` if supplied |
-| `xhttp` | `tls` | Empty | Required `mode=packet-up`, `stream-up` or `auto`; optional `path`, `host`; `alpn` may be `h2`, `h2,http/1.1`, or `h3` |
+| `xhttp` | `tls` | Empty | Required `mode=packet-up`, `stream-up`, `stream-one` or `auto`; optional `path`, `host`; `alpn` may be `h2`, `h2,http/1.1`, or `h3` |
 | `xhttp` | `reality` | Empty | Required `mode=stream-one`, `stream-up` or `auto`, `sni`, `fp`, `pbk`; optional `path`, `host`, `sid`, `spx`; `alpn` must be `h2` if supplied |
 
 `encryption=none` is required for every VLESS link. Explicit parameters use
@@ -177,10 +177,12 @@ to decide whether a profile is accepted.
 
 ## Pending interoperability checks
 
-Local tests cover parsing, framing and HTTP/2 exchange. With control profiles,
-verify TCP and UDP through gRPC over TLS and REALITY, including `TunMulti` and
-custom method paths; XHTTP `packet-up`, `stream-up`, `stream-one` and `auto`;
-and repeated close and reconnect cycles. Repeat proxy and system VPN checks on
+Local tests cover parsing, framing and HTTP/2 exchange. The `TestXrayVLESS`
+reference test runs against a pinned Xray server over TLS: TCP, Vision,
+WebSocket, HTTPUpgrade, gRPC single and multi mode, every XHTTP mode, split
+download, and XHTTP over HTTP/3. With control profiles, still verify REALITY
+transports and custom gRPC method paths against production servers, and
+repeated close and reconnect cycles. Repeat proxy and system VPN checks on
 Windows, Linux, macOS, Android and iOS where supported. Include HTTP/3 over a
 real UDP path. Record server version
 and transport settings without storing credentials in test results.

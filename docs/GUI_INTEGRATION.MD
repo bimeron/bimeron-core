@@ -1,143 +1,147 @@
-# Bimeron Core: integration of individual GUI projects
+# Bimeron Core: integrating a separate GUI
 
-The [GeoIP/GeoSite routing editor contract](GUI_GEODATA_ROUTING.MD) defines
-configuration mapping, commented-out rules and GUI combination restrictions for
-issue #67. The implementation is in development source; it is not yet a released capability. See [GEODATA.MD](GEODATA.MD) for the concrete host APIs.
+Last reviewed against the source on November 15, 2026. This document can be
+copied into a separate project: it describes the implemented contract without
+requiring other repository files. Recheck it against core changes made after
+this date.
 
-The separate experimental [Windows IKEv2 foreground control contract](IKEV2_FOREGROUND_CONTROL.MD)
-is available in development source. It does not change daemon start, the beta.1
-baseline, published assets or Desktop compatibility approval.
+Related contracts:
 
-
-Current as of October 23, 2026. This document can be copied into a separate project:
-it describes the implemented contract without requiring access to other repository
-files. Recheck the contract against core changes made after this date.
-
-For VLESS profile editors and importers, read [VLESS_TRANSPORTS.MD](VLESS_TRANSPORTS.MD).
-It lists the supported link and `.conf` fields, transport combinations,
-validation behavior and current interoperability limits. A GUI should write a
-profile file and use the existing `start` RPC; no new VLESS RPC is required.
+- [GeoIP/GeoSite routing editor](GUI_GEODATA_ROUTING.MD): configuration mapping,
+  commented-out rules, and GUI combination restrictions for issue #67. It is in
+  development source and not yet released; [GEODATA.MD](GEODATA.MD) describes the
+  host APIs.
+- [Windows IKEv2 foreground control](IKEV2_FOREGROUND_CONTROL.MD): experimental
+  and in development source. It does not change daemon `start`, published assets,
+  or Desktop compatibility approval.
+- [VLESS transports](VLESS_TRANSPORTS.MD): link and `.conf` fields, transport
+  combinations, validation, and interoperability limits for VLESS editors and
+  importers. A GUI writes a profile file and uses the existing `start` RPC; no
+  VLESS-specific RPC is needed.
 
 ## Project separation
 
-Core is developed separately. GUI for each platform is a separate project.
-The GUI manages profiles, status displays, and user settings;
-core handles network operations, key resolution, routing, DNS,
-reconnection and cleaning. The profile format is `.conf`, the local RPC format is JSON.
+The core is developed separately; each platform's GUI is a separate project. The
+GUI manages profiles, status display, and user settings. The core handles network
+operations, key resolution, routing, DNS, reconnection, and cleanup. Profiles are
+`.conf` files; the local RPC uses JSON.
 
-The main way to integrate desktop GUI is IPC with a running service/daemon.
-Queries are available from any language that supports named pipes/Unix sockets.
-The CLI remains available. Do not parse the stdout text of status/watch commands as an API.
-For Go there is a package `bimeron/core`: New, LoadConfig, Start, Stop, Status,
-Events, Stats, Wait, PlatformCapabilities. Embedding the engine into the GUI process
-will require rights for network operations; IPC maintains privileges in a separate process.
+The main desktop integration path is IPC with a running service or daemon, which
+any language with named pipe or Unix socket support can use. The CLI remains
+available, but do not parse the text output of `status` or `watch` as an API. Go
+programs can use the `bimeron/core` package (`New`, `LoadConfig`, `Start`, `Stop`,
+`Status`, `Events`, `Stats`, `Wait`, `PlatformCapabilities`). Embedding the engine
+in the GUI process requires network privileges in that process; IPC keeps them in
+a separate one.
 
-## The first stage of using IPC with an external GUI
+## Minimal first integration
 
-No GUI is created in this repository. The first integration stage verifies that RPC supports a separate future GUI
-project. GUI source code and dependencies belong in that separate project.
+This repository contains no GUI. A first Windows GUI needs only the installed
+BimeronCore service and the existing RPC version 1. The user selects an existing
+`.conf` file, and the client:
 
-The first stage of a separate Windows GUI project needs an installed
-BimeronCore service and the existing RPC. The user selects an existing `.conf`,
-then the external client follows these steps:
+1. Sends `hello`, checks the protocol version, and reads the core capabilities.
+2. Reads `status` and treats the service state as authoritative.
+3. Sends the absolute path of the selected profile to `start`.
+4. Shows the status, safe error codes, events, and summary statistics.
+5. On user request, sends `stop` and waits for cleanup to finish.
 
-1. Sends `hello`, checks the protocol version and reads the core capabilities.
-2. Reads `status` and accepts the service state as authoritative.
-3. Transfers the absolute path of the selected profile to `start`.
-4. Shows status, safe error code, events and general statistics.
-5. At the user's command, sends `stop` and waits for the cleaning to complete.
+The GUI stores only the list of profile paths and the selected profile. Profile
+contents, keys, and passwords are never sent over RPC and must not appear in
+settings, logs, or analytics. The files stay protected by the user's ACL and are
+read directly by the service.
 
-The existing RPC version 1 is sufficient for this; no core changes required.
-The GUI only stores a list of paths and the selected profile. Contents `.conf`, keys and
-passwords are not transmitted via RPC and do not end up in settings, logs or GUI analytics.
-The files remain protected by the user's ACL and are read directly by the service.
+A profile editor, service installation, `recover`, `shutdown`, auto-connect, core
+updates, a system tray, notifications, Linux/macOS, and per-application routing
+are outside this first step. Decide them in the GUI repository.
 
-The description of the first stage does not include the profile editor, service installation,
-`recover`, `shutdown`, auto-connection, core update, system tray,
-notifications, Linux/macOS and app routing. Decisions on their implementation
-are accepted in the corresponding GUI repository, not in Bimeron Core.
-
-Requirements for external client automatic checks: incompatible version;
-unavailable or prohibited IPC; launch to `connected` or `failed`; stop;
-restart; change `instance`; `dropped=true`; unknown error code; absence
-secrets in logs. A separate manual check confirms that the service is controlled from
-a regular user without elevation.
+Automated client tests should cover: an incompatible version; unavailable or
+denied IPC; a start that reaches `connected` or `failed`; stop; restart; a changed
+`instance`; `dropped=true`; an unknown error code; and no secrets in logs. Confirm
+manually that a regular user can control the service without elevation.
 
 ## Platform support
 
-| Platform | System VPN | Crash protection | Management |
+| Platform | System VPN | Leak protection | Control |
 |---|---|---|---|
 | Windows amd64/arm64 | Wintun, TCP/UDP | WFP kill switch, if enabled | SCM service or console daemon, named pipe |
 | Linux amd64/arm64 | TUN, TCP/UDP | nftables kill switch, if enabled; does not survive reboot | root daemon, Unix socket |
 | macOS Intel/Apple Silicon | Experimental utun backend | Kill switch not implemented | root daemon, Unix socket |
-| Android | Packet engine; host app supplies `VpnService` | Host responsibility | [AAR integration](ANDROID_VPN_SERVICE.MD); desktop IPC is not a mobile VPN API |
-| iOS | Platform integration not implemented | Not implemented | No iOS VPN host |
+| Android | Packet engine; the host app supplies `VpnService` | Host responsibility | [AAR integration](ANDROID_VPN_SERVICE.MD); desktop IPC is not a mobile VPN API |
+| iOS | Not implemented | Not implemented | No iOS VPN host |
 
 The separate [macOS NetworkExtension integration](APPLE_NETWORK_EXTENSION.MD)
-provides a packet engine and Swift provider; deployment requires signing and
-provisioning. It does not use the experimental CLI `utun` backend above.
+provides a packet engine and a Swift provider; deployment requires signing and
+provisioning. It does not use the experimental CLI `utun` backend.
 
-Read capabilities from the running core through hello/capabilities. These report
-build support; they do not check whether a driver, permissions, or server is available.
+Read capabilities from the running core through `hello` or `capabilities`. They
+describe build support; they do not check whether a driver, permission, or server
+is available.
 
-Hello and the new version RPC command return an optional core field:
-version (for development builds, the nearest reachable Git tag plus `-dev`), revision (Git SHA), commit_time, modified,
-go_version, platform, architecture. This is the data of the running daemon/service,
-not a GUI or a separate CLI. Do not confuse core.version with version=1 protocol.
-For dev builds, compare revision and modified, and not just the same line
-tag-derived development version. If there is no VCS data, revision/commit_time may be missing.
-The old core may not have the core field - display an unknown version.
-CLI `version` shows its assembly; `version -daemon` - running core.
-DomainSplit is now true on Windows, Linux and macOS; system domain rules
-VPNs use limited DNS metadata and do not cover DoH/DoT, direct IP and
-old DNS cache. AppSplit remains false; Don't promise per-application routing.
-SOCKS proxy - TCP, without UDP ASSOCIATE.
-macOS requires testing on a real Mac; Windows service has already been manually checked
-for connection, normal stop, restart and service update.
+- `domain_split` is true on Windows, Linux, and macOS. System VPN domain rules use
+  limited DNS metadata and do not cover DoH/DoT, direct IP connections, or
+  existing DNS caches.
+- `app_split` is false; do not promise per-application routing.
+- The local SOCKS5 listener accepts TCP `CONNECT`. Only MASQUE profiles also
+  accept UDP `ASSOCIATE`.
+- macOS requires testing on a real Mac. The Windows service has been checked
+  manually for connection, normal stop, restart, and service update.
+
+`hello` and `version` return an optional `core` object describing the running
+daemon or service, not the GUI or a separate CLI: `version`, `revision` (Git SHA),
+`commit_time`, `modified`, `go_version`, `platform`, and `architecture`. Do not
+confuse `core.version` with the protocol `version: 1`. Development builds report
+the nearest reachable Git tag plus `-dev`, so compare `revision` and `modified`
+to tell them apart. Without VCS data, `revision` and `commit_time` may be missing;
+older cores omit `core`, in which case display an unknown version. The CLI
+`version` command describes the CLI itself; `version -daemon` describes the
+running core.
 
 ## Transport and access
 
-The Windows service BimeronCore runs under LocalSystem. Its pipe is:
+The Windows BimeronCore service runs as LocalSystem and listens on:
 
 ```text
 \\.\pipe\Bimeron.Core.Service
 ```
 
-Access is granted to the SYSTEM and SID of the user who installed the service. GUI of this
-the user can work without elevation of rights. If UAC used another
-administrator account, the owner will be that account.
-If access denied, report a rights problem; Don't silently switch to another core.
+Access is granted to SYSTEM and to the SID of the user who installed the service,
+so that user's GUI works without elevation. If UAC elevated through a different
+administrator account, that account is the owner. On access denied, report a
+permission problem; do not silently switch to another core.
 
-Console daemon Windows uses:
+A Windows console daemon uses:
 
 ```text
 \\.\pipe\Bimeron.Core.<user-hash>
 ```
 
-user-hash = first 16 bytes of the SHA256 UTF-8 string of the current user's SID,
-represented by 32 lowercase hex characters. Access: this user and SYSTEM.
-Prefer service channel. Fallback to console daemon should only be done when
-missing service channel (ERROR_FILE_NOT_FOUND), like the current CLI. Pipe busy or
-access denied does not mean the service is missing. Remote pipe connections are prohibited.
+`user-hash` is the first 16 bytes of the SHA-256 of the current user's SID string
+(UTF-8), as 32 lowercase hex characters. Access is limited to that user and
+SYSTEM. Prefer the service pipe, and fall back to the console daemon only when the
+service pipe is missing (`ERROR_FILE_NOT_FOUND`), as the CLI does. A busy pipe or
+access denied does not mean the service is missing. Remote pipe connections are
+rejected.
 
-Linux: `/run/bimeron/control.sock`.
-macOS: `/var/run/bimeron/control.sock`.
-The socket mode is 0600. The client UID must be root or the launch owner via
-SUDO_UID. The normal GUI is accessed by running the daemon via sudo from the same
-user; The Linux systemd service passes the stored owner UID via
-BIMERON_CONTROL_UID. Daemon launched directly by root without these
-variables, accessible only by root. Installation of launchd is not yet implemented.
+On Linux the socket is `/run/bimeron/control.sock`; on macOS it is
+`/var/run/bimeron/control.sock`. The socket mode is 0600. The client UID must be
+root or the launching owner taken from `SUDO_UID`, so a regular GUI can connect to
+a daemon started with sudo by the same user. The Linux systemd service passes the
+stored owner UID through `BIMERON_CONTROL_UID`. A daemon started directly by root
+without these variables is accessible only to root. launchd installation is not
+implemented yet.
 
-Do not run console daemon next to the service. Parallel daemon have different
-channels, but only one system VPN session is allowed on a machine.
+Do not run a console daemon alongside the service. Parallel daemons use different
+channels, but only one system VPN session is allowed per machine.
 
-## RPC: version 1
+## RPC version 1
 
-One request and one response per connection. UTF-8 JSON + LF; after answer connection
-closes. Socket/pipe - byte stream: read up to LF, do not expect the whole response in one
-read. Request limit 16 KiB with LF; the client limits the response to 256 KiB.
-The server waits for a request for up to 5 seconds. Invalid JSON, unknown fields and excess
-limit may result in the connection being closed without a JSON response.
+Each connection carries one request and one response: UTF-8 JSON terminated by LF,
+after which the connection closes. Pipes and sockets are byte streams: read until
+LF instead of expecting the whole response in one read. Requests are limited to
+16 KiB including LF; limit responses to 256 KiB on the client. The server waits up
+to 5 seconds for a request. Invalid JSON, unknown fields, or an oversized request
+may close the connection without a JSON response.
 
 Request:
 
@@ -145,17 +149,22 @@ Request:
 {"version":1,"id":"gui-1","command":"hello"}
 ```
 
-version=1 and command are required. id is optional, maximum 64 bytes; returns
-in the answer. This is a correlation, not a deduplication mechanism. config is only valid for
-start, after only for events. Do not add fields that the server does not know.
+`version: 1` and `command` are required. `id` is optional (up to 64 bytes) and is
+echoed in the response; it correlates requests but does not deduplicate them.
+`config` is valid only for `start` and `after` only for `events`. Optional
+`instance` and `session` guard daemon mutations, and `challenge_id` and `answers`
+are used only by `auth_reply`; see [CONTROL.MD](CONTROL.MD). Do not send fields
+the server does not know.
 
-Reply hello (form example, capability values ​​vary by platform):
+Example `hello` response from Windows (capability values vary by platform;
+`core`, most `ikev2` fields, and other optional fields are omitted):
 
 ```json
 {
   "version": 1,
   "id": "gui-1",
   "instance": "0123456789abcdef0123456789abcdef",
+  "daemon_session_guards": true,
   "status": {
     "State": "disconnected",
     "Attempt": 0,
@@ -170,9 +179,13 @@ Reply hello (form example, capability values ​​vary by platform):
     "ipv6": true,
     "ip_split": true,
     "domain_split": true,
+    "geoip_split": true,
+    "geosite_split": true,
+    "geodata_schema": "v2ray-protobuf",
     "app_split": false,
     "kill_switch": true,
     "daemon": true,
+    "ikev2": {"supported": true, "foreground_only": true, "kill_switch": true, "dns_protection": true, "stats": false},
     "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"],
     "access_conversion": true
   }
@@ -190,26 +203,38 @@ parameters (see [DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD)). An older co
 omits it; the mobile libraries report `false` because they have no document
 bridge.
 
-Register feature: status contains State, Attempt, Since, LastError and an optional Session;
-nested Event contains Time, State, Code, Message, Attempt, LastError.
-The remaining RPC fields use snake_case. Don't normalize names arbitrarily.
-Time - RFC3339 with possible fractional part and time zone; show locally.
-Instance is unique to the daemon instance and changes after restart.
-Check version, id (if specified), error; ignore unknown response fields.
-The absence of error means the success of the command; it does not guarantee connected.
+`geoip_split`, `geosite_split`, and `geodata_schema` describe GeoIP/GeoSite rule
+support (see [GEODATA.MD](GEODATA.MD)). `ikev2` describes the native Windows IKEv2
+backend independently of the top-level packet capabilities (see
+[Native IKEv2 boundary](#native-ikev2-boundary)).
+
+Field casing: `status` contains `State`, `Attempt`, `Since`, `LastError`, and the
+optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`, `Session`, and
+`native`; each event contains `Time`, `State`, `Code`, `Message`, `Attempt`,
+`LastError`, and the optional `ErrorStage`, `ReconnectAttempt`, and
+`ReconnectLimit` (see [Bounded reconnect recovery](#bounded-reconnect-recovery-desktop-030)).
+All other RPC fields use snake_case. Do not normalize names. `Time` and `Since`
+are RFC 3339 timestamps that may include fractional seconds and a time zone;
+display them in local time. `instance` identifies the daemon process and changes
+after a restart. Check `version`, `id` (if sent), and `error`, and ignore unknown
+response fields. A response without `error` means the command was accepted; it
+does not mean the VPN is connected.
 
 ## Commands and lifecycle
 
 | Command | Additional fields | Behavior |
 |---|---|---|
-| hello | no | Status, version, instance, capabilities |
-| capabilities | no | Capabilities of the running core |
-| status | no | Authoritative Current State |
-| start | config: absolute path | Accepts profile and connects asynchronously |
-| events | after: event number, initially 0 | History, cursor, dropped |
-| stats | no | Statistics of the last session run |
-| stop | no | Disconnects the session and waits for cleaning, daemon remains |
-| shutdown | no | Disconnects the session and ends the daemon/service |
+| hello | none | Status, version, instance, capabilities |
+| version | none | Same as hello; used to read `core` |
+| capabilities | none | Capabilities of the running core |
+| status | none | Authoritative current state |
+| start | `config`: absolute path; optional `instance` | Accepts the profile and connects asynchronously |
+| events | `after`: event number, initially 0 | History, cursor, `dropped` |
+| stats | none | Statistics of the last session |
+| stats_snapshot | none | Statistics bound to a session; see [CONTROL.MD](CONTROL.MD#optional-session-bound-statistics) |
+| auth_pending / auth_reply | `challenge_id`, `answers` for reply | Interactive SSH authentication; see [below](#ssh-profile-editor-and-interactive-authentication) |
+| stop | optional `instance` and `session` | Disconnects the session and waits for cleanup; the daemon keeps running |
+| shutdown | none | Disconnects the session and exits the daemon or service |
 
 Start example:
 
@@ -217,131 +242,144 @@ Start example:
 {"version":1,"id":"gui-2","command":"start","config":"C:\\VPN\\main.conf"}
 ```
 
-States: disconnected, connecting, connected, reconnecting, stopping, failed.
-Attempt - attempt number, not percentage of progress. The connection may remain for a long time
-connecting and repeat when the network is unavailable. VPN cannot be considered enabled
-just because start returned success. There is no guarantee of access when reconnecting
-to Outline; core saves the tunnel and tries to restore the transport.
+States: `disconnected`, `connecting`, `connected`, `reconnecting`, `stopping`,
+`failed`. `Attempt` is an attempt number, not a progress percentage. A connection
+may stay in `connecting` for a long time and keep retrying while the network is
+unavailable, so do not treat a successful `start` response as an enabled VPN.
+Access during reconnection is not guaranteed: the core keeps the tunnel and tries
+to restore the upstream transport.
 
-Example GUI script:
+A typical GUI flow:
 
-1. Connect to IPC, send hello and save instance/capabilities.
-2. Get status; do not impose local state previously saved by the GUI.
-3. When you click “Connect”, send start once, display the core state.
-4. Poll events approximately once per second; status every 1–2 seconds or after
-dropped/errors. Stats can be polled once per second when connected.
-5. When disconnecting, send stop and wait for the cleaning to complete. Do not use
-shutdown for the regular "Shutdown" button.
-6. Closing the GUI window does not stop the service or VPN. Implement
+1. Connect to IPC, send `hello`, and save `instance` and `capabilities`.
+2. Read `status`; do not impose a state the GUI saved earlier.
+3. When the user clicks "Connect", send `start` once and display the core state.
+4. Poll `events` about once per second, and `status` every 1–2 seconds or after
+   `dropped` or an error. Poll `stats` about once per second while connected.
+5. To disconnect, send `stop` and wait for cleanup to finish. Do not use
+   `shutdown` for a regular "Disconnect" button.
+6. Closing the GUI window does not stop the service or the VPN. Implement
    "disconnect on exit" only as an explicit user setting.
 
-Perform IPC work outside the UI thread. Practical client timeout: 5 seconds
-to read status, up to 2 minutes for stop/shutdown. Losing a client doesn't stop
-accepted session and does not cancel the server cleanup. After timeout start check
-status rather than repeating start blindly. Stop can be repeated safely.
-Changing profile: stop, wait for clearing, then start with a new absolute path.
-Hot reload, pause and profile switching with one RPC command are not implemented.
+Run IPC off the UI thread. Practical client timeouts are 5 seconds for `status`
+and up to 2 minutes for `stop` and `shutdown`. A disconnected client does not stop
+an accepted session or cancel server cleanup. After a `start` timeout, check
+`status` instead of repeating `start` blindly; `stop` is safe to repeat. To switch
+profiles, send `stop`, wait for cleanup, then `start` with the new absolute path.
+Hot reload, pause, and single-command profile switching are not implemented.
 
-## Events and GUI connection recovery
+To avoid acting on stale state, a daemon that reports `daemon_session_guards: true`
+accepts `instance` on `start` and `instance` plus `session` on `stop`; see
+[Daemon session guards](CONTROL.MD#daemon-session-guards).
 
-The events response contains an array of `{sequence, event}`, cursor and, if necessary,
-dropped=true. The last 128 events are stored; This is polling, not subscription.
-The order is given by sequence. After - JSON uint64; for JavaScript respect the limit
-accurate representation of Number for very large values.
+## Events and reconnecting the GUI
 
-When changing instance, reset after=0, re-read status and stats. Even the answer with
-invalid_cursor contains instance - check restart first. When dropped
-re-read status: it is impossible to restore all transitions from a truncated history.
-After an IPC break, display “core unavailable” separately from “VPN disabled”:
-kill switch filters may remain after a process crash.
+The `events` response contains an array of `{sequence, event}`, a `cursor`, and,
+when history was lost, `dropped: true`. The last 128 events are kept; this is
+polling, not a subscription. Order events by `sequence`. `after` is a JSON uint64;
+in JavaScript, mind the exact-integer limit of `Number` for very large values.
+
+When `instance` changes, reset `after` to 0 and reread `status` and `stats`. Even
+an `invalid_cursor` response contains `instance`, so check for a restart first.
+On `dropped`, reread `status`: a truncated history cannot reconstruct every
+transition. After losing IPC, show "core unavailable" separately from "VPN
+disconnected": kill switch filters may remain after a process crash.
 
 ## Errors
 
-| error | GUI Action |
+| `error` | GUI action |
 |---|---|
-| unsupported_protocol | Show incompatibility between core and GUI versions |
-| invalid_request/unknown_command | Client implementation error |
-| invalid_cursor | Check instance, reset cursor |
-| absolute_config_path_required | Pass profile absolute path |
-| invalid_configuration | Suggest profile review/edit |
-| session_already_running | Reread status; do not create a second process |
-| session_start_failed | Reread status and LastError |
-| session_stop_failed | Show cleanup problem, don't report shutdown success |
-| daemon_shutting_down | Wait for completion and restore IPC later |
+| `unsupported_protocol` | Show that the core and GUI versions are incompatible |
+| `invalid_request`, `unknown_command` | Client implementation error |
+| `invalid_cursor` | Check `instance`, reset the cursor |
+| `absolute_config_path_required` | Pass the absolute profile path |
+| `invalid_configuration` | Offer to review or edit the profile; `problems` explains why |
+| `session_already_running` | Reread `status`; do not start a second process |
+| `session_start_failed` | Reread `status` and `LastError` |
+| `session_stop_failed` | Show a cleanup problem; do not report a successful disconnect |
+| `daemon_shutting_down` | Wait for exit and reconnect to IPC later |
+| `stale_instance`, `stale_session` | A guarded request used outdated state; reread `hello` and `status` |
+| `invalid_auth_challenge`, `invalid_auth_response` | Reread `auth_pending`; the challenge expired or the answer was invalid |
+| `ikev2_requires_foreground_user_session` | Use the foreground IKEv2 contract instead of daemon `start` |
+| `response_too_large` | Client implementation or server limit error |
 
-Status.LastError and Event.Code/LastError are diagnostic codes. They can
-expand: for unknown code, show the general message and code. Event.Message
-good for logging, but not for logic control or error detection.
-Response `error`, Status.LastError and Event.LastError values are catalog codes;
-take user-facing texts from the catalog ([ERRORS.MD](ERRORS.MD)). LastError never
-contains free text: a failure without a specific code is `connection_failed`.
-Codes ending in `_run_recover` mean that the user must run network recovery.
-Event.Code values for progress (`state`, `retry`, `network_setup` and similar)
-are not catalog codes.
-After cleanup failure, do not perform automatic start/recover without a solution
-user. Recover removes remaining settings and protection so it can
-allow direct access to the network. There is no separate recover command in RPC.
+`Status.LastError` and `Event.Code`/`Event.LastError` are diagnostic codes, and
+the set can grow: for an unknown code, show a generic message and the code.
+`Event.Message` is useful for logs, not for program logic or error detection.
+Response `error`, `Status.LastError`, and `Event.LastError` values are catalog
+codes; take user-facing texts from the catalog ([ERRORS.MD](ERRORS.MD)).
+`LastError` never contains free text: a failure without a specific code is
+`connection_failed`. Codes ending in `_run_recover` mean the user must run network
+recovery. Progress codes in `Event.Code` (`state`, `retry`, `network_setup`, and
+similar) are not catalog codes.
 
-## Statistics and their limitations
+After a cleanup failure, do not run `start` or `recover` automatically without a
+user decision. `recover` removes remaining settings and protection, which can
+allow direct network access. RPC has no `recover` command.
 
-Stats contains int64: tcp_total, tcp_active, tcp_failed, udp_total, udp_active,
-udp_failed, dns_queries, dns_failed, bytes_up, bytes_down, routed_proxy,
-routed_direct, routed_block. The counters are common to the session and its reconnections.
-Reset upon successful acceptance of a new Start, saved after Stop;
-When the daemon is restarted, the previous statistics are lost. Snapshot of individual atomics
-counters is not an atomic snapshot of the entire group.
+## Statistics and their limits
 
-Bytes - bytes counted by handlers, not physical adapter counters or
-the exact volume of encrypted traffic. TCP bytes_up/down are now updated after
-each successful data write, until the connection is closed, including partial writes.
-The GUI speed is calculated by the difference between Bytes and the monotonic time between snapshots.
-When changing instance or Session.id, reset the previous measurement point.
-This is the processor payload speed, not guaranteed to match the readings
-network card and without taking into account all overhead transport.
+`stats` contains int64 counters: `tcp_total`, `tcp_active`, `tcp_failed`,
+`udp_total`, `udp_active`, `udp_failed`, `dns_queries`, `dns_failed`, `bytes_up`,
+`bytes_down`, `routed_proxy`, `routed_direct`, and `routed_block`. The counters
+cover the session and its reconnections. They reset when a new `start` is
+accepted, remain readable after `stop`, and are lost when the daemon restarts.
+Each counter is read atomically, but a snapshot is not an atomic view of the
+whole group.
+
+Byte counters measure handler payload, not physical adapter counters or the exact
+volume of encrypted traffic. TCP `bytes_up` and `bytes_down` update after every
+successful write, including partial writes, without waiting for the connection to
+close. Calculate speed from byte differences and monotonic time between
+snapshots, and reset the baseline when `instance` or `Session.id` changes. The
+result is handler payload throughput and excludes transport overhead.
 
 ## Profiles and secrets
 
-The list and the selected profile are stored by the GUI. Core does not provide RPC for
-enumerate/create profiles and does not return the profile path. In the new core
-status.Session contains the data of the last accepted Start:
+The GUI stores the profile list and the selected profile. The core has no RPC to
+list or create profiles and never returns the profile path. `status.Session`
+describes the last accepted `start`:
 
 ```json
 {"id":"0123456789abcdef0123456789abcdef","profile_id":"<64 hex>","profile_name":"Main","active":true,"mode":"vpn","ipv6":"disable","kill_switch_requested":true,"server_tcp":"192.0.2.10:443","server_udp":"192.0.2.11:53","server_tcp_name":"tcp.example","server_udp_name":"udp.example"}
 ```
 
-id is new for each Start, saved after reconnection. active means
-unfinished life cycle, including connecting/reconnecting/stopping; This
-not a synonym for connected. After completion, the Session is saved with active=false,
-when restarting, the daemon is missing until the first Start. profile_name is taken from
-[Profile] Name, limited to 128 Unicode characters, control characters removed.
-This is a custom label, output it as plain text, not HTML.
+- `id` is new for each `start` and survives reconnection.
+- `active` means the lifecycle has not finished, including `connecting`,
+  `reconnecting`, and `stopping`; it is not a synonym for `connected`. After the
+  session ends, `Session` remains with `active: false`. After a daemon restart,
+  it is absent until the first `start`.
+- `profile_name` comes from `[Profile] Name`, limited to 128 Unicode characters
+  with control characters removed. It is user text: render it as plain text, not
+  HTML.
+- `server_tcp` and `server_udp` are the transport addresses selected after the
+  VPN transport check, and they update on reconnection. If the key used a domain
+  name, `server_tcp_name` and `server_udp_name` keep that name for display next to
+  the address. In SOCKS mode, `server_tcp` is the configured upstream, which the
+  dialer resolves later; MASQUE also reports `server_udp`. These fields are
+  available through the Windows service, the Linux/macOS daemon, the in-process
+  Engine, and Apple `RLStatus`. Treat them as the current connection and show them
+  only in the `connected` state. They are excluded from doctor output and events.
 
-Optional server_tcp/server_udp - actually selected transport addresses
-VPN after successful verification; when reconnecting they are updated. If the original key
-contained a domain, server_tcp_name/server_udp_name save it for address signing.
-For SOCKS, server_tcp contains a configured upstream that the dialer can allow
-Later. The fields are available equally through Windows service, Linux/macOS daemon,
-console Engine and Apple RLStatus. Consider them the current connection and show
-to the user only with State=connected. They are not included in doctor and events.
+`profile_id` is the lowercase hex SHA-256 of the normalized absolute `.conf` path
+in UTF-8: `filepath.Abs` and `filepath.Clean`, plus `strings.ToLower` on Windows.
+Symbolic links are not resolved. The ID depends on the path, not the content:
+moving the file changes it, editing the file in place does not. In Go, use
+`core.ProfileIdentity(path)`; a GUI can compute IDs for its own profiles with the
+same algorithm. An equal ID does not prove the file is unchanged. A session
+started without a file may have no ID or name.
 
-profile_id = lowercase SHA256 UTF-8 normalized absolute path `.conf`:
-filepath.Abs ​​+ filepath.Clean, on Windows additionally strings.ToLower.
-Symbolic links are not expanded. The identifier is relative to the path, not
-content: moving a file changes the ID, changing a file in the same path does not.
-Go API: core.ProfileIdentity(path). The GUI can calculate the IDs of its profiles by
-this algorithm; the same ID does not prove that the contents of the file are unchanged.
-When running softly without a file, the ID/name may be missing.
+Older cores do not return `Session`. If it is missing or `profile_id` matches no
+known profile, show "unknown profile" instead of guessing. Name and ID are for
+local IPC, not public reports; doctor deliberately omits them.
 
-The old core does not return Session. If it is not there or profile_id does not match
-with known GUI profiles, show "profile unknown" rather than guess.
-Name/ID data is for local IPC, not for public reporting:
-doctor specifically does not include them.
-Do not confuse capabilities with the current session settings: capabilities.kill_switch
-does not mean that the user has enabled protection in the selected profile.
-Session.kill_switch_requested describes the profile request; availability/effectiveness
-filters need to be checked separately. Version=1 is retained: the Session field is optional.
+Do not confuse capabilities with session settings: `capabilities.kill_switch`
+does not mean the selected profile enables protection.
+`Session.kill_switch_requested` reflects the profile request; check filter
+availability and effectiveness separately. `Session` is optional, so protocol
+version 1 is unchanged.
 
-Minimum profile:
+Minimal profile:
 
 ```ini
 [Profile]
@@ -367,25 +405,28 @@ CIDR = 203.0.113.0/24, 198.51.100.1
 Action = direct
 ```
 
-For macOS KillSwitch=false: true is rejected until the network changes. In AccessKey
-choose exactly one source: File, SS=ss://..., SSConf=ssconf://...,
-SOCKS5=socks5://..., VLESS=vless://..., VMess=vmess://...,
-Trojan=trojan://..., Hysteria2=hysteria2://..., TUIC=tuic://...,
-SSH=ssh://..., Key, or explicit parameters. File is allowed
-relative to `.conf`, not the GUI working directory. The keys are now plaintext:
-limit ACL/permissions and exclude from logs, analytics, Git and crash reports.
-DNS - from 1 to 4 different unicast IPv4 separated by commas; absence gives 1.1.1.1.
-Routing.Default: proxy/direct/block; Rule.CIDR accepts separate IP and CIDR,
-including lists. The rules are checked from top to bottom until the first match is made.
-Existing more specific OS routes can bypass tunnel hijacking.
+On macOS, use `KillSwitch = false`: a profile requesting it fails at start with
+`kill_switch_unsupported_on_macos`.
 
-The GUI saves the profile before start, preferably by atomically replacing the file.
-Changing the file does not change the rules of the active session: you need to stop/start.
-SSConf is resolved again on reconnections. SYSTEM/root must have access
-to the profile and File key; custom mapped drives and EFS may not be available.
-Validation without a network: run CLI `validate <config>` and check the exit code.
-Full format help is available in the core repository, docs/CONF.MD; this example does not
-replace it when developing a full-fledged editor for all settings.
+- `[AccessKey]` takes exactly one source: `File`, a protocol-specific URI field
+  such as `SS`, `SSConf`, `VLESS`, or `SSH`, a generic `Key`, or explicit
+  parameters with `Type`. [CONF.MD](CONF.MD) lists every source. A relative
+  `File` is resolved against the `.conf` file, not the GUI working directory.
+- Keys are stored in plaintext: restrict ACLs and permissions, and keep keys out
+  of logs, analytics, Git, and crash reports.
+- `DNS` takes 1 to 4 distinct unicast IPv4 addresses separated by commas; the
+  default is `1.1.1.1`.
+- `Routing.Default` is `proxy`, `direct`, or `block`. `Rule.CIDR` accepts single
+  IPs, CIDR ranges, and lists. Rules are checked top to bottom until the first
+  match. More specific existing OS routes can bypass the tunnel.
+
+Save the profile before `start`, preferably by atomically replacing the file.
+Editing the file does not change the active session; stop and start again.
+`SSConf` keys are resolved again on reconnection. SYSTEM or root must be able to
+read the profile and its `File` key; user-mapped drives and EFS may be
+inaccessible. To validate without network access, run `bimeron validate <config>`
+and check the exit code. [CONF.MD](CONF.MD) is the full format reference; this
+example does not replace it for a complete settings editor.
 
 ### VMess profile importer
 
@@ -406,19 +447,18 @@ SSH supports `[Interface] Mode = proxy` for a local SOCKS5 listener and
 proxied non-DNS UDP is dropped, captured DNS uses TCP over SSH, and explicitly
 direct-routed traffic remains outside the tunnel. Do not present it as a full
 VPN or promise that applications with their own DNS cannot bypass the tunnel.
-The GUI can import
-`ssh://user@host:22` as `SSH = ...` or write explicit `Type = ssh`, `Server`,
-`Port`, and `Username` fields. Provide file pickers for the identity and
-`known_hosts`; save absolute paths as `IdentityFile` and `KnownHostsFile`.
-The service account may have a different home directory, so do not rely on
-its `~/.ssh` defaults. The GUI saves the `.conf` atomically before `start`.
+The GUI can import `ssh://user@host:22` as `SSH = ...` or write explicit
+`Type = ssh`, `Server`, `Port`, and `Username` fields. Provide file pickers for
+the identity and `known_hosts`; save absolute paths as `IdentityFile` and
+`KnownHostsFile`. The service account may have a different home directory, so do
+not rely on its `~/.ssh` defaults. Save the `.conf` atomically before `start`.
 
 While connecting, poll the protected local control socket with
 `{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
 each `prompts` entry with masking controlled by its matching `echo` value.
 Send `{"version":1,"command":"auth_reply","challenge_id":"...","answers":["..."]}`.
 The supported challenge kinds are `key_passphrase`, `password`, and
-`keyboard_interactive`. An answer is one-use and is never stored in the
+`keyboard_interactive`. An answer is used once and is never stored in the
 profile, GUI settings, logs, status, or diagnostics. The core times out the
 challenge after two minutes. Older cores reply `unknown_command` to
 `auth_pending`; hide interactive authentication for them. See
@@ -428,8 +468,8 @@ challenge after two minutes. Older cores reply `unknown_command` to
 
 For standard Trojan over TCP/TLS, write `Type = trojan`, `Server`, `Port`,
 and `Password`. `ServerName` optionally overrides the TLS certificate name
-and SNI. Alternatively, write a single `Trojan = trojan://...` or `Key =
-trojan://...` source, or point `File` at such a link. Do not combine a link
+and SNI. Alternatively, write a single `Trojan = trojan://...` or
+`Key = trojan://...` source, or point `File` at such a link. Do not combine a link
 source with explicit parameters. Reject unsupported link options rather than
 silently dropping them. The core supports TCP and UDP through Trojan in VPN
 mode; the local SOCKS5 proxy listener remains TCP only. Never display the
@@ -485,6 +525,10 @@ For bimeron-desktop, this changes the previous contract as follows:
    minimum released version has been assigned yet. Use `bimeron validate`
    before activating a profile and do not infer support from the development
    version string alone.
+6. Gate `chrome-115` and `chrome-146` separately on a bundled core containing
+   ADR 0011; ADR 0010 alone does not establish versioned Chrome support. Never
+   migrate saved profiles automatically, and show unsupported imported values
+   without dropping them.
 
 Explain that these emulate historical QUIC handshakes, not an entire browser.
 TLS resumption/0-RTT are disabled; compatible RSA/ECDSA server certificates are
@@ -514,10 +558,10 @@ remain available but do not encrypt proxy credentials. Both variants carry TCP
 only; VPN DNS uses TCP and other proxied UDP is dropped. The local listener
 remains SOCKS5. See [configuration](CONF.MD#remote-http-connect-proxy).
 
-### Remote SOCKS5 profile editor
+### Remote SOCKS5 and Shadowsocks profile editors
 
 The profile's upstream protocol is independent of `[Interface] Mode`: `vpn`
-installs a system tunnel, while `proxy` opens a local TCP SOCKS5 listener.
+installs a system tunnel, while `proxy` opens a local SOCKS5 listener.
 Use the following `[AccessKey]` fields when the user enters connection details:
 
 ```ini
@@ -529,8 +573,8 @@ Username = alice
 Password = secret
 ```
 
-`Username` and `Password` are both omitted for no authentication. For an
-imported URI, write exactly one source such as
+Omit both `Username` and `Password` for no authentication. For an imported URI,
+write exactly one source such as
 `Key = socks5://alice:secret@proxy.example.com:1080` or
 `SOCKS5 = socks5://proxy.example.com:1080`. Encode reserved credential
 characters in the URI. A `File` source may point to a UTF-8 file containing
@@ -580,112 +624,113 @@ DNS settings, MTU, split rules, and direct/block actions use the same GUI
 controls for SOCKS5 and Shadowsocks. The upstream SOCKS5 connection is not
 encrypted by SOCKS5; explain this when users choose the protocol. Keep
 credentials out of status displays, logs, analytics, and crash reports.
-`bimeron inspect <key-file>` reports `type` as `socks5`, `trojan`, `hysteria2`, or `shadowsocks`
-without reporting the username or password.
+
+`bimeron inspect <key-file>` reports the protocol `type` (for example `socks5`,
+`shadowsocks`, `vless`, or `hysteria2`) without the username or password.
 Plugin profiles still report `type` as `shadowsocks`; `inspect` does not expose
-plugin settings, and their UDP endpoint is empty. It must not be used to
-reconstruct a complete access profile or infer the plugin configuration.
+plugin settings, and their UDP endpoint is empty. Do not use it to reconstruct a
+complete access profile or infer the plugin configuration.
 
-## Installation, update and diagnostics of Windows/Linux
+## Installation, updates, and diagnostics on Windows and Linux
 
-Elevate rights only for explicitly selected administrative actions:
+Request elevation only for explicitly selected administrative actions:
 
 ```text
 bimeron.exe service install [-automatic]
 bimeron.exe service start
 bimeron.exe service stop
-bimeron.exe service update
+bimeron.exe service update -source <absolute-path> -version <version> -sha256 <executable-sha256>
 bimeron.exe service describe
 bimeron.exe service uninstall
 bimeron.exe recover
 ```
 
-On Linux, the same commands are used without `.exe`; install additionally accepts
-`-owner <uid>`. The GUI triggers administrative actions via `pkexec`, and status
-and IPC do not require root. Core is copied to `/usr/local/lib/bimeron`, unit - to
-`/etc/systemd/system/bimeron-core.service`. Socket remains accessible only
-root and the owner of the installation.
+Linux uses the same commands without `.exe`; `install` also accepts
+`-owner <uid>`. The GUI runs administrative actions through `pkexec`; status and
+IPC do not require root. The core is copied to `/usr/local/lib/bimeron` and the
+unit to `/etc/systemd/system/bimeron-core.service`. The socket stays accessible
+only to root and the installation owner.
 
-Install is manual by default, -automatic enables the service to start when the OS boots.
-This is not an automatic VPN connection. Description: VPN core and local control.
-Update run from new project/supplied EXE, not installed EXE
-services. It disables VPN, saves owner/autorun, replaces EXE and returns
-service to its previous state. Wintun DLL does not update. If there is an error, it tries to return
-old EXE; if recovery is impossible, saves a backup and reports an error.
-VPN after update/rollback is connected only by explicit start.
+`install` sets a manual start by default; `-automatic` starts the service when
+the OS boots. This does not connect the VPN automatically. The service
+description is "VPN core and local control".
 
-Deliver CLI for the desired architecture and wintun.dll of the same architecture, together
-with WINTUN-LICENSE.txt and dependency licenses. The installation copies EXE, DLL and
-Wintun license to the protected directory Program Files/Bimeron Core.
-Windows signing and macOS notarization are not yet implemented.
+Run `service update` from the trusted core bundled in the installed GUI package,
+not from the installed service binary, and pass the downloaded executable with
+the version and SHA-256 from a verified release manifest. The update disconnects
+the VPN, keeps the owner and startup type, replaces the executable, and returns
+the service to its previous state. The Wintun DLL is not updated. On failure, it
+tries to restore the old executable; if that is impossible, it keeps a backup and
+reports an error. After an update or rollback, the VPN connects only on an
+explicit `start`. See [SERVICE.MD](SERVICE.MD) for details.
 
-Doctor is a separate CLI command, not an RPC:
-`bimeron.exe doctor` or `doctor -output <new-file.json>`.
-Format JSON schema=1. Read only, no external requests or network changes.
-WFP inspection requires an elevated console; other checks may work
-ordinary user. The report does not contain keys, IPs, URLs or profile paths.
-The GUI should show/offer to save the report before sending it to anyone.
-The presence of filters does not prove their effectiveness; route counters - snapshot.
-When protecting Documents in Defender, it is possible to save stdout through a trusted
-shell; do not disable protection automatically. CLI -output does not overwrite the file.
+Ship the CLI for the target architecture with `wintun.dll` for the same
+architecture, `WINTUN-LICENSE.txt`, and the dependency licenses. Installation
+copies the executable, DLL, and Wintun license to the protected
+`Program Files\Bimeron Core` directory. Windows code signing and macOS
+notarization are not implemented yet.
 
-## Deferred checks and mandatory GUI tests
+Doctor is a CLI command, not an RPC: `bimeron.exe doctor` or
+`bimeron.exe doctor -output <new-file.json>`. It writes JSON with `schema: 1`,
+reads only, and makes no external requests or network changes. WFP inspection
+requires an elevated console; other checks may work for a regular user. The report
+contains no keys, IP addresses, URLs, or profile paths. Let the user review or
+save the report before sending it to anyone. Present filters do not prove their
+effectiveness, and route counters are a snapshot. If Defender's controlled folder
+access protects Documents, save stdout through a trusted shell instead of
+disabling the protection automatically. `-output` never overwrites an existing
+file.
 
-October 8, 2026, Windows service crash and Windows reboot were checked:
-SCM restart without automatic VPN connection, saving kill switch and DNS
-rules, blocking direct traffic and cleaning via `recover`. Pending deletion
-services and interactive verification of access denial from another account.
+## Verification status and required GUI tests
 
-Autotests check for overriding local HTTPS ssconf while waiting for headers and
-reading the body, canceling reconnect, waiting for the network settings to be rolled back and prohibiting new ones
-Start before it ends. The network setup in the rollback test is simulated, not changed.
-on working Windows. Service ACL checked Windows AccessCheck: owner allowed,
-foreign SID rejected. A separate named pipe checks the owner's connection
-without elevation of rights. There was no interactive login to the second account;
-Don't pass off an ACL check as a full manual Windows multi-user test.
-Do not mark those checks as completed. Linux requires real network changes;
-macOS requires utun, route, and DNS checks on a Mac. There is no macOS kill switch.
-Run tests, vet, cross-builds, and Apple shell checks before release.
+On October 8, 2026, a Windows service crash and a Windows reboot were checked:
+SCM restarted the service without connecting the VPN, the kill switch and DNS
+rules persisted, direct traffic was blocked, and `recover` cleaned up. Service
+deletion while pending and an interactive access-denial check from another
+account remain unverified.
 
-For each GUI, check: hello and version incompatibility; start to connected;
-stop and start again; profile switching; IPC/rights denial; dropped and changed
-instance; restarting the GUI when the VPN is already connected; lack of admin rights
-for normal control; saving diagnostics; lack of secrets in logs.
-Do not terminate the core process to close the GUI window and do not run recover as
-automatic way to fix any connection error.
-## Apple NetworkExtension - a separate management method
+Automated tests cover cancelling a local HTTPS `ssconf` fetch while waiting for
+headers and while reading the body, cancelling reconnection, waiting for network
+settings rollback, and rejecting a new `start` until rollback finishes. The
+rollback test simulates network setup; it does not change a real Windows system.
+The service ACL was checked with Windows `AccessCheck`: the owner is allowed and a
+foreign SID is rejected. A separate named pipe test confirms that the owner can
+connect without elevation. No interactive second-account login was performed, so
+do not present the ACL check as a full multi-user test. Linux requires real
+network changes, and macOS requires utun, route, and DNS checks on a Mac. Run
+tests, vet, cross-builds, and Apple shell checks before a release.
 
-In addition to the existing CLI/daemon backend, a technical Apple shell has been prepared
-without GUI. The NE session is controlled by `NETunnelProviderManager` and
-`NETunnelProviderSession`, non-Unix socket of the console daemon.
-Go/C ABI, packetFlow, Keychain, status/events messages and packaging restrictions
-are described in [APPLE_NETWORK_EXTENSION.MD](APPLE_NETWORK_EXTENSION.MD).
-The GUI should select one backend and not run both VPNs at the same time.
-At this stage, the NE bundle is only built unsigned; real signed launch
-not verified. This is a preparation of a contract, not a statement of a ready-made VPN system.
+Each GUI should test: `hello` and version incompatibility; start to `connected`;
+stop and start again; profile switching; IPC or permission denial; `dropped` and
+a changed `instance`; restarting the GUI while the VPN is connected; regular
+control without administrator rights; saving diagnostics; and no secrets in logs.
+Do not kill the core process when closing the GUI window, and do not run
+`recover` automatically to fix connection errors.
 
-### Desktop changes for issue #23
+## Apple NetworkExtension: a separate control path
 
-Add exactly `chrome-115` and `chrome-146` to the Hysteria2 allowlist and selector.
-Preserve these exact strings on import/export. Keep `chrome` and omitted `fp`
-unchanged; never migrate saved profiles automatically. The password, TLS, SNI,
-ALPN and error-redaction contracts are unchanged. Gate the new entries on a
-bundled core containing ADR 0011 and successful `bimeron validate`; ADR 0010
-alone does not establish versioned Chrome support. No released minimum version
-has been assigned. Show unsupported imported values without dropping them.
-These presets do not claim full browser equivalence; see ADR 0011.
+Besides the CLI/daemon backend, a technical Apple shell without a GUI is
+available. The NetworkExtension session is controlled through
+`NETunnelProviderManager` and `NETunnelProviderSession`, not the console daemon's
+Unix socket. The Go/C ABI, `packetFlow`, Keychain, status and event messages, and
+packaging limits are described in
+[APPLE_NETWORK_EXTENSION.MD](APPLE_NETWORK_EXTENSION.MD). Choose one backend and
+never run both VPNs at once. The NetworkExtension bundle is currently built
+unsigned only, and a signed launch has not been verified: this is a contract, not
+a finished VPN product.
 
 ## Native IKEv2 boundary
 
 The experimental Windows IKEv2 backend uses a pre-provisioned current-user
 profile and an elevated foreground process. Do not offer it through daemon
-start: IPC rejects it with `ikev2_requires_foreground_user_session`. Read the
+`start`: IPC rejects it with `ikev2_requires_foreground_user_session`. Read the
 separate `capabilities.ikev2` object instead of inheriting top-level packet
-features. Hide packet rules, packet kill-switch settings, DNS/MTU overrides and
+features. Hide packet rules, packet kill switch settings, DNS/MTU overrides, and
 traffic charts for this backend. A separate native protection option may use
-`ikev2.kill_switch`/`ikev2.dns_protection`; explain its activation and retained
-recovery behavior before enabling it. Native stats are explicitly unavailable. See [IKEV2.MD](IKEV2.MD)
-for configuration, profile requirements and unverified live behavior.
+`ikev2.kill_switch` and `ikev2.dns_protection`; explain its activation and
+retained recovery behavior before enabling it. Native statistics are explicitly
+unavailable. See [IKEV2.MD](IKEV2.MD) for configuration, profile requirements, and
+unverified live behavior.
 
 ## Bounded reconnect recovery (Desktop 0.3.0)
 

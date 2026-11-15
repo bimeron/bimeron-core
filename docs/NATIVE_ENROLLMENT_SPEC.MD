@@ -132,7 +132,6 @@ A missing callback, filtered or otherwise invalid token, verification/flush fail
 
 Enrollment must still reject incompatible runnable managed hosts and incompatible rollback sets. Existing enrolled updater health-check/restore requirements are unchanged and unproved; this amendment does not redesign the updater or permit early settlement for its service restart. SYSTEM and Administrators are trusted under the existing threat scope, not treated as malicious actors this mechanism can defeat. No generic bypass, completion boolean, settlement endpoint, reader, production hook or runtime enablement is added. Existing codec/model tests remain offline classifications, never package security enforcement.
 
-
 ## Disconnected reader and update proof amendment
 
 Accepted A+B delta, 2026-10-30; tracking remains [issue #73](https://github.com/bimeron/bimeron-core/issues/73). This amendment supersedes the earlier registry selection, reader deferral, SYSTEM/Administrators-only storage ownership, and two-production-file limit. It does not supersede the disabled enrollment, codec or no-integration boundaries. Implementation starts from fetched origin/master `d124178dd85fd2e8e8ef8a333054eccdf34dafe3`, without the old squash ancestry. Only documentation is delivered by this design commit.

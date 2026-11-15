@@ -98,7 +98,6 @@ A future production proposal also requires an independently validated Core barri
 
 Documentation verification for this amendment: inspect the actual origin/master three-dot diff for only ADR 0029, this acceptance brief and the specification; validate local Markdown targets/anchors and run git diff --check. Record exact base/head and PR in the handoff. No new runtime test results are claimed.
 
-
 ## Split implementation acceptance
 
 This amendment supersedes the historical no-reader/two-file execution brief only within the [A+B specification](NATIVE_ENROLLMENT_SPEC.MD#disconnected-reader-and-update-proof-amendment). No implementation is delivered here. Both LOW/Standard implementers start in separate new worktrees from the immutable central specification commit supplied by the coordinator, itself directly based on `d124178dd85fd2e8e8ef8a333054eccdf34dafe3`. No old squash ancestry. Use issue #73 and Conventional Commits. No subagents, reasoning upgrades, PR, push, registry, VM, elevation, credentials, Desktop, signing, release or network-policy work.
@@ -134,7 +133,6 @@ This brief supersedes LOW A's no-model-edits restriction only for P1/P2 in the s
 Parent must update centralized validation and PR scope at the exact post-fix head: model.go now contains a production-logic correction inside a disconnected package, not only a package-comment edit. Existing validation results are historical at their recorded heads and do not validate this correction. Parent owns a NEW independent review and hosted CI assessment at the new head. Neither this design commit nor offline regressions establish native protected positives, atomic admission, durable deletion detection, ARM64 runtime execution, enrollment or terminal settlement.
 
 Accepted release constraint: validate native Windows x64/ARM64 selection only. Keep Windows 386 compile-compatible but reader-disabled, and assert Unsupported/UnsafeRead in the read-only 386 runtime check, never a native Program Files positive. Report unsupported availability explicitly in the PR description and final validation; packet behavior stays unchanged. No emulation bypass of architecture classification or known-folder anchor identity/pins is permitted.
-
 
 ## Trusted invocation reconciliation acceptance
 

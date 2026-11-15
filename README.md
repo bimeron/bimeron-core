@@ -65,7 +65,7 @@ wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
-[MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded
+[Trojan transports](docs/TROJAN_TRANSPORTS.MD), [MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded
 NaiveProxy-compatible client does not claim Chromium-identical TLS, HTTP/2, or QUIC behavior.
 Connections to a remote SOCKS5 upstream are not encrypted by the core. HTTP CONNECT accepts
 `https://` proxies with certificate and server-name verification. With `http://`, proxy traffic
@@ -180,7 +180,8 @@ Windows-only experimental path; see its [requirements and limits](docs/IKEV2.MD)
 | Linux amd64/arm64 | TUN | nftables; does not survive reboot |
 | macOS Intel/Apple Silicon | Experimental CLI VPN via utun | Not implemented |
 
-All three desktop targets support the local SOCKS5 proxy and service/daemon control. IPC uses
+All three desktop targets support the local SOCKS5 proxy and background control: a service
+on Windows and Linux, a root daemon on macOS. IPC uses
 named pipes on Windows and Unix sockets on Linux/macOS. Application-based split routing is
 not available.
 

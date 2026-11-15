@@ -41,8 +41,8 @@ one VPN run:
 4. After creating TUN, call `Start()`. This acknowledges the request, not
    readiness. `Status()` contains `status.State`: wait for `connected` or
    `failed`. `Events()` returns up to eight events on a best-effort basis;
-   `Status()` remains authoritative. When needed, `Stats()` is included in
-   the `Status()` JSON as `stats`. `Version()` and `Capabilities()` are
+   `Status()` remains authoritative. The `Status()` JSON also includes a
+   `stats` object with the session counters. `Version()` and `Capabilities()` are
    available before startup.
 5. Read raw IP packets from TUN and pass each to `WritePacket`. A separate loop
    calls `ReadPacket(timeoutMs)` with 1..1000 ms and writes returned bytes to

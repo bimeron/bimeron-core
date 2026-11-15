@@ -50,7 +50,6 @@ A durable exclusive handoff may replace worker-thread continuity only after all 
 
 Actual elevated disposable-VM experiments and production enablement are not authorized. Before any future production change, a bounded reviewed ADR amendment must record the demonstrated token, package, handoff and durable-reader contract and remaining updater/host exclusions. Until then, no routine-success automatic settlement or freedom from manual lockout is proven. SYSTEM and Administrators remain trusted within the existing threat scope; this is not protection against malicious administrators.
 
-
 ## Disconnected file reader and update proof decision (2026-10-30)
 
 The user accepts the A+B disconnected-only delta in the [current specification](../NATIVE_ENROLLMENT_SPEC.MD#disconnected-reader-and-update-proof-amendment) and [split acceptance](../NATIVE_ENROLLMENT_ACCEPTANCE.MD#split-implementation-acceptance). This supersedes the historical registry choice and reader deferral above. Choose native Program Files with flags zero and exactly `Bimeron Core/NativeEnrollment/record.bin`, retaining the Core 64-byte codec. Registry storage is rejected for this iteration; accepting the extra file identity/ancestor work aligns the fixed location with Core installation and permits bounded descriptor/reader evidence without a writer. Desktop LPF interoperability and a configurable storage framework are rejected.
@@ -58,7 +57,6 @@ The user accepts the A+B disconnected-only delta in the [current specification](
 Exact SYSTEM/Administrators/TrustedInstaller trust aligns with Core file identity validation; it does not weaken protected container/record DACL or ancestor checks. Bootstrap absence needs a validated held nearest ancestor; missing leaf inside an existing enrollment container is unsafe. Whole-subtree administrative deletion remains unsolved.
 
 The second workstream records actual updater outcomes and disconnected authenticated health bindings. It does not change restore-to-SCM-Running-only behavior, stopped-service probe omission, Linux semantics or ordinary dispatch. Future health startup gating needs separate acceptance; no early settlement or Pending bypass is permitted. Tradeoff: useful offline negative proofs and descriptor parsing, with no claim of production admission, compatible-host enforcement, atomic reading, crash-safe publication or routine-success settlement. Enrollment remains disabled. Issue #73, parent independent review and hosted CI remain the completion path.
-
 
 ## Selected trusted invocation revision (2026-10-30)
 

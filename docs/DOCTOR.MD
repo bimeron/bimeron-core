@@ -1,14 +1,14 @@
 # Bimeron Core diagnostics
 
 ```cmd
-bin\bimeron-doctor.exe doctor
-bin\bimeron-doctor.exe doctor -output doctor-report.json
+dist\windows-amd64\bimeron.exe doctor
+dist\windows-amd64\bimeron.exe doctor -output doctor-report.json
 ```
 
 The command only reads state: it does not start a VPN, stop the service, change
 routes, DNS, or firewall settings, or send external network requests.
-It works with the current service without updating the installed EXE.
-The regular updated CLI also supports `bimeron.exe doctor`.
+Any CLI build that includes `doctor` can inspect the running service; the
+installed service does not need to be updated first.
 
 The JSON includes platform and architecture, the diagnostic CLI's Go version and
 Git revision (not the installed service's), session state, statistics, and up to
@@ -23,7 +23,7 @@ returns requires_elevation rather than incorrectly concluding there is no
 protection. Failure to read system settings is reported as
 unavailable_or_permission_denied.
 
-Existing settings do not guarantee Outline availability or effective protection.
+Existing settings do not guarantee upstream availability or effective protection.
 This is a snapshot of separate checks, not an atomic check of the entire OS;
 values may change during a network transition. The command does not know the
 current profile rules and does not treat a missing kill switch as an error:
@@ -63,4 +63,3 @@ running, one active tunnel, two IPv4 and two IPv6 routes, and an owned DNS rule.
 Traffic counters were nonzero. Without elevation, WFP returned requires_elevation.
 To check the disconnected state, the user must stop the VPN/service and rerun
 doctor; the command does not do this itself.
-

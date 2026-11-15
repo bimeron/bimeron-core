@@ -8,8 +8,12 @@ Android packages remain in the release but are outside this service updater.
 ## Reviewed compatibility values
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
-`gui_min`, `gui_max_exclusive`, and `profile_format`. Published `v0.1.0-beta.4`
-supports GUI `[0.1.0, 0.1.3)`. For `v0.1.0-beta.5`, GUI 0.1.5 was reviewed
+`gui_min`, `gui_max_exclusive`, and `profile_format`. The current file allows GUI
+`[0.2.0, 0.2.1)` with IPC 1 and profile format 1, and sets `gui_reviewed` to
+`true`.
+
+Earlier reviews, for reference: published `v0.1.0-beta.4` supports GUI
+`[0.1.0, 0.1.3)`. For `v0.1.0-beta.5`, GUI 0.1.5 was reviewed
 with IPC 1 and profile format 1; the range is `[0.1.5, 0.1.6)` and
 `gui_reviewed` is `true`. The Windows amd64 VM verified the GUI package upgrade,
 an existing VPN connection, the trusted `service update -source` helper,
@@ -59,9 +63,14 @@ the release tag in GitHub and navigate to `README.md`.
 ## Publish prepared bytes
 
 The tag CI builds and tests distributions but never creates a release. Build
-the seven ZIPs once from a clean commit, calculate `SHA256SUMS` over those exact
-files, then generate and verify the signed manifest from the completed ZIPs.
-The Android build is separate from `build-dist.go`. Keep all ten assets in one
+the seven ZIPs once from a clean commit and name them
+`bimeron-<tag>-<target>.zip`, where `<target>` is `android`, `linux-amd64`,
+`linux-arm64`, `macos-amd64`, `macos-arm64`, `windows-amd64`, or `windows-arm64`.
+Each desktop ZIP holds its `dist/` directory, so the executable is at
+`<target>/bimeron` (`<target>/bimeron.exe` on Windows). Calculate `SHA256SUMS`
+over those exact files, then generate and verify the signed manifest from the
+completed ZIPs. The Android build is separate from `build-dist.go`. The
+publisher requires a clean source checkout. Keep all ten assets in one
 directory and do not change them after signing. With the matching public key in
 the environment, run the default dry-run:
 
