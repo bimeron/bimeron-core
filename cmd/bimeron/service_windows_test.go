@@ -83,6 +83,29 @@ func TestWindowsServiceExitClean(t *testing.T) {
 	}
 }
 
+func TestWindowsUpdateCleanupProven(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status svc.Status
+		clean  bool
+	}{
+		{"clean stop", svc.Status{State: svc.Stopped}, true},
+		{"not started since boot", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_NEVER_STARTED)}, true},
+		{"crashed", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_PROCESS_ABORTED)}, false},
+		{"cleanup failed", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_SPECIFIC_ERROR), ServiceSpecificExitCode: 2}, false},
+		{"service error", svc.Status{State: svc.Stopped, ServiceSpecificExitCode: 2}, false},
+		{"never started with error", svc.Status{State: svc.Stopped, Win32ExitCode: uint32(windows.ERROR_SERVICE_NEVER_STARTED), ServiceSpecificExitCode: 2}, false},
+		{"process still alive", svc.Status{State: svc.Stopped, ProcessId: 123}, false},
+		{"still stopping", svc.Status{State: svc.StopPending}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := windowsUpdateCleanupProven(test.status); (err == nil) != test.clean {
+				t.Fatalf("cleanup proof = %v, clean = %v", err, test.clean)
+			}
+		})
+	}
+}
+
 func TestProtectServiceDirRefusesJunction(t *testing.T) {
 	base := t.TempDir()
 	target, link := filepath.Join(base, "target"), filepath.Join(base, "link")
