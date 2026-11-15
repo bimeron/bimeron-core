@@ -91,7 +91,7 @@ and [SSH](SSH.MD) still apply. Split XHTTP requires a ShadowTLS listener at both
 upload and download addresses, with the same outer password and handshake name.
 The inner settings for each leg remain independent.
 
-Plain SOCKS5, plaintext HTTP CONNECT, bare plaintext inner modes, Hysteria2,
+Plain SOCKS5, HTTP CONNECT (both `http://` and `https://`), bare plaintext inner modes, Hysteria2,
 TUIC and HTTP/3 cannot use this wrapper. AES-192-GCM remains available for
 unwrapped Shadowsocks but is rejected in wrapped profiles because the selected
 independent inner-server fixture does not implement that cipher.

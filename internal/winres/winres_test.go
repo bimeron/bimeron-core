@@ -6,6 +6,7 @@ import (
 	"debug/pe"
 	"encoding/binary"
 	"encoding/hex"
+	"flag"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,6 +51,34 @@ func TestSourceIconProvenance(t *testing.T) {
 	}
 	if !strings.Contains(string(readme), hex.EncodeToString(sum[:])) {
 		t.Fatal("assets/brand/README.md does not record the SHA-256 of bimeron.ico; update its provenance")
+	}
+}
+
+var updatePNG = flag.Bool("update-png", false, "rewrite assets/brand/bimeron.png from bimeron.ico")
+
+// The repository README shows assets/brand/bimeron.png; it must stay the
+// 64 px image of the icon.
+func TestReadmePNGMatchesIcon(t *testing.T) {
+	images, err := ParseICO(sourceIcon(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(images, func(image Image) bool { return image.Width == 64 })
+	if i < 0 {
+		t.Fatal("bimeron.ico has no 64 px image")
+	}
+	path := filepath.Join("..", "..", "assets", "brand", "bimeron.png")
+	if *updatePNG {
+		if err := os.WriteFile(path, images[i].Data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	png, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(images[i].Data, png) {
+		t.Fatal("assets/brand/bimeron.png differs from the 64 px image in bimeron.ico; run go test ./internal/winres -run TestReadmePNGMatchesIcon -update-png")
 	}
 }
 

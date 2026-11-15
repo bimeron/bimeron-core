@@ -1,8 +1,15 @@
 # Automated checks
 
 `.github/workflows/go.yml` runs `go test ./...` and builds distribution
-artifacts on pushes and pull requests. Go is selected from `go.mod`.
-The Go job also builds pinned Xray-core `v1.260327.0` outside Bimeron's module
+artifacts on pushes and pull requests. Go is selected from `go.mod`. The jobs
+are `lint`, `test` (Linux), `test-windows`, `test-apple-unsigned`,
+`test-fingerprint-dependencies`, `cli-dist`, and `android-dist`.
+
+The `lint` job checks `gofmt`, runs `go mod tidy -diff`, `go vet ./...`, and a
+pinned `staticcheck`, and reports `govulncheck` findings without failing the
+build while known dependency and toolchain findings await updates.
+
+The Linux `test` job also builds pinned Xray-core `v1.260327.0` outside Bimeron's module
 graph and checks VMess TCP, UDP, reconnect, and cleanup over every documented
 TLS transport, both AEAD ciphers, and representative TLS fingerprints. The
 compiled dependency and notice checks reject unwanted modules. The Linux job
@@ -83,7 +90,12 @@ runs `scripts/check-dist.go`, which also checks the icon and VERSIONINFO of
 both Windows executables, and uploads `cli-dist` for 14 days. The
 `android-dist` job builds the four-ABI Android AAR, checks its contents and
 licenses, and uploads `android-dist` for 14 days. These workflow artifacts
-are build outputs, not GitHub Releases. Apple NetworkExtension is excluded.
+are build outputs, not GitHub Releases.
+
+The `test-apple-unsigned` job runs on an Intel macOS runner. It builds the
+unsigned system-extension and app-extension variants and runs the C ABI test
+natively, then cross-builds both ARM64 variants and links, but does not run, their
+C ABI test. It uploads no artifacts and does not run `go test` on macOS.
 
 Pushing a `v*` tag runs the same checks and embeds the tag version in the CLI
 and Android builds. CI does not publish releases. The
@@ -183,7 +195,7 @@ Without the reference variables, ordinary local tests still run the synthetic
 framing, configuration, lifecycle, and runtime-resolution tests. Local success
 does not establish hosted CI or mobile/VPN data-plane success.
 
-## Proposed test and build workflow
+## Native IKEv2 coverage
 
 Native IKEv2 configuration and lifecycle tests run through the normal suite.
 Linux and Windows race checks include `internal/systemvpn`. Windows also runs
@@ -198,17 +210,16 @@ is intentionally skipped. Its [isolated procedure and measurement plan](IKEV2.MD
 require a disposable Windows VPN machine. Passing ordinary CI does not establish
 server interoperability, certificate rejection, leak protection or performance.
 
-Additional jobs could cover:
+## Not covered yet
 
-- Windows, Linux, and macOS: go test ./... and go vet ./....
-- Linux: govulncheck for execution paths in the project code.
-- Linux and macOS: go test -race ./... with CGO. Windows race testing requires
-  a separately configured compatible C compiler.
-- A separate Linux job: TUN, HTTP, routes, nftables, and daemon tests in new
-  network namespaces; daemon tests also use a new mount namespace with a separate /run.
-- A separate macOS job: unsigned system-extension and app-extension builds,
-  Go/C/Swift compilation, and a C ABI smoke test.
+- `go test ./...` on macOS, and a full `go test -race ./...` with CGO. Windows
+  race testing requires a separately configured compatible C compiler.
+- A failing `govulncheck` gate; findings are currently reported only.
 - Android `VpnService` execution on a device.
+
+The Linux `test` job already runs TUN, HTTP, MASQUE, route, nftables, and daemon
+integration tests in new network namespaces; daemon tests also use a new mount
+namespace with a separate `/run`.
 
 Do not upload keys, profiles, or diagnostic reports. Use synthetic test keys and
 local endpoints. Automated tests must not connect a real VPN, install the Windows

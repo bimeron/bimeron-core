@@ -1,6 +1,6 @@
 # Core maintenance contract design
 
-Status: PROPOSAL for review, 2026-11-04. No production API is implemented or authorized by this document. Source baseline: Core `7cc55f07ce2c48be4071b155c3dd58cf925a88ae`. Parent planning uses Sol MEDIUM; independent source audit and model implementation use explicit Sol LOW through `codex_2`.
+Status: PROPOSAL for review, 2026-11-04. No production API is implemented or authorized by this document. Source baseline: Core `7cc55f07ce2c48be4071b155c3dd58cf925a88ae`. Results of the offline model are in [model-results.md](model-results.md).
 
 Inputs: S's approved `docs/workstreams/daemon-servicing-recovery/hosting-proposal.md`, `model-results.md` and `scripts/servicing-model` in the read-only sibling macOS worktree, completed model commit `506106642970cb78fa4c7f963ebca0f0bf0f64ce`. Its 27 tests are model evidence, not OS proof. The approved target is a separate root owner and explicit root CLI, future fresh-capable installations, fail-closed manual reboot recovery, one backup, no owner self-update and two-stage uninstall. None of those constraints is reopened here.
 

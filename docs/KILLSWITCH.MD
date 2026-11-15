@@ -25,7 +25,7 @@ Closing or crashing the core does not remove them. Installation, replacement,
 and removal use atomic WFP transactions.
 
 - Connections through the Bimeron interface are allowed.
-- The core executable itself is allowed to operate the Outline transport,
+- The core executable itself is allowed to operate the upstream transport,
   `ssconf`, service DNS, and direct forwarding according to core policy.
 - Other applications may access destinations outside the tunnel only through
   `direct`. `proxy` and `block` deny such access. First-match order is
@@ -70,15 +70,17 @@ Restarting with `KillSwitch = true` atomically replaces old filters after the
 tunnel is ready. With `KillSwitch = false`, protection left after a crash is
 not removed automatically: the command returns `kill_switch_pending_run_recover`.
 
-Codes `kill_switch_arm_failed_run_recover`, `kill_switch_inspect_failed`, and
-`cleanup_failed_run_recover` mean startup/cleanup has not been confirmed.
-After stopping, use `recover`; do not treat this state as `connected`.
+Codes `kill_switch_arm_failed_run_recover` and `cleanup_failed_run_recover`
+mean startup or cleanup has not been confirmed. After stopping, use `recover`;
+do not treat this state as `connected`. `kill_switch_inspect_failed` is reported
+when a start with `KillSwitch = false` cannot inspect leftover filters; restart
+the application and try again.
 
 ## Manual validation
 
 1. Disconnect any other VPN. From an administrator CMD, run
    `dist\windows-amd64\bimeron.exe run profiles\main.conf`. Wait for `Kill switch active` and `connected`.
-2. Check websites and the external IP. With `Default = proxy`, only the Outline IP should appear.
+2. Check websites and the external IP. With `Default = proxy`, only the upstream server's IP should appear.
 3. Repeat network changes/loss. External-IP queries may fail during reconnection;
    your original IP must not appear.
 4. In a separate administrator CMD, forcibly terminate the core using
@@ -102,4 +104,3 @@ management through a stub WFP API. The user runs real crash scenarios.
 The implementation uses [tailscale/wf](https://github.com/tailscale/wf), a pinned
 BSD-licensed copy with a small `Transaction` addition. Layers and conditions are
 described in the [Microsoft WFP documentation](https://learn.microsoft.com/en-us/windows/win32/fwp/ale-layers).
-

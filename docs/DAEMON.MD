@@ -59,4 +59,3 @@ Linux and macOS provide the same commands through a Unix socket. Startup,
 permissions, and recovery are documented in [LINUX.MD](LINUX.MD) and
 [MACOS.MD](MACOS.MD). The macOS backend is experimental. These commands are not
 yet implemented on other platforms.
-
