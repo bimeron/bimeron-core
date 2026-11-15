@@ -64,7 +64,11 @@ func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
 	if err != nil {
 		return err
 	}
-	if !windowsServiceExitClean(status) || status.ProcessId != 0 {
+	return windowsUpdateCleanupProven(status)
+}
+
+func windowsUpdateCleanupProven(status svc.Status) error {
+	if status.State != svc.Stopped || !windowsServiceExitClean(status) || status.ProcessId != 0 {
 		return fmt.Errorf("service cleanup unconfirmed")
 	}
 	return nil
@@ -171,44 +175,55 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		return fmt.Errorf("wait for stable service state before updating")
 	}
 	wasRunning := status.State == svc.Running
-	if err = stopUpdateServiceContext(ctx, s); err != nil {
-		return err
-	}
-	stopped, err := s.Query()
-	if err != nil {
-		return err
-	}
-	if stopped.Win32ExitCode != 0 {
-		return fmt.Errorf("service cleanup failed; run doctor/recover before update")
+	if !wasRunning {
+		if err := windowsUpdateCleanupProven(status); err != nil {
+			return err
+		}
 	}
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
-	err = replaceServiceExecutable(target, staged, backup, func() error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return s.Start() }, func() error {
-			if err := waitServiceStateContext(ctx, s, svc.Running); err != nil {
+	err = runServiceUpdate(wasRunning, func() error {
+		return stopUpdateServiceContext(ctx, s)
+	}, func() error {
+		return replaceServiceExecutable(target, staged, backup, func() error {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if forceActivate {
-				return waitUpdatedServiceWithCall(ctx, expect.version, func(ctx context.Context, r control.Request) (control.Response, error) {
-					state, err := s.Query()
-					if err != nil {
-						return control.Response{}, err
-					}
-					if state.State != svc.Running {
-						return control.Response{}, fmt.Errorf("service not running")
-					}
-					return control.CallServiceReadiness(ctx, state.ProcessId, r)
-				})
-			}
-			return waitUpdatedServiceContext(ctx, expect.version)
-		})
-	}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
-	err = restorePreviousService(err, wasRunning, func() error {
+			return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return s.Start() }, func() error {
+				if err := waitServiceStateContext(ctx, s, svc.Running); err != nil {
+					return err
+				}
+				if forceActivate {
+					return waitUpdatedServiceWithCall(ctx, expect.version, func(ctx context.Context, r control.Request) (control.Response, error) {
+						state, err := s.Query()
+						if err != nil {
+							return control.Response{}, err
+						}
+						if state.State != svc.Running {
+							return control.Response{}, fmt.Errorf("service not running")
+						}
+						return control.CallServiceReadiness(ctx, state.ProcessId, r)
+					})
+				}
+				return waitUpdatedServiceContext(ctx, expect.version)
+			})
+		}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
+	}, func() error {
 		if err := rollbackContext().Err(); err != nil {
 			return err
+		}
+		// Stop may have failed before sending control, or while stop is pending.
+		state, err := s.Query()
+		if err != nil {
+			return err
+		}
+		if state.State == svc.Running {
+			return nil
+		}
+		if state.State != svc.Stopped {
+			if err := waitServiceStateContext(rollbackContext(), s, svc.Stopped); err != nil {
+				return err
+			}
 		}
 		if err := s.Start(); err != nil {
 			return err

@@ -302,7 +302,7 @@ func TestPendingLedgerAroundActualUpdate(t *testing.T) {
 	}
 }
 
-func TestLegacyWindowsRestoreObservationSource(t *testing.T) {
+func TestWindowsUpdateRestorationObservationSource(t *testing.T) {
 	// Inspect the actual callback; local fake observations cannot prove SCM behavior.
 	file, err := parser.ParseFile(token.NewFileSet(), "service_update_windows.go", nil, 0)
 	if err != nil {
@@ -315,11 +315,11 @@ func TestLegacyWindowsRestoreObservationSource(t *testing.T) {
 			return true
 		}
 		name, ok := call.Fun.(*ast.Ident)
-		if !ok || name.Name != "restorePreviousService" {
+		if !ok || name.Name != "runServiceUpdate" {
 			return true
 		}
 		found = true
-		callback, ok := call.Args[2].(*ast.FuncLit)
+		callback, ok := call.Args[3].(*ast.FuncLit)
 		if !ok {
 			t.Fatal("restore callback changed")
 		}
@@ -341,7 +341,7 @@ func TestLegacyWindowsRestoreObservationSource(t *testing.T) {
 			}
 			return true
 		})
-		if len(calls) != 2 || calls[0] != "Start" || calls[1] != "waitServiceStateContext" {
+		if !slices.Contains(calls, "Query") || !slices.Contains(calls, "Start") || !slices.Contains(calls, "waitServiceStateContext") {
 			t.Fatalf("legacy restore observation changed: %v", calls)
 		}
 		return false
