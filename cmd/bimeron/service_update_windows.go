@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bimeron/internal/control"
 	"context"
 	"debug/buildinfo"
 	"debug/pe"
@@ -189,6 +190,18 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return s.Start() }, func() error {
 			if err := waitServiceStateContext(ctx, s, svc.Running); err != nil {
 				return err
+			}
+			if forceActivate {
+				return waitUpdatedServiceWithCall(ctx, expect.version, func(ctx context.Context, r control.Request) (control.Response, error) {
+					state, err := s.Query()
+					if err != nil {
+						return control.Response{}, err
+					}
+					if state.State != svc.Running {
+						return control.Response{}, fmt.Errorf("service not running")
+					}
+					return control.CallServiceReadiness(ctx, state.ProcessId, r)
+				})
 			}
 			return waitUpdatedServiceContext(ctx, expect.version)
 		})

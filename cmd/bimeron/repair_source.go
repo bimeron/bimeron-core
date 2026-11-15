@@ -65,8 +65,8 @@ func repairDamagedPayload(ctx context.Context, target string, copyFile func(stri
 	return replaceServiceExecutable(target, staged, backup, func() error { return activate(ctx) }, func() error { return deactivate(rollback()) })
 }
 
-// Repair preserves a healthy service across Core release versions. The Desktop
-// protocol contract is negotiated by IPC version, not broker semantic version.
+// Hello negotiates IPC independently of release strings. Explicit repair also
+// checks installed image integrity against the protected broker before readiness.
 func validateRepairHello(a control.Response) error {
 	if a.Error != "" || a.Version != control.Version || a.Core == nil || a.Core.Version == "" || a.Instance == "" {
 		return fmt.Errorf("incompatible service hello")
@@ -100,4 +100,21 @@ func verifyServiceReadiness(ctx context.Context, call func(context.Context, cont
 		return err
 	}
 	return validateRepairStatus(status, hello.Instance)
+}
+
+// repairPayloadDiffers compares bytes, not PE/ELF parseability or release strings.
+// Callers establish protected paths before using this observation for mutation.
+func repairPayloadDiffers(target string) (bool, error) {
+	source, err := protectedSelfUpdate()
+	if err != nil {
+		return false, err
+	}
+	got, err := regularFileSHA256(target)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return got != source.sha256, nil
 }
