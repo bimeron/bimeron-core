@@ -1,10 +1,10 @@
 # Bimeron Core v0.4.0-beta.1
 
-**Release notes — reviewed on 2026-11-14.** Publication remains gated on VM acceptance of the Desktop 0.3.0 candidate with the Core candidate. This document does not announce a published release.
+**Release notes — published on 2026-11-16** as the GitHub pre-release [v0.4.0-beta.1](https://github.com/bimeron/bimeron-core/releases/tag/v0.4.0-beta.1), tagged at `5fcadd71`, after VM acceptance of the Desktop 0.3.0 candidate with this Core candidate. Sections below that describe publication as pending reflect the pre-publication review.
 
 The reviewed source range is `abd705b6..7f9e3087` on master. `abd705b6` is the master equivalent of the previous release, v0.3.0-beta.2; its tag points to `66d84d8f`, outside master history.
 
-For package capabilities, see the [README at the planned release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.1/README.md). This future link must be verified during finalization.
+For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.1/README.md).
 
 ## Merged changes
 
@@ -142,3 +142,21 @@ then removes it completely. Any other interface with the name, including a
 present Bimeron adapter, still fails with `adapter_name_in_use`. Linux TUN
 devices are nonpersistent and vanish with the process, so Linux needs no change.
 Tracked by #135.
+
+## Service update state preservation correction
+
+Desktop 0.3.0 Windows ARM64 acceptance found two `service update` defects. A
+manual-start Windows service that has not run since boot reports SCM exit code
+1077 (`ERROR_SERVICE_NEVER_STARTED`); the stop proof accepted it, but a second
+raw exit-code check still refused the update. On Windows and Linux, a stop-stage
+error returned before restart rollback was armed, so a failed, refused or
+unconfirmed stop could leave a previously running service stopped.
+
+`service update` now uses a single clean-stop proof that accepts a never-started
+service (1077), and arms restoration before stopping: if the stop fails or is
+refused, a previously running service is restarted with its original executable,
+and a stopped service stays stopped. Replacement failures keep the existing
+rollback path, and a retained backup refusal is reported as rolled back. See
+[signed service updates](RELEASE_UPDATES.md). Tracked by #145 and fixed in #146.
+This fix is part of the published `5fcadd71` assets; it was added to this file
+after publication.
