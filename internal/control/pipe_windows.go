@@ -70,3 +70,30 @@ func Dial(ctx context.Context) (net.Conn, error) {
 func DialService(ctx context.Context) (net.Conn, error) {
 	return winio.DialPipeContext(ctx, ServicePipe)
 }
+
+const ServiceReadinessPipe = `\\.\pipe\Bimeron.Core.Readiness`
+
+func ListenServiceReadiness() (net.Listener, error) {
+	return listenServiceReadinessPipe(ServiceReadinessPipe)
+}
+func listenServiceReadinessPipe(path string) (net.Listener, error) {
+	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;BA)", InputBufferSize: 1024, OutputBufferSize: 4096})
+}
+
+// CallServiceReadiness binds the responding process to the SCM-observed service.
+func CallServiceReadiness(ctx context.Context, pid uint32, r Request) (Response, error) {
+	return callServiceReadinessPipe(ctx, ServiceReadinessPipe, pid, r)
+}
+func callServiceReadinessPipe(ctx context.Context, path string, pid uint32, r Request) (Response, error) {
+	c, err := winio.DialPipeContext(ctx, path)
+	if err != nil {
+		return Response{}, err
+	}
+	defer c.Close()
+	fd, ok := c.(interface{ Fd() uintptr })
+	var actual uint32
+	if !ok || pid == 0 || windows.GetNamedPipeServerProcessId(windows.Handle(fd.Fd()), &actual) != nil || actual != pid {
+		return Response{}, fmt.Errorf("readiness service identity rejected")
+	}
+	return exchange(ctx, c, r)
+}

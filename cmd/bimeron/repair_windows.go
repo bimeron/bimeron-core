@@ -8,7 +8,6 @@ import (
 	"bimeron/internal/windowsnet"
 	"context"
 	"crypto/sha256"
-	"debug/pe"
 
 	"errors"
 	"fmt"
@@ -122,16 +121,27 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 	}
 	b.observedStopped = statusBefore.State == svc.Stopped
 	if statusBefore.State == svc.Stopped {
-		image, imageErr := pe.Open(argv[0])
-		if imageErr == nil {
-			image.Close()
-		} else {
+		differs, imageErr := repairPayloadDiffers(argv[0])
+		if imageErr != nil {
+			return repairObservation{}, imageErr
+		}
+		if differs {
 			b.damaged = true
 			unlock, e := control.LockRepairDirectory(filepath.Dir(argv[0]))
 			if e != nil {
 				return repairObservation{}, e
 			}
 			b.imageUnlock = unlock
+			if _, e := os.Lstat(argv[0]); e == nil {
+				imageLock, e := control.LockRepairImage(argv[0])
+				if e != nil {
+					return repairObservation{}, e
+				}
+				directoryLock := b.imageUnlock
+				b.imageUnlock = func() { imageLock(); directoryLock() }
+			} else if !os.IsNotExist(e) {
+				return repairObservation{}, e
+			}
 			if err := repairWindowsConflictGate(ctx, b.owner); err != nil {
 				return repairObservation{}, err
 			}
@@ -179,12 +189,20 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 	if status.State != svc.Running {
 		return repairObservation{}, fmt.Errorf("service transition in progress")
 	}
+	differs, digestErr := repairPayloadDiffers(argv[0])
+	if digestErr != nil {
+		return repairObservation{}, digestErr
+	}
+	if differs {
+		b.damaged = true
+		return repairObservation{Owned: true, ReplacementRequired: true, Unresponsive: true}, nil
+	}
 	if b.dllDamaged {
 		return repairObservation{Owned: true, ReplacementRequired: true}, nil
 	}
 	probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	hello, helloErr := control.CallService(probe, control.Request{Command: "hello"})
+	hello, helloErr := b.callReadiness(probe, control.Request{Command: "hello"})
 	if helloErr == nil || hello.Version != 0 {
 		if err = validateRepairHello(hello); err != nil {
 			return repairObservation{Owned: true, ReplacementRequired: true}, nil
@@ -321,7 +339,7 @@ func (b *windowsRepairBackend) Start(ctx context.Context) error {
 	return b.service.Start()
 }
 func (b *windowsRepairBackend) readyOnce(ctx context.Context) error {
-	return verifyServiceReadiness(ctx, control.CallService, validateRepairHello)
+	return verifyServiceReadiness(ctx, b.callReadiness, validateRepairHello)
 }
 func (b *windowsRepairBackend) Rollback(ctx context.Context) error {
 	if b.service == nil {
@@ -533,4 +551,18 @@ func observeStableWindowsService(ctx context.Context, s *mgr.Service) (status sv
 		return true, nil
 	})
 	return
+}
+
+func (b *windowsRepairBackend) callReadiness(ctx context.Context, r control.Request) (control.Response, error) {
+	if err := b.validateIdentity(); err != nil {
+		return control.Response{}, err
+	}
+	state, err := b.service.Query()
+	if err != nil {
+		return control.Response{}, err
+	}
+	if state.State != svc.Running || state.ProcessId == 0 {
+		return control.Response{}, fmt.Errorf("service not running")
+	}
+	return control.CallServiceReadiness(ctx, state.ProcessId, r)
 }

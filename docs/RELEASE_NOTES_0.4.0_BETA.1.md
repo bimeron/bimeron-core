@@ -103,3 +103,24 @@ longer fails them, while cleanup failures keep failing them. Status still shows
 the terminal failure. See [control contract](CONTROL.MD#bounded-reconnect-recovery-desktop-030).
 This also requires a new candidate and renewed Desktop 0.3.0 acceptance.
 Tracked by issue #138.
+
+## Repair integrity and alternate-administrator correction
+
+Explicit Windows/Linux repair compares the installed service executable SHA-256
+with the protected broker and transactionally replaces missing or differing
+bytes, including runnable corruption. A running differing image requires the
+existing disruption consent and cleanup proof; failed readiness rolls back.
+Explicit repair now restores the bundled broker bytes even for a byte-different
+IPC-compatible release.
+
+Windows repair verifies readiness through a separate SYSTEM/Administrators-only,
+read-only build/state pipe bound to the SCM service PID. Alternate-administrator
+UAC no longer needs access to the requesting user's control pipe. The main pipe
+ACL and command access remain unchanged. Linux root/polkit already has socket
+access. See [repair session](REPAIR_SESSION.md#final-vm-release-blockers-integrity-and-alternate-administrator-140).
+
+Desktop must rebuild its pinned/embedded CLI and broker from the new candidate,
+re-provision a missing package-owned broker in its protected bootstrap, and fix
+its UTF-8 round-trip import check to accept a leading BOM (Core already does).
+Repeat corrupted-image, alternate-admin and bootstrap VM acceptance. IPC 1,
+profile 1 and the reviewed GUI range [0.3.0, 0.3.1) are unchanged. Tracked by #140.
