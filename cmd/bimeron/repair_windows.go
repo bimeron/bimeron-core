@@ -152,9 +152,7 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 			if e != nil {
 				return repairObservation{}, e
 			}
-			if !pending && !windowsServiceExitClean(statusBefore) && statusBefore.Win32ExitCode != uint32(windows.ERROR_FILE_NOT_FOUND) && statusBefore.Win32ExitCode != 193 {
-				return repairObservation{}, fmt.Errorf("service cleanup unconfirmed")
-			}
+			pending = pending || (!windowsServiceExitClean(statusBefore) && statusBefore.Win32ExitCode != uint32(windows.ERROR_FILE_NOT_FOUND) && statusBefore.Win32ExitCode != 193)
 			return repairObservation{Owned: true, Stopped: true, ReplacementRequired: true, CleanupRequired: pending}, nil
 		}
 	}
@@ -178,13 +176,7 @@ func (b *windowsRepairBackend) Inspect(ctx context.Context) (repairObservation, 
 		if pendingErr != nil {
 			return repairObservation{}, pendingErr
 		}
-		if pending {
-			return repairObservation{Owned: true, CleanupRequired: true}, nil
-		}
-		if !windowsServiceExitClean(status) {
-			return repairObservation{}, fmt.Errorf("previous service cleanup unconfirmed")
-		}
-		return repairObservation{Owned: true, Stopped: true, ReplacementRequired: b.dllDamaged}, nil
+		return stoppedWindowsRepairObservation(status, pending, b.dllDamaged)
 	}
 	if status.State != svc.Running {
 		return repairObservation{}, fmt.Errorf("service transition in progress")
@@ -511,6 +503,16 @@ func windowsServiceExitClean(s svc.Status) bool {
 		return s.ServiceSpecificExitCode == 0
 	}
 	return s.Win32ExitCode == 0 && s.ServiceSpecificExitCode == 0
+}
+
+// Marker absence after an abnormal exit is not cleanup proof. Plan the existing
+// consent-gated recovery even when another observer already removed the markers.
+func stoppedWindowsRepairObservation(status svc.Status, pending, replacement bool) (repairObservation, error) {
+	if status.State != svc.Stopped || status.ProcessId != 0 {
+		return repairObservation{}, fmt.Errorf("service exit unconfirmed")
+	}
+	return repairObservation{Owned: true, Stopped: true, ReplacementRequired: replacement,
+		CleanupRequired: pending || !windowsServiceExitClean(status)}, nil
 }
 
 func repairWindowsCleanupPending(ctx context.Context) (bool, error) {
