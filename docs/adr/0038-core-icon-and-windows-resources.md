@@ -25,7 +25,8 @@ resource objects in one link fail with "too many .rsrc sections".
   for each Windows architecture into `cmd/bimeron` (ignored by Git), links it
   and deletes it. Builds without this step still work and lack the resources.
 - Add VERSIONINFO: product name and file description "Bimeron Core", company
-  "Bimeron contributors", the `LICENSE` copyright and `bimeron.exe` as the
+  "Bimeron Network" (originally "Bimeron contributors"; the copyright holder
+  changed on November 15, 2026), the `LICENSE` copyright and `bimeron.exe` as the
   original file name. The file and product version strings are the same
   semantic version passed to `-X bimeron/core.Version`; the numeric version is
   `major.minor.patch.0` and prereleases set `VS_FF_PRERELEASE`.

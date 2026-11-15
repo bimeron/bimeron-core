@@ -86,7 +86,7 @@ For each Windows target, `build-dist.go` generates a COFF object with
 `cmd/bimeron/zz_bimeron_resource_windows_<arch>.syso` for the duration of that
 `go build` and then deletes it. The object holds the icon group and a
 VERSIONINFO with product name and file description "Bimeron Core", company
-"Bimeron contributors" and the copyright from `LICENSE`. The file and product
+"Bimeron Network" and the copyright from `LICENSE`. The file and product
 version strings are the version passed to `-X bimeron/core.Version`, for example
 `0.4.0-beta.1`; the numeric file version is `0.4.0.0`, with the prerelease flag
 set for prerelease versions. A Windows build therefore requires
