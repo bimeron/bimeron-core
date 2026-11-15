@@ -70,3 +70,16 @@ func TestParseVLESSTLS(t *testing.T) {
 		}
 	}
 }
+
+// XHTTP without h3 uses an HTTP/2 transport, so ALPN must allow h2.
+func TestVLESSXHTTPRejectsHTTP1OnlyALPN(t *testing.T) {
+	base := "vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?encryption=none&security=tls&sni=example.com&type=xhttp&mode=packet-up"
+	for _, alpn := range []string{"", "&alpn=h2", "&alpn=h3", "&alpn=h2%2Chttp%2F1.1"} {
+		if _, err := ParseVLESS(base + alpn); err != nil {
+			t.Fatalf("rejected XHTTP ALPN %q: %v", alpn, err)
+		}
+	}
+	if _, err := ParseVLESS(base + "&alpn=http%2F1.1"); err == nil {
+		t.Fatal("accepted XHTTP ALPN http/1.1, which the HTTP/2 transport cannot use")
+	}
+}
