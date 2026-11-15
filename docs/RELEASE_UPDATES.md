@@ -115,6 +115,9 @@ stopping the old service. It never executes downloaded bytes before those checks
 A running replacement must answer
 IPC `hello` with the expected core version and protocol. Failure triggers rollback
 and restoration of the prior running state. A stopped service stays stopped.
+A failed or unconfirmed stop also restarts a previously running service with the
+original executable before reporting the error. A service that has not started
+since boot (`ERROR_SERVICE_NEVER_STARTED`) counts as cleanly stopped.
 The core updater itself does not reconnect VPN. After a successful update,
 GUI 0.1.2 verifies the new service through IPC and reconnects the same profile
 if a VPN connection was active before the update. It does not reconnect after

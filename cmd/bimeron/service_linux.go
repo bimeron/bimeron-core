@@ -346,29 +346,32 @@ func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, force
 		return fmt.Errorf("update architecture differs from installed service")
 	}
 	wasRunning := state == "active"
-	if wasRunning {
-		if err = stopLinuxServiceContext(ctx); err != nil {
-			return fmt.Errorf("cannot update: %w", err)
-		}
-	}
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
-	err = replaceServiceExecutable(linuxServiceExecutable, staged, backup, func() error {
-		if err := ctx.Err(); err != nil {
-			return err
+	err = runServiceUpdate(wasRunning, func() error {
+		if wasRunning {
+			if err := stopLinuxServiceContext(ctx); err != nil {
+				return fmt.Errorf("cannot update: %w", err)
+			}
 		}
-		return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return startLinuxServiceContext(ctx) }, func() error { return waitUpdatedServiceContext(ctx, expect.version) })
+		return nil
 	}, func() error {
-		state, err := linuxServiceStateContext(rollbackContext())
-		if err != nil {
-			return err
-		}
-		if state == "inactive" {
-			return nil
-		}
-		return stopLinuxServiceContext(rollbackContext())
-	})
-	err = restorePreviousService(err, wasRunning, func() error { return startLinuxServiceContext(rollbackContext()) })
+		return replaceServiceExecutable(linuxServiceExecutable, staged, backup, func() error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return activateServiceUpdate(ctx, wasRunning, forceActivate, func() error { return startLinuxServiceContext(ctx) }, func() error { return waitUpdatedServiceContext(ctx, expect.version) })
+		}, func() error {
+			state, err := linuxServiceStateContext(rollbackContext())
+			if err != nil {
+				return err
+			}
+			if state == "inactive" {
+				return nil
+			}
+			return stopLinuxServiceContext(rollbackContext())
+		})
+	}, func() error { return startLinuxServiceContext(rollbackContext()) })
 	if err != nil {
 		return err
 	}

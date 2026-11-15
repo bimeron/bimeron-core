@@ -36,11 +36,23 @@ func restorePreviousService(err error, wasRunning bool, restart func() error) er
 	return err
 }
 
+// A stop can succeed in SCM/systemd even when its final observation fails.
+// Establish restoration before stopping, while the original image is intact.
+func runServiceUpdate(wasRunning bool, stop, replace, restart func() error) error {
+	if err := stop(); err != nil {
+		if wasRunning {
+			return errors.Join(err, restart())
+		}
+		return err
+	}
+	return restorePreviousService(replace(), wasRunning, restart)
+}
+
 // All paths are checked by the Windows caller and remain in the protected install directory.
 // Keep the backup if restoration fails; never silently delete the last working executable.
 func replaceServiceExecutable(target, staged, backup string, activate, deactivate func() error) error {
 	if _, err := os.Lstat(backup); !os.IsNotExist(err) {
-		return fmt.Errorf("previous update backup exists or cannot be inspected")
+		return errors.Join(fmt.Errorf("previous update backup exists or cannot be inspected"), errUpdateRolledBack)
 	}
 	if err := os.Rename(target, backup); err != nil {
 		return errors.Join(err, errUpdateRolledBack)
