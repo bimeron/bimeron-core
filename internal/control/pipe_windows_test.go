@@ -292,8 +292,9 @@ func TestServicePipeOwnerCannotServe(t *testing.T) {
 	}
 }
 
-// countingPipe accepts every client and counts the bytes they send.
-func countingPipe(l net.Listener) (*atomic.Int64, func()) {
+// countingPipe accepts every client and counts the bytes they send. Stop
+// fails the test instead of hanging if the listener does not shut down.
+func countingPipe(t *testing.T, l net.Listener) (*atomic.Int64, func()) {
 	var read atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -313,7 +314,16 @@ func countingPipe(l net.Listener) (*atomic.Int64, func()) {
 			}()
 		}
 	}()
-	return &read, func() { l.Close(); wg.Wait() }
+	return &read, func() {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { l.Close(); wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("pipe listener did not close")
+		}
+	}
 }
 
 // withServiceProcessID replaces the SCM query for the duration of the test.
@@ -340,7 +350,7 @@ func testServicePipe(t *testing.T, path, sid string) (*atomic.Int64, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return countingPipe(l)
+	return countingPipe(t, l)
 }
 
 func TestServicePipeIdentityBeforeWrite(t *testing.T) {
