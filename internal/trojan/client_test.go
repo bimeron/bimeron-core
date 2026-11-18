@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/testutil"
 )
 
 func TestTrojanTCPAndUDPOverTLS(t *testing.T) {
@@ -210,5 +211,34 @@ func TestTrojanWebSocketHandshakeCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancellation did not interrupt handshake")
+	}
+}
+
+func TestTrojanWebSocketResponseLimit(t *testing.T) {
+	for name, chunk := range testutil.UpgradeChunks {
+		t.Run(name, func(t *testing.T) {
+			server, written := testutil.OversizedUpgradeServer(t, chunk)
+			host, portText, _ := net.SplitHostPort(server.Listener.Addr().String())
+			port, _ := strconv.Atoi(portText)
+			client, err := New(accesskey.Profile{Type: "trojan", TCP: accesskey.Endpoint{Host: host, Port: port}, Trojan: accesskey.Trojan{Password: "secret", ServerName: "127.0.0.1", Network: "ws"}}, net.Dialer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			client.rootCAs = x509.NewCertPool()
+			client.rootCAs.AddCert(server.Certificate())
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if c, err := client.DialStream(ctx, "example.com:80"); err == nil {
+				c.Close()
+				t.Fatal("oversized response accepted")
+			}
+			if ctx.Err() != nil {
+				t.Fatal("handshake did not stop reading")
+			}
+			if n := <-written; n > 8<<20 {
+				t.Fatalf("server wrote %d response bytes", n)
+			}
+		})
 	}
 }

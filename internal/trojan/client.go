@@ -16,7 +16,6 @@ import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
-	"golang.org/x/net/websocket"
 )
 
 type Client struct {
@@ -225,16 +224,10 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		if path == "" {
 			path = "/"
 		}
-		config, err := websocket.NewConfig("wss://"+host+path, "https://"+host)
+		conn, err = streamtransport.WebSocket(conn, "wss", host, path, nil)
 		if err != nil {
-			return nil, fmt.Errorf("invalid Trojan WebSocket settings")
+			return nil, fmt.Errorf("Trojan %w", err)
 		}
-		ws, err := websocket.NewClient(config, conn)
-		if err != nil {
-			return nil, fmt.Errorf("Trojan WebSocket handshake failed")
-		}
-		ws.PayloadType = websocket.BinaryFrame
-		conn = ws
 	}
 	_ = raw.SetDeadline(time.Time{})
 	ready = true
