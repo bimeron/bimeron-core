@@ -488,8 +488,8 @@ format remains 1. Older services omit the new fields; GUIs must not infer a
 limit from `Attempt`, count log messages, or terminate a service-owned
 connection locally. Desktop 0.3.0 behavior with this policy is listed in
 [GUI_INTEGRATION.MD](GUI_INTEGRATION.MD#desktop-030-compatibility).
-`release/compatibility.json` currently accepts GUI `[0.3.0, 0.3.1)`; the release
-that ships Desktop 0.3.1 support must widen that range.
+The GUI range in `release/compatibility.json` is widened to include Desktop
+0.3.1 by the release that ships it.
 
 Automated tests cover cycle backoff and pauses, flap handling, early wake on
 `reconnect_now` and network change, stop during a wait, IKEv2 exclusion, the

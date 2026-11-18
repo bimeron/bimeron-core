@@ -844,8 +844,8 @@ capabilities and command. With this Core it shows:
 | Failed, kill switch disabled | `failed`, `LastError` | Unchanged |
 
 IPC remains version 1 and profile format remains 1.
-`release/compatibility.json` currently accepts GUI `[0.3.0, 0.3.1)`; the release
-that ships Desktop 0.3.1 support must widen that range.
+The GUI range in `release/compatibility.json` is widened to include Desktop
+0.3.1 by the release that ships it.
 
 ### Guidance for Desktop 0.3.1
 

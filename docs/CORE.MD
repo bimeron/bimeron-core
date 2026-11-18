@@ -169,7 +169,9 @@ pending wait early. An initial connection gives up after the first attempt and
 conflicting DNS policies, external macOS DNS changes, and Wintun setup errors
 fail it at once. After loss of an established session, these failures are
 retried in cycles until success or Ctrl+C. Cleanup errors and other codes ending
-in `_run_recover` stop further automatic attempts.
+in `_run_recover` stop further automatic attempts. With the kill switch
+enabled, a foreground `bimeron connect` or `bimeron run` whose session fails
+keeps running in `failed` and keeps protection installed until Ctrl+C.
 
 Existing TCP/UDP connections close when the transport refreshes. Applications must
 reestablish them. During normal reconnection, captured `proxy` traffic does not
