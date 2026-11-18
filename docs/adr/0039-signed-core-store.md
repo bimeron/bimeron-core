@@ -1,6 +1,6 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 9, November 18, 2026. Follow-up questions
+Status: proposed draft, revision 9 (final text), November 18, 2026. Follow-up questions
 Q10, Q11 and Q12 await the owner; the rest is decided. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
@@ -1655,6 +1655,37 @@ and the test vectors.
 Testing runs on a disposable clone of the Windows 10 STD VM and on an Ubuntu
 22.04 VM, never on the host. Each case records binary hashes and the service
 and store state before and after.
+
+**Mandatory implementation gate: crash injection.** The switch journal was
+reviewed adversarially for six rounds before this record was finalized. The
+remaining edge cases of that kind are left to the implementation, where they
+must be caught by automated crash injection. Implementations must not be
+merged or released until all of the following hold:
+
+- **Coverage.** A crash-injection harness exercises every durable `next`
+  value of R1 and every effect inside each step (item 12), on both operating
+  systems, for every flow:
+  - update;
+  - repair;
+  - install;
+  - stopped-service switch;
+  - first pre-store-to-store-era switch;
+  - in-session rollback;
+  - the older-broker operations of Q12.
+- **Faults.** The harness covers process kill, logoff, power loss (VM
+  reset), and a service-manager restart.
+- **Expected outcome.** After each injected crash, the next privileged session
+  must reach a consistent state, without manual intervention. A consistent
+  state means all of these:
+  - the image, the registration, the records, the run state and the recovery
+    settings agree;
+  - nothing unready was committed;
+  - the only good image still exists;
+  - no loop occurred;
+  - the session either finished, or terminated with one of the documented
+    codes, each with a defined exit.
+- **Follow-up.** Any failure is fixed in the implementation, and in this
+  record if the rule was wrong, before release.
 
 1. **Fresh install.** The MSI prompt is followed by one Desktop prompt, whose
    `install` session installs the service from the verified bootstrap with the
