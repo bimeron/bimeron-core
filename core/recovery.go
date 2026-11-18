@@ -210,6 +210,9 @@ func (e *Engine) scheduleLocked(err error) (delay time.Duration, pause, ok bool)
 // It returns nil when the attempt should run now, err when the bounded budget
 // is exhausted, or the context error after Stop.
 func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
+	// The network baseline precedes publication, so a change right after the
+	// wait becomes visible always ends it.
+	network := e.network()
 	e.mu.Lock()
 	// Discard requests for an earlier wait before this one is published, so a
 	// reconnect_now accepted for it is never lost.
@@ -223,7 +226,7 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 		}
 		return err
 	}
-	if err := e.sleep(ctx, delay, wake); err != nil {
+	if err := e.sleep(ctx, delay, wake, network); err != nil {
 		return err
 	}
 	e.mu.Lock()
@@ -243,12 +246,11 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 
 // sleep waits for delay. A reconnect request, a changed set of local network
 // interfaces or a detected resume from sleep ends the wait early.
-func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}, network string) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	poll := time.NewTicker(e.pollEvery)
 	defer poll.Stop()
-	network := e.network()
 	last := time.Now()
 	for {
 		select {
