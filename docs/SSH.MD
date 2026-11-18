@@ -155,8 +155,9 @@ a selected `KnownHostsFile` or accept-new, otherwise it fails with
 `ssh_known_hosts_missing`.
 
 The identity and `known_hosts` files must be readable by the Bimeron process.
-They must be local regular files of at most 64 KiB (identity) and 1 MiB
-(`known_hosts`); see [Referenced files](CONF.MD#referenced-files).
+They must be local data files of at most 64 KiB (identity) and 1 MiB
+(`known_hosts`); see [Referenced files](CONF.MD#referenced-files). A larger
+file fails with a size-limit error instead of an unavailable-file error.
 On Windows, the installed service runs as `LocalSystem`; mapped drives and
 user-protected EFS files may be unavailable. The GUI should save absolute paths
 and verify access before starting a session. Copying private-key contents into

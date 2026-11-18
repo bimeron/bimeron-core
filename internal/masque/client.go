@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -66,6 +67,9 @@ func New(p accesskey.Profile, d net.Dialer) (*Client, error) {
 	var roots *x509.CertPool
 	if p.MASQUE.CAFile != "" {
 		pem, err := safefile.Read(p.MASQUE.CAFile, maxCAFile)
+		if errors.Is(err, safefile.ErrTooLarge) {
+			return nil, errors.New("MASQUE CA file exceeds the 1 MiB size limit")
+		}
 		if err != nil {
 			return nil, fmt.Errorf("could not read MASQUE CA file")
 		}

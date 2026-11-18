@@ -68,11 +68,17 @@ func TestNewRequiresRegularBoundedFiles(t *testing.T) {
 		return path
 	}
 	hosts := writeHosts(t, knownhosts.Line([]string{"example.com:22"}, hostSigner(t).PublicKey()))
-	for _, file := range []string{dir, large("known_hosts", maxKnownHostsFile+1)} {
-		checkFileRejected(t, Options{}, "", file, "SSH known_hosts unavailable")
-		checkFileRejected(t, Options{HostKeys: mustKeys(t, "")}, "", file, "SSH known_hosts unavailable")
+	for file, want := range map[string]string{
+		dir: "SSH known_hosts unavailable",
+		large("known_hosts", maxKnownHostsFile+1): "SSH known_hosts file exceeds the 1 MiB size limit",
+	} {
+		checkFileRejected(t, Options{}, "", file, want)
+		checkFileRejected(t, Options{HostKeys: mustKeys(t, "")}, "", file, want)
 	}
-	for _, file := range []string{dir, large("id_ed25519", maxIdentityFile+1)} {
-		checkFileRejected(t, Options{}, file, hosts, "SSH identity file unavailable")
+	for file, want := range map[string]string{
+		dir:                                    "SSH identity file unavailable",
+		large("id_ed25519", maxIdentityFile+1): "SSH identity file exceeds the 64 KiB size limit",
+	} {
+		checkFileRejected(t, Options{}, file, hosts, want)
 	}
 }

@@ -27,8 +27,12 @@ func TestNewRequiresRegularBoundedCAFile(t *testing.T) {
 	if err := os.WriteFile(large, bytes.Repeat([]byte("#"), maxCAFile+1), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{dir, large, filepath.Join(dir, "missing.pem")} {
-		if c, err := New(masqueWithCA(t, path), net.Dialer{}); err == nil || err.Error() != "could not read MASQUE CA file" {
+	for path, want := range map[string]string{
+		dir:                               "could not read MASQUE CA file",
+		filepath.Join(dir, "missing.pem"): "could not read MASQUE CA file",
+		large:                             "MASQUE CA file exceeds the 1 MiB size limit",
+	} {
+		if c, err := New(masqueWithCA(t, path), net.Dialer{}); err == nil || err.Error() != want {
 			if c != nil {
 				c.Close()
 			}
