@@ -9,8 +9,10 @@ Android packages remain in the release but are outside this service updater.
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
 `gui_min`, `gui_max_exclusive`, and `profile_format`. The current file allows GUI
-`[0.3.0, 0.3.1)` with IPC 1 and profile format 1, and sets `gui_reviewed` to
-`true`.
+`[0.3.0, 0.3.2)` with IPC 1 and profile format 1, and sets `gui_reviewed` to
+`true`. For `v0.4.0-beta.2`, Desktop reviewed this range: Desktop 0.3.0 accepts
+the release as a service update, and Desktop 0.3.1 bundles it. `v0.4.0-beta.1`
+supports GUI `[0.3.0, 0.3.1)`.
 
 Earlier reviews, for reference: published `v0.1.0-beta.4` supports GUI
 `[0.1.0, 0.1.3)`. For `v0.1.0-beta.5`, GUI 0.1.5 was reviewed
