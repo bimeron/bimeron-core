@@ -154,17 +154,19 @@ type Engine struct {
 	residual        bool
 	residualChecked time.Time
 	residualProbe   func() (bool, error)
-	maintenance     *maintenanceCoordinator
-	opts            Options
-	status          Status
-	events          chan Event
-	eventDrops      uint64
-	runResult       *runResult
-	cancel          context.CancelFunc
-	active          bool
-	factory         func(SessionConfig) backend
-	lastReport      map[string]time.Time
-	stats           *telemetry.Counters
+	// repanic rethrows a run panic after protection is retained; tests stub it.
+	repanic     func(any)
+	maintenance *maintenanceCoordinator
+	opts        Options
+	status      Status
+	events      chan Event
+	eventDrops  uint64
+	runResult   *runResult
+	cancel      context.CancelFunc
+	active      bool
+	factory     func(SessionConfig) backend
+	lastReport  map[string]time.Time
+	stats       *telemetry.Counters
 }
 
 // Stats returns counters for the most recent Start. Counters reset on every
@@ -206,7 +208,7 @@ func New(options Options) *Engine {
 	if options.CyclePause <= 0 {
 		options.CyclePause = time.Minute
 	}
-	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection}
+	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, repanic: func(p any) { panic(p) }}
 }
 
 // StatsSnapshot returns detached session metadata and counters under one lock.
@@ -354,7 +356,10 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	if e.active && e.holding && !keepsProtection {
 		return ErrKillSwitchHeld
 	}
-	if e.active && (e.holding || e.protected) && keepsProtection {
+	// A repeated start of the running profile (for example a double click)
+	// never interrupts a live session; a held failure may always be retried.
+	switching := e.holding || !sameProfile(e.status.Session, info)
+	if e.active && (e.holding || e.protected) && keepsProtection && switching {
 		// Hand the installed protection over: the previous run closes its
 		// session and releases its lock but keeps the persistent filters for
 		// the next Acquire to replace, so switching profiles leaves no gap.
@@ -364,6 +369,12 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		e.mu.Unlock()
 		<-previous.done // bounded by the previous session's cleanup
 		e.mu.Lock()
+		if previous.err != nil && cleanupFailed(previous.err) {
+			// The previous teardown left state behind; report it, never mask it.
+			e.status.Session = nil
+			e.transitionLocked(Failed, previous.err)
+			return previous.err
+		}
 	}
 	if e.active {
 		return ErrSessionRunning
@@ -406,12 +417,18 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 // installed, for exits that are not a user's stop, such as a failed control
 // listener. The protection is then reported as residual until recover.
 func (e *Engine) Abandon(ctx context.Context) error {
+	e.MarkAbandon()
+	return e.Stop(ctx)
+}
+
+// MarkAbandon makes the current run keep its protection however it ends. Call
+// it before cancelling the context the session was started with.
+func (e *Engine) MarkAbandon() {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.active {
 		e.abandon = true
 	}
-	e.mu.Unlock()
-	return e.Stop(ctx)
 }
 func (e *Engine) abandoned() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.abandon }
 
@@ -492,7 +509,8 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 				owner.RetainProtection()
 			}
 			release()
-			panic(p)
+			e.repanic(p)
+			return
 		}
 		e.mu.Lock()
 		handover := e.handover
@@ -687,6 +705,10 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 			err = p.Reconnect(ctx)
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// The attempt deadline expired while the run continues: retry.
+				err = fault("transport_unavailable", true)
 			}
 			if err == nil {
 				e.transition(Connected, nil)

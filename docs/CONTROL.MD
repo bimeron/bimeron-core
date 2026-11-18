@@ -72,9 +72,11 @@ These local details are not included in doctor output or the event log.
 
 States: disconnected, connecting, connected, reconnecting, stopping, failed.
 Repeated stop is safe. Concurrent mutating commands are serialized.
-Starting an active session again returns session_already_running, except for
-a failed session whose kill switch is held (see
-[Kill switch hold](#kill-switch-hold)).
+Starting an active session again returns session_already_running, except when
+the active session owns kill switch protection and the new profile also enables
+the kill switch: a held failed session is replaced, and so is a session of a
+different profile in any state. A repeated start of the running profile keeps
+the live session (see [Kill switch hold](#kill-switch-hold)).
 ID provides correlation, not request deduplication. If a start response is lost,
 check status first. If a stop response is lost, repeat stop.
 
@@ -262,7 +264,8 @@ hello/version. Without the flag, do not send guards. A guarded client copies
 ```
 
 - `start` succeeds only for the current instance with no active session; omit
-  `session`. A failed session with a held kill switch does not block it (see
+  `session`. An active session that owns kill switch protection is admitted to
+  the engine, which hands it over or rejects the start (see
   [Kill switch hold](#kill-switch-hold)).
 - `stop` and `reconnect_now` require the current instance and the ID of the
   active session.
@@ -343,7 +346,9 @@ Recovery depends on whether the run has reached `connected`:
 
 Any scheduled wait, either a backoff or the pause between cycles, ends early on
 `reconnect_now`, on a change of local network interfaces (checked every 5
-seconds) or on a detected resume from sleep. An attempt in progress is never
+seconds) or on a detected resume from sleep. A network change ends at most one
+wait per cycle (and one during initial attempts), so flapping virtual adapters
+cannot bypass the backoff and the pause. An attempt in progress is never
 interrupted. Stop cancels pending waits and attempts.
 
 After loss of an established session, failures that end an initial connection
@@ -396,10 +401,15 @@ shows `failed` with `LastError`, `KillSwitch: "holding"` and
   first.
 
 The same handover applies to any active session that owns protection
-(`KillSwitch` is `active` or `holding`): `start` with another kill switch VPN
-profile closes the current session and starts the new one without releasing
-protection, so switching servers leaves no gap. With a profile without the kill
-switch, an active session returns `session_already_running` as before.
+(`KillSwitch` is `active` or `holding`) when the new kill switch VPN profile is
+a different profile (profile ID, or name without an ID): the current session is
+closed and the new one starts without releasing protection, so switching
+servers leaves no gap. A repeated start of the same profile while it is
+connecting, connected or reconnecting returns `session_already_running` and
+keeps the live session. With a profile without the kill switch, an active
+session returns `session_already_running`. If the previous session fails to
+clean up during a handover, `start` fails, the status reports `failed` with the
+cleanup code and protection stays until `recover`.
 
 Protection also stays installed when the daemon or service ends for a reason
 other than a stop, for example a failed control listener or a crash: the
@@ -461,7 +471,9 @@ omitted.
   GUIs already route to network recovery (unless another failure is already
   shown), and `Session.active` is not `true`. Connecting a profile with the
   kill switch replaces the filters; `recover` removes them. Inspected at most
-  every 5 seconds while idle.
+  every 5 seconds while idle. Protection owned by another running session, such
+  as a foreground `bimeron connect` that holds the session lock, is not
+  reported as residual.
 - `LastErrorPermanent` (boolean): `LastError` is a failure that retrying alone
   does not fix, for example `access_key_unavailable` (a rejected or removed
   key) or a TLS rejection. It ends an initial connection at once; after loss of

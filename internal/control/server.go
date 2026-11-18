@@ -85,9 +85,10 @@ type Engine interface {
 }
 
 // abandoner is implemented by engines that can end a session without a user
-// stop while keeping kill switch protection.
+// stop while keeping kill switch protection. MarkAbandon must run before the
+// session's context is cancelled.
 type abandoner interface {
-	Abandon(context.Context) error
+	MarkAbandon()
 }
 
 // reconnector is implemented by engines that support reconnect_now.
@@ -190,16 +191,16 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	defer func() {
 		stopEngine := !s.foreground || ctx.Err() != nil
 		// A broken listener is not a user's stop: keep kill switch protection.
-		abandon := result != nil && ctx.Err() == nil || s.abandonOnExit.Load()
+		// Sessions run under contexts derived from ctx, so mark the session
+		// before anything is cancelled.
+		if a, ok := s.engine.(abandoner); ok && stopEngine && (result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
+			a.MarkAbandon()
+		}
 		cancel()
 		_ = l.Close()
 		workers.Wait()
 		if stopEngine {
-			if a, ok := s.engine.(abandoner); ok && abandon {
-				result = errors.Join(result, a.Abandon(context.Background()))
-			} else {
-				result = errors.Join(result, s.engine.Stop(context.Background()))
-			}
+			result = errors.Join(result, s.engine.Stop(context.Background()))
 		}
 	}()
 	slots := make(chan struct{}, 32)
@@ -449,10 +450,16 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	return answer
 }
 
-// AbandonOnExit makes the next Serve exit keep kill switch protection, for
-// owner failures that are not a user's stop (for example a failed readiness
-// listener). Cancel the Serve context afterwards.
-func (s *Server) AbandonOnExit() { s.abandonOnExit.Store(true) }
+// AbandonOnExit makes the current session keep kill switch protection when
+// Serve exits, for owner failures that are not a user's stop (for example a
+// failed readiness listener). It marks the engine at once; cancel the Serve
+// context only afterwards.
+func (s *Server) AbandonOnExit() {
+	s.abandonOnExit.Store(true)
+	if a, ok := s.engine.(abandoner); ok {
+		a.MarkAbandon()
+	}
+}
 
 func (s *Server) handle(ctx context.Context, c net.Conn) {
 	defer c.Close()

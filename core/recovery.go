@@ -57,6 +57,9 @@ type recovery struct {
 	attempt     int // attempts used in the initial budget or the current cycle
 	cycle       int
 	delay       time.Duration // last initial-phase backoff
+	// networkWoke limits network-change wakes to one per cycle, so flapping
+	// virtual adapters cannot bypass the backoff and the pause.
+	networkWoke bool
 }
 
 // cycling reports whether failures are handled by the indefinite cycle policy.
@@ -71,6 +74,7 @@ func (e *Engine) connectedLocked() {
 	}
 	r.established = true
 	r.dropped = false
+	r.networkWoke = false
 	r.connectedAt = time.Now()
 }
 
@@ -190,11 +194,14 @@ func (e *Engine) scheduleLocked(err error) (delay time.Duration, pause, ok bool)
 		e.status.ReconnectAttempt, e.status.ReconnectLimit = r.attempt, initialRetryLimit
 		e.status.ReconnectPhase = PhaseAttempting
 	}
-	// Whole seconds, rounded up: the attempt never starts before this time.
-	next := time.Now().Add(delay).UTC()
+	// Whole seconds, rounded up, and the delay is extended to match, so the
+	// attempt starts at NextAttemptAt and never before it.
+	now := time.Now()
+	next := now.Add(delay).UTC()
 	if rounded := next.Truncate(time.Second); rounded.Before(next) {
 		next = rounded.Add(time.Second)
 	}
+	delay = next.Sub(now)
 	e.status.NextAttemptAt = next
 	e.transitionLocked(Reconnecting, err)
 	// The state/error can be unchanged between retries; still publish progress.
@@ -219,6 +226,7 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 	drain(e.wake)
 	delay, pause, ok := e.scheduleLocked(err)
 	wake := e.wake
+	watchNetwork := !e.recovery.networkWoke
 	e.mu.Unlock()
 	if !ok {
 		if ctx.Err() != nil {
@@ -226,16 +234,21 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 		}
 		return err
 	}
-	if err := e.sleep(ctx, delay, wake, network); err != nil {
+	networkWake, err := e.sleep(ctx, delay, wake, network, watchNetwork)
+	if err != nil {
 		return err
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if networkWake {
+		e.recovery.networkWoke = true
+	}
 	e.status.NextAttemptAt = time.Time{}
 	if pause {
 		r := &e.recovery
 		r.cycle++
 		r.attempt = 1
+		r.networkWoke = false
 		e.status.ReconnectCycle = r.cycle
 		e.status.ReconnectAttempt, e.status.ReconnectLimit = 1, cycleAttemptLimit
 		e.status.ReconnectPhase = PhaseAttempting
@@ -246,7 +259,7 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 
 // sleep waits for delay. A reconnect request, a changed set of local network
 // interfaces or a detected resume from sleep ends the wait early.
-func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}, network string) error {
+func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}, network string, watchNetwork bool) (networkWake bool, err error) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	poll := time.NewTicker(e.pollEvery)
@@ -255,22 +268,22 @@ func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan str
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-timer.C:
-			return nil
+			return false, nil
 		case <-wake:
 			e.report("reconnect_requested", "Reconnect requested; retrying now")
-			return nil
+			return false, nil
 		case <-poll.C:
 			now := time.Now()
 			if resumed(last, now) {
 				e.report("resume_detected", "Resume detected; retrying now")
-				return nil
+				return false, nil
 			}
 			last = now
-			if current := e.network(); current != network {
+			if watchNetwork && e.network() != network {
 				e.report("network_changed", "Network changed; retrying now")
-				return nil
+				return true, nil
 			}
 		}
 	}
@@ -314,4 +327,17 @@ func interfaceIdentity(tunnel string) string {
 	}
 	slices.Sort(parts)
 	return strings.Join(parts, ";")
+}
+
+// sameProfile reports whether two sessions use the same profile. Without a
+// profile identity both are treated as the same, which never interrupts a
+// live session.
+func sameProfile(running, next *SessionInfo) bool {
+	if running == nil || next == nil {
+		return true
+	}
+	if running.ProfileID != "" || next.ProfileID != "" {
+		return running.ProfileID == next.ProfileID
+	}
+	return running.ProfileName == next.ProfileName
 }

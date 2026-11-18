@@ -16,6 +16,11 @@ func (e *Engine) refreshResidual() {
 	if !e.opts.ResidualProtection {
 		return
 	}
+	// The probe briefly takes the session lock; never race a Start.
+	if !e.lifecycle.TryLock() {
+		return
+	}
+	defer e.lifecycle.Unlock()
 	e.mu.Lock()
 	if e.active || time.Since(e.residualChecked) < residualInterval {
 		e.mu.Unlock()

@@ -160,38 +160,78 @@ func TestProtocolAndBoundedHistory(t *testing.T) {
 	}
 }
 
-// abandonEngine records whether the server ended the session without a stop.
+// abandonEngine records whether the session context was still live when the
+// server marked the session abandoned.
 type abandonEngine struct {
 	fakeEngine
-	abandoned, stopped bool
+	marked, liveAtMark, stopped bool
 }
 
-func (e *abandonEngine) Abandon(context.Context) error { e.abandoned = true; return nil }
-func (e *abandonEngine) Stop(context.Context) error    { e.stopped = true; return nil }
+func (e *abandonEngine) MarkAbandon() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.marked = true
+	e.liveAtMark = e.session != nil && e.session.Err() == nil
+}
+func (e *abandonEngine) Stop(context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.stopped = true
+	return nil
+}
 
-type failingListener struct{ net.Listener }
+// scriptedListener hands out queued connections, then fails.
+type scriptedListener struct {
+	conns chan net.Conn
+	fail  chan struct{}
+}
 
-func (failingListener) Accept() (net.Conn, error) { return nil, errors.New("broken pipe instance") }
-func (failingListener) Close() error              { return nil }
-func (failingListener) Addr() net.Addr            { return &net.TCPAddr{} }
-
-// A broken control listener is not a user's stop: kill switch protection must
-// stay installed.
-func TestListenerFailureAbandonsSession(t *testing.T) {
-	e := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
-	if err := NewServer(e).Serve(context.Background(), failingListener{}); err == nil {
-		t.Fatal("listener failure swallowed")
+func (l scriptedListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.fail:
+		return nil, errors.New("broken pipe instance")
 	}
-	if !e.abandoned || e.stopped {
-		t.Fatal("listener failure stopped the session", e.abandoned, e.stopped)
-	}
-	stopped := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := NewServer(stopped).Serve(ctx, failingListener{}); err != nil {
+}
+func (scriptedListener) Close() error   { return nil }
+func (scriptedListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+// A broken control listener is not a user's stop: the session is marked
+// abandoned while its context is still live, so protection stays installed.
+func TestListenerFailureAbandonsSessionBeforeCancel(t *testing.T) {
+	e := &abandonEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
+	l := scriptedListener{conns: make(chan net.Conn), fail: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), l) }()
+	client, server := net.Pipe()
+	l.conns <- server
+	path, _ := filepath.Abs("held.conf")
+	ctx, end := context.WithTimeout(context.Background(), 3*time.Second)
+	defer end()
+	if _, err := exchange(ctx, client, Request{Command: "start", Config: path}); err != nil {
 		t.Fatal(err)
 	}
-	if stopped.abandoned || !stopped.stopped {
-		t.Fatal("shutdown did not stop the session", stopped.abandoned, stopped.stopped)
+	client.Close()
+	close(l.fail)
+	if err := <-done; err == nil {
+		t.Fatal("listener failure swallowed")
+	}
+	if !e.marked || !e.liveAtMark || !e.stopped {
+		t.Fatal("session not abandoned before cancellation", e.marked, e.liveAtMark, e.stopped)
+	}
+
+	stopped := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	failed := make(chan struct{})
+	close(failed)
+	if err := NewServer(stopped).Serve(cancelled, scriptedListener{conns: make(chan net.Conn), fail: failed}); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.marked || !stopped.stopped {
+		t.Fatal("shutdown did not stop the session", stopped.marked, stopped.stopped)
 	}
 }

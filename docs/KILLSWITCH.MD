@@ -78,8 +78,9 @@ stop, not to a single connection attempt:
 1. **Start.** Before network inspection, key or `ssconf` resolution, bootstrap
    DNS and the transport check, the core installs the full rule set without the
    tunnel interface permit: the core executable exception, loopback, DHCP,
-   IPv6 neighbor discovery, `direct` CIDRs and the default block. Filters left
-   by an earlier process are replaced in the same transaction.
+   IPv6 neighbor discovery, the DNS port block (53 and 853 for every process
+   but the core, above `direct` CIDRs), `direct` CIDRs and the default block.
+   Filters left by an earlier process are replaced in the same transaction.
 2. **Tunnel adapter created.** The core installs the set again with the permit
    for the new adapter before it configures routes and DNS. Each replacement is
    one transaction, so protection is never absent in between.

@@ -305,14 +305,18 @@ A typical GUI flow:
 6. Closing the GUI window does not stop the service or the VPN. Implement
    "disconnect on exit" only as an explicit user setting.
 
-Run IPC off the UI thread. Practical client timeouts are 5 seconds for `status`
-and up to 2 minutes for `stop` and `shutdown`. A disconnected client does not stop
+Run IPC off the UI thread. Practical client timeouts are 5 seconds for `status`,
+up to 2 minutes for `stop` and `shutdown`, and 2 minutes for `start`: with the
+kill switch enabled, `start` returns only after protection is installed, and a
+handover first waits for the previous session's cleanup (up to about 45 seconds
+on Windows). Other commands on the same daemon wait while a `start` runs. A disconnected client does not stop
 an accepted session or cancel server cleanup. After a `start` timeout, check
 `status` instead of repeating `start` blindly; `stop` is safe to repeat. To switch
 profiles, send `stop`, wait for cleanup, then `start` with the new absolute path.
 The exception is a session that owns kill switch protection (`KillSwitch`
-`active` or `holding`): `start` with another kill switch VPN profile replaces it
-directly without releasing protection, which avoids an unprotected gap. Hot reload, pause, and
+`active` or `holding`): `start` with a different kill switch VPN profile
+replaces it directly without releasing protection, which avoids an unprotected
+gap. A repeated start of the same profile keeps the live session. Hot reload, pause, and
 general single-command profile switching are not implemented.
 
 To avoid acting on stale state, a daemon that reports `daemon_session_guards: true`

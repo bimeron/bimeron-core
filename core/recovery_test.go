@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -691,7 +692,7 @@ func TestKillSwitchHandoverFromConnectedSession(t *testing.T) {
 	if err := e.Start(ctx, testConfig()); !errors.Is(err, ErrSessionRunning) {
 		t.Fatal("profile without kill switch replaced a running session", err)
 	}
-	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+	if err := e.Start(ctx, otherKillSwitchProfile()); err != nil {
 		t.Fatal(err)
 	}
 	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
@@ -703,5 +704,122 @@ func TestKillSwitchHandoverFromConnectedSession(t *testing.T) {
 	}
 	if _, _, _, installed := b.snapshot(); installed {
 		t.Fatal("stop after handover kept protection")
+	}
+}
+
+func otherKillSwitchProfile() SessionConfig {
+	c := killSwitchConfig()
+	c.ProfileName = "other"
+	return c
+}
+
+// A repeated start of the running profile, such as a double click, never
+// interrupts a live session.
+func TestRepeatedStartKeepsLiveSession(t *testing.T) {
+	var opens atomic.Int32
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { opens.Add(1); return fakeSession{}, nil }}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if err := e.Start(ctx, killSwitchConfig()); !errors.Is(err, ErrSessionRunning) {
+		t.Fatal(err)
+	}
+	if opens.Load() != 1 || e.Status().State != Connected {
+		t.Fatal("repeated start interrupted the session", opens.Load(), e.Status())
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A handover never hides a failed teardown of the previous session.
+func TestHandoverReportsPreviousCleanupFailure(t *testing.T) {
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { return fault("cleanup_failed_run_recover", false) }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if err := e.Start(ctx, otherKillSwitchProfile()); err == nil || err.Error() != "cleanup_failed_run_recover" {
+		t.Fatal("handover masked a failed teardown", err)
+	}
+	if s := e.Status(); s.State != Failed || s.LastError != "cleanup_failed_run_recover" {
+		t.Fatal(s)
+	}
+	if acquires, _, retains, installed := b.snapshot(); acquires != 1 || retains != 1 || !installed {
+		t.Fatal("protection not retained after a failed teardown", acquires, retains, installed)
+	}
+}
+
+// MarkAbandon before the session context is cancelled keeps protection, as a
+// failed control listener requires.
+func TestAbandonKeepsProtectionWhenContextEnds(t *testing.T) {
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return nil, fault("access_key_unavailable", false)
+	}}}
+	e := testEngine(b)
+	ctx, cancel := context.WithCancel(testDeadline(t))
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitHeld(t, e)
+	e.MarkAbandon()
+	cancel()
+	if err := e.Wait(testDeadline(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 1 || !installed {
+		t.Fatal("abandoned session released protection", releases, retains, installed)
+	}
+}
+
+// A panic on the run goroutine keeps protection, as a crash does.
+func TestRunPanicRetainsProtection(t *testing.T) {
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { panic("open") }}}
+	e := testEngine(b)
+	panicked := make(chan any, 1)
+	e.repanic = func(p any) { panicked <- p }
+	if err := e.Start(testDeadline(t), killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-panicked:
+		if p != "open" {
+			t.Fatal(p)
+		}
+	case <-testDeadline(t).Done():
+		t.Fatal("panic not observed")
+	}
+	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 1 || !installed {
+		t.Fatal("panic released protection", releases, retains, installed)
+	}
+}
+
+// Flapping interfaces end at most one wait per cycle early: the pause between
+// cycles is kept.
+func TestNetworkFlapsWakeOncePerCycle(t *testing.T) {
+	var opens atomic.Int32
+	e := waitingEngine(t, &opens, 0)
+	var generation atomic.Int64
+	e.observe = func(string) string { return strconv.FormatInt(generation.Add(1), 10) }
+	e.pollEvery = time.Millisecond
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, testConfig()); err != nil {
+		t.Fatal(err)
+	}
+	s := awaitWaiting(t, e)
+	before := opens.Load()
+	time.Sleep(50 * time.Millisecond)
+	if after := e.Status(); after.ReconnectPhase != PhaseWaiting || after.ReconnectCycle != s.ReconnectCycle || opens.Load() != before {
+		t.Fatal("network flaps bypassed the pause", after, opens.Load(), before)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
