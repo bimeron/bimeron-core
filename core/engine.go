@@ -167,7 +167,7 @@ type runResult struct {
 	done chan struct{}
 	// acquired is closed once Acquire has returned or the run ended earlier.
 	acquired chan struct{}
-	err  error
+	err      error
 	// settled marks a terminal session failure whose teardown already
 	// completed. Wait still reports err; a later Stop has nothing left to clean.
 	settled bool
