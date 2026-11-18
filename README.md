@@ -229,7 +229,8 @@ prerequisites, output contents, Wintun verification, and platform-specific steps
 
 Bimeron's original code is licensed under the [MIT License](LICENSE). Adapted VLESS and VMess
 protocol files retain Xray-core's MPL 2.0 license; see `third_party/vless/` and
-`third_party/vmess/`. Other third-party components retain their own licenses in
+`third_party/vmess/`. The adapted known_hosts parser retains the Go Authors' BSD-3-Clause
+license; see `third_party/knownhosts/`. Other third-party components retain their own licenses in
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and `third_party/wf/LICENSE`. Distributed
 Wintun DLLs include `WINTUN-LICENSE.txt`, whose **Prebuilt Binaries License** differs from the
 Go Wintun module license in `THIRD_PARTY_NOTICES.txt`. Read those terms before redistribution.

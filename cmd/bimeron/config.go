@@ -4,6 +4,7 @@ import (
 	"bimeron/core"
 	"bimeron/internal/accesskey"
 	"bimeron/internal/config"
+	"bimeron/internal/safefile"
 	"context"
 	"flag"
 	"fmt"
@@ -43,7 +44,7 @@ func resolveInput(ctx context.Context, path string, c *config.File) (accesskey.P
 	if c != nil {
 		return c.Resolve(ctx)
 	}
-	b, err := os.ReadFile(path)
+	b, err := safefile.Read(path, 64<<10)
 	if err != nil {
 		return accesskey.Profile{}, fmt.Errorf("could not read key file")
 	}

@@ -67,7 +67,8 @@ File = test.key
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
-allowed. The maximum key-file size is 64 KiB.
+allowed. The maximum key-file size is 64 KiB. See [Referenced files](#referenced-files)
+for the rules that apply to every path in a profile.
 
 ### Inline static key
 
@@ -784,6 +785,55 @@ format, limits, and host APIs.
 - Leading/trailing value whitespace is trimmed; double quotes preserve it.
 - Quoted values support escapes `\r`, `\n`, `\t`, `\\`, `\"`.
 - Windows paths are easiest to write unquoted: `File = C:\VPN\test.key`.
+
+## Referenced files
+
+The `.conf` file and every file it names must be data files on the local
+file system. This covers `File`, `CAFile` and the `ca` URI option,
+`IdentityFile`, `KnownHostsFile`, the `identity` and `known_hosts` URI options,
+`GeoIPFile`, and `GeoSiteFile`. Bimeron rejects directories, devices, FIFOs,
+sockets, and named pipes before opening them, then checks the opened file
+again. Symbolic links are followed; the target must pass the same checks.
+On Unix, a data file is a regular file. On Windows, it may also be a cloud
+file, such as a OneDrive file in a synchronized Desktop or Documents folder;
+reading a cloud file that is not stored locally downloads it first.
+
+On Windows, Bimeron also rejects these paths before opening them:
+
+- network shares (`\\server\share`, `//server/share`);
+- device-namespace paths (`\\?\`, `\\.\`, `\??\`);
+- reserved device names such as `NUL`, `CON`, or `COM1.txt` in any path element;
+- alternate data streams (`file.txt:stream`).
+
+After opening, Bimeron rejects a file on a network file system even when its
+path looks local, for example through a mapped network drive, a `subst`
+drive, a symbolic link, or a mount point. Opening such a file can still
+contact the remote server; Bimeron does not use its contents.
+
+These locations are therefore not supported:
+
+- on Windows: `\\wsl$` and `\\wsl.localhost` paths, VirtualBox shared folders
+  (`\\vboxsvr`), Remote Desktop drives (`\\tsclient`), a Documents or Desktop
+  folder redirected to a network share, mapped network drives, and explicit
+  long paths such as `\\?\C:\...`;
+- on Unix: process substitution (`<(...)`) and `/dev/stdin` or `/dev/fd/N`
+  connected to a pipe.
+
+Copy such a file to a local folder and reference the copy.
+
+| File | Size limit |
+|---|---|
+| `.conf`, `File` | 64 KiB |
+| `IdentityFile`, `identity` | 64 KiB |
+| `KnownHostsFile`, `known_hosts` | 1 MiB |
+| `CAFile`, `ca` | 1 MiB |
+| `GeoIPFile`, `GeoSiteFile` | 64 MiB each |
+
+A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
+`file_not_regular`, `file_too_large`, or `file_unreadable`. A dataset problem
+has the code `geodata_unreadable` or `geodata_limit`. SSH and MASQUE files are
+read when a connection starts. A failure there is reported as an unavailable
+identity, `known_hosts`, or CA file, or as a file that exceeds its size limit.
 
 ## Commands
 

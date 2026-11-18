@@ -113,8 +113,9 @@ never certifies runtime policy, dataset membership or endpoint capabilities.
 
 `bimeron geodata groups <geoip|geosite> <absolute-file>` returns
 `{"version":1,"groups":["stable-id"]}` with optional error/details/problems. Errors return
-an empty groups array. Only regular files are accepted; opening follows OS
-symlinks and uses the caller's permissions. Reads are limited to 64 MiB plus one
+an empty groups array. Only local data files are accepted, checked before and
+after opening as described in [Referenced files](CONF.MD#referenced-files); opening
+follows OS symlinks and uses the caller's permissions. Reads are limited to 64 MiB plus one
 sentinel byte, including growing files. The existing bounded V2Ray protobuf
 decoder validates content and returns sorted lowercase identifiers. No download,
 DNS lookup, ACL change or daemon access occurs. Generic failures are redacted.

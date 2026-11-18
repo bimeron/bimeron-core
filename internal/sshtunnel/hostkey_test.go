@@ -555,12 +555,9 @@ func verifierFor(t *testing.T, file []string, trusted string, o *offers) *verifi
 		v.prompt = o.prompt
 	}
 	if file != nil {
-		path := writeHosts(t, file...)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v.file, err = knownhosts.New(path); err != nil {
+		var data []byte
+		var err error
+		if v.file, data, err = knownHosts(writeHosts(t, file...)); err != nil {
 			t.Fatal(err)
 		}
 		v.ca, v.folds = inspectHosts(data)
