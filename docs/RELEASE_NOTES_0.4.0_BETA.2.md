@@ -1,10 +1,10 @@
 # Bimeron Core v0.4.0-beta.2
 
-**Release notes — draft for review.** This is a security patch release on top
+**Release notes — pre-publication.** This is a security patch release on top
 of v0.4.0-beta.1. Publication is pending candidate freeze, VM acceptance of the
 Desktop 0.3.1 candidate with this Core candidate, and explicit approval.
 
-The reviewed source range is `5fcadd71..9521d8b4` on master. `5fcadd71` is the
+The reviewed source range is `5fcadd71..371b7af6` on master. `5fcadd71` is the
 v0.4.0-beta.1 tag commit. The final candidate commit is recorded at freeze.
 
 For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.2/README.md).
@@ -87,7 +87,8 @@ removes the finding.
 
 ## Reconnection and kill switch
 
-Changed in [#163](https://github.com/bimeron/bimeron-core/pull/163). See
+Changed in [#163](https://github.com/bimeron/bimeron-core/pull/163) and
+[#167](https://github.com/bimeron/bimeron-core/pull/167). See
 [Reconnect recovery and kill switch hold](CONTROL.MD#reconnect-recovery-and-kill-switch-hold).
 
 - **Reconnect policy.** After an established session is lost, Core reconnects
@@ -105,10 +106,13 @@ Changed in [#163](https://github.com/bimeron/bimeron-core/pull/163). See
   resolution. It is held across all attempts, waits and the `failed` state, and
   is released only when the user disconnects. While it is held, applications
   other than Core cannot resolve names outside the tunnel (DNS ports 53 and
-  853), including through resolvers in `direct` ranges.
+  853), including through resolvers in `direct` ranges. Internal failures of
+  the daemon or service and races during a profile handover no longer release
+  protection; a user's disconnect still does.
 - **Profile switching.** Starting a different kill switch profile while one is
   active switches without an unprotected gap. Starting the same profile again
-  keeps the running session.
+  keeps the running session. A profile is identified by its file path; to
+  apply edits to the same file, disconnect and connect again.
 - **Leftover protection.** Protection left after a crash or power loss is
   reported as `KillSwitch: "residual"` together with `failed` and
   `cleanup_failed_run_recover`. Connecting a kill switch profile or running
@@ -147,7 +151,9 @@ All fields are omitted when zero.
 - The Windows kill switch does not cover forwarded traffic, such as Internet
   Connection Sharing or WSL2 and Hyper-V NAT
   ([#164](https://github.com/bimeron/bimeron-core/issues/164)).
-- mDNS (UDP 5353) remains allowed to `direct` ranges.
+- Local name resolution queries to `direct` ranges remain allowed while
+  protection is held: mDNS (UDP 5353), LLMNR (UDP and TCP 5355) and NetBIOS
+  name service (UDP 137).
 - With the outbound path blocked, loss of a session is detected after about
   80 seconds (a health check every 30 seconds, 3 failures). This is unchanged.
 - `service update` releases kill switch protection while the service restarts.
