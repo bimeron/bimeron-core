@@ -21,10 +21,11 @@ the VPN.
 
 Run updates through the trusted core bundled in the installed GUI package. Pass
 the downloaded executable's absolute path, expected version, and SHA-256 from a
-verified release manifest. The updater copies it as data into the protected
-directory and checks staged ELF architecture, Go identity, and digest before
-stopping the old service. It then requires IPC `hello`
-with the expected version and protocol after restart. On failure it restores the old
+verified release manifest. The source must be a regular file of at most
+256 MiB, not a symlink. The updater copies it as data into the protected
+directory as a root-only (0600) file and checks staged ELF architecture, Go
+identity, and digest before making it executable and stopping the old service.
+It then requires IPC `hello` with the expected version and protocol after restart. On failure it restores the old
 binary and prior running state, preserving the owner and automatic-start setting:
 
 ```sh
@@ -116,9 +117,12 @@ From an elevated CMD, run the trusted core bundled in the installed GUI package:
 "C:\Program Files\Bimeron\bimeron-core.exe" service update -source C:\absolute\path\to\downloaded\bimeron.exe -version 0.1.0-beta.2 -sha256 <executable-sha256>
 ```
 
-The command checks the installed path and owner. It first copies the downloaded
-EXE into the protected directory and checks the staged copy's digest, Go identity,
-and PE architecture, then
+The command checks the installed path and owner. The source must be a regular
+file of at most 256 MiB on a local drive, not a link or other reparse point; UNC
+and device paths are refused. It first copies the downloaded EXE into the
+protected directory with an ACL limited to SYSTEM and Administrators and checks
+the staged copy's digest, Go identity, and PE architecture. Only then does the
+staged file take the directory's inherited ACL; the command
 stops the service, waits for cleanup, and replaces the EXE. If the service was
 running, it restarts, but the VPN remains disconnected; explicitly call
 start <config>. If it was stopped, it stays stopped.
