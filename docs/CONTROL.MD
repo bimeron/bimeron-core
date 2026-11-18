@@ -95,6 +95,158 @@ codes.
 
 Changes to required fields or existing command semantics require a new version.
 
+## Server identity
+
+A client must verify the server of every local endpoint before it writes the
+first request byte. If verification fails, close the connection without writing
+and report `control_server_untrusted`. Never fall back to another endpoint after
+a failed verification. The checks below use only OS-provided identity: the pipe
+object owner, the pipe server process and Unix peer credentials. Response
+fields are never proof of identity.
+
+Object owners set by Core:
+
+| Endpoint | Created by | Owner |
+|---|---|---|
+| `\\.\pipe\Bimeron.Core.Service` | BimeronCore service (LocalSystem) | `S-1-5-18` (SYSTEM) |
+| `\\.\pipe\Bimeron.Core.Readiness` | BimeronCore service (LocalSystem) | `S-1-5-18` (SYSTEM) |
+| `\\.\pipe\Bimeron.Core.<user-hash>` | Elevated console daemon of the user | `S-1-5-32-544` (Administrators) |
+| `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | Elevated foreground owner of the user | `S-1-5-32-544` (Administrators) |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | No explicit owner (the elevated token default, normally Administrators) |
+| `/run/bimeron/control.sock` (Linux), `/var/run/bimeron/control.sock` (macOS) | Root daemon or service | Socket file owned by the control owner UID or root; listener credentials are root |
+| `/run/bimeron-repair/<nonce>.sock` | Root repair broker | Socket file owned by the caller UID; listener credentials are root |
+
+Only principals that hold the owner SID in their token can assign it. A
+non-administrator cannot create a pipe owned by Administrators or SYSTEM, and
+an elevated administrator cannot assign SYSTEM without enabling
+`SeRestorePrivilege`.
+
+The owner applies to the whole pipe, and `GetNamedPipeServerProcessId` reports
+the process that created the pipe, also for a later instance that another
+process serves. Neither identifies the server of an individual instance. The
+pipe DACLs therefore grant `FILE_CREATE_PIPE_INSTANCE` (`0x4`) only to the
+server principal. Clients get `0x0012019B`: `FILE_GENERIC_READ |
+FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`, and without
+`WRITE_DAC` or `WRITE_OWNER`. With these rights a client opens the pipe with
+`GENERIC_READ | GENERIC_WRITE`, reads and writes, and reads the owner.
+
+| Endpoint | DACL (protected) |
+|---|---|
+| `\\.\pipe\Bimeron.Core.Service` | SYSTEM: full; control owner: `0x0012019B` |
+| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: full |
+| `\\.\pipe\Bimeron.Core.<user-hash>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4` |
+| `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4`; medium no-write-up label |
+
+The console daemon and the IKEv2 foreground owner run elevated as the user, so
+the user and Administrators entries together give them the rights to serve
+further instances. Non-elevated processes of the user hold Administrators only
+as a deny-only group and cannot serve the pipe.
+
+### Windows service pipe
+
+1. Connect to `\\.\pipe\Bimeron.Core.Service` with identification or anonymous
+   impersonation level. The handle has `READ_CONTROL`.
+2. Read the owner with `GetSecurityInfo(handle, SE_KERNEL_OBJECT,
+   OWNER_SECURITY_INFORMATION)`. Require exactly `S-1-5-18`.
+3. Bind the service process. Open the service with
+   `OpenSCManager(SC_MANAGER_CONNECT)` and `OpenService("BimeronCore",
+   SERVICE_QUERY_STATUS)`, then call `QueryServiceStatusEx`. It must succeed
+   and report a nonzero process ID, and `GetNamedPipeServerProcessId` must
+   return the same ID. A service that serves the pipe always has a nonzero
+   process ID. If the pipe exists but the service is not installed, is
+   stopped, reports process ID 0 or the query fails, the endpoint is
+   untrusted. Standard users have these rights under the default service
+   security, so a failed query, including access denied, is not expected and
+   fails closed.
+
+Do not open the server process token. Standard users cannot open a LocalSystem
+token, so a check that requires it fails for a normal GUI.
+
+A service built before explicit owners leaves the pipe owned by Administrators
+(`S-1-5-32-544`). Clients with this check reject it until the service is
+updated. `bimeron service update` is unaffected: it stops and starts the
+service through SCM and verifies the updated service, which already sets the
+new owner. `bimeron version -daemon` sends its request only after these checks,
+so it reports `control_server_untrusted` for such a service instead of its
+version. Core does not show the version that an unverified endpoint claims.
+
+### Windows readiness pipe
+
+`CallServiceReadiness` requires `GetNamedPipeServerProcessId` to match the
+SCM-reported service process ID before writing. Only administrators can open
+this pipe.
+
+### Windows console daemon pipe
+
+Fall back to `\\.\pipe\Bimeron.Core.<user-hash>` only when the service pipe does
+not exist (`ERROR_FILE_NOT_FOUND`). Then:
+
+1. Require pipe owner `S-1-5-32-544`.
+2. Get the server process with `GetNamedPipeServerProcessId` and open it once
+   with `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE`. Open its token
+   through that handle with `TOKEN_QUERY`. Require token user equal to the
+   client's user SID and `TokenElevation` true. Then require the process to
+   still be running, and keep the handle until the connection is closed, so
+   the process ID cannot be reused in between. The daemon refuses to start
+   without elevation.
+3. If the client launched the daemon, also require the server process ID to
+   match the retained process handle of that launch.
+
+A non-elevated client can open the process and token of a daemon that the same
+user elevated through UAC in the same logon. A daemon elevated in another logon
+session, for example one started remotely, cannot be opened by a non-elevated
+client and is rejected.
+
+### Windows IKEv2 foreground pipe
+
+Use `ForegroundClient` or perform the same checks. See
+[IKEV2_FOREGROUND_CONTROL.MD](IKEV2_FOREGROUND_CONTROL.MD#installation-and-trust).
+For each connection: dial with identification-only SQOS, get the server process
+ID, retain a process handle with `SYNCHRONIZE`, and require an elevated token of
+the same SID and interactive session. The image must lie under Program Files,
+with protected ancestors that are retained open. Its SHA-256 (or the volume and
+file index pinned by an earlier connection) must match the selected Core
+digest. The response `installation` must equal the installation ID the client
+sent, `endpoint` must be `ikev2_foreground` or `ikev2_profile`, and `owner` must
+equal the observed identity. The process must still be running after
+inspection. There is no fallback to the
+service or console daemon pipe.
+
+### Windows repair pipe
+
+`\\.\pipe\Bimeron.Repair.<nonce>` uses a fresh 128-bit nonce from the client.
+The client launches the broker itself and retains its process handle. Before
+writing, `GetNamedPipeServerProcessId` must equal that process ID, and the
+retained handle must show the process still running. The broker independently
+binds its client PID, SID and session.
+
+### Unix control and repair sockets
+
+The authoritative check is the kernel peer credential of the connected socket:
+`SO_PEERCRED` on Linux, `getpeereid` or `LOCAL_PEERCRED` on macOS. Require UID
+0. The kernel records the credentials of the process that called `listen`. A
+non-root process cannot produce UID 0 credentials, whoever owns the directory.
+For the repair socket, also require the PID of the broker the client launched
+when it is known.
+
+Defence in depth before connecting: `lstat` the runtime directory and the
+socket, and refuse to connect unless the directory is a directory (not a
+symlink) owned by UID 0 without group or other write permission and the socket
+path is a socket. The daemon creates `/run/bimeron` (`/var/run/bimeron` on
+macOS) with mode `0711` and `/run/bimeron-repair` with mode `0755`, both owned
+by root. A client that checks every path component must start from the
+canonical path: on macOS `/var` is a symlink to `/private/var`. On Linux use
+`/run/bimeron`, not the `/var/run` alias.
+
+If the runtime directory exists but is not a root-owned directory, or is
+writable by group or others, the daemon refuses to start and does not repair
+it. Mode `0700` or `0751` in a root-owned directory is reset to `0711`. On Linux
+`/run` is root-owned with mode `0755`, so other users cannot pre-create the
+directory. On macOS `/private/var/run` is writable by the `daemon` group.
+
+Core's own clients (`Call`, `CallService`, `Dial`, `DialService`) perform the
+checks for the service, console daemon and Unix control endpoints.
+
 ## Daemon session guards
 
 A daemon (not a foreground owner) reports `daemon_session_guards: true` on
