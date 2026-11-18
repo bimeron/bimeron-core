@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestReadRejectsNonLocalWindowsPaths(t *testing.T) {
 		`NUL`,
 		`C:\NUL`,
 		filepath.Join(dir, "CON"),
-		filepath.Join(dir, "com1.txt"),
+		filepath.Join(dir, "COM1"),
 		filepath.Join(dir, "LPT1"),
 		filepath.Join(dir, "CONOUT$"),
 		regular + ":stream",
@@ -35,7 +36,12 @@ func TestReadRejectsNonLocalWindowsPaths(t *testing.T) {
 			t.Errorf("Read(%q) = %v", path, err)
 		}
 	}
-	for _, path := range []string{regular, dir + `\.\regular`, dir + `\x\..\regular`, "/" + filepath.ToSlash(regular)[3:]} {
+	valid := []string{regular, dir + `\.\regular`, dir + `\x\..\regular`}
+	// A rooted path without a drive resolves against the current drive.
+	if wd, err := os.Getwd(); err == nil && strings.EqualFold(filepath.VolumeName(wd), filepath.VolumeName(regular)) {
+		valid = append(valid, "/"+filepath.ToSlash(regular)[3:])
+	}
+	for _, path := range valid {
 		if b, err := Read(path, 16); err != nil || string(b) != "data" {
 			t.Errorf("Read(%q) = %q, %v", path, b, err)
 		}
