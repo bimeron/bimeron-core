@@ -1,713 +1,1027 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, November 18, 2026. Not accepted; no implementation is
-authorized by this record. Amends [ADR 0002](0002-signed-service-updates.md)
-and the explicit-repair replacement policy of #140 in
-[REPAIR_SESSION.md](../REPAIR_SESSION.md). Tracked by Core issue #155 and
-bimeron/bimeron-desktop#58.
+Status: proposed draft, revision 2, November 18, 2026. Not accepted. This
+record authorizes no implementation. It amends
+[ADR 0002](0002-signed-service-updates.md) and the explicit-repair
+replacement policy of #140 in [REPAIR_SESSION.md](../REPAIR_SESSION.md).
+Tracked by Core issue #155 and bimeron/bimeron-desktop#58.
 
 ## Context
 
-The Windows/Linux Core is one Go executable (`bimeron[.exe]`) that acts as CLI,
-service and repair broker. Desktop packages carry two copies of it: the CLI
-(`C:\Program Files\Bimeron\bimeron-core.exe`, `/usr/bin/bimeron-core`) and the
-repair broker (`...\Bimeron\repair\bimeron-repair.exe`,
-`/usr/libexec/bimeron/repair/bimeron-repair`). The service runs a third copy from
-`%ProgramFiles%\Bimeron Core\bimeron.exe` or `/usr/local/lib/bimeron/bimeron-core`.
+On Windows and Linux, Core is a single Go executable (`bimeron[.exe]`) that
+serves as CLI, service and repair broker. Desktop packages carry two copies of
+it:
 
-A signed core update (ADR 0002) replaces only that third copy. Desktop verifies
-the manifest and elevates its bundled CLI with
-`service update -source <path> -version <v> -sha256 <hex>`; by the ADR 0002
-design, publisher authenticity and version selection are decided in Desktop,
-and the elevated command receives their results as arguments. The bundled CLI
-and broker stay at the package version.
+- the CLI, at `C:\Program Files\Bimeron\bimeron-core.exe` or
+  `/usr/bin/bimeron-core`;
+- the repair broker, at `...\Bimeron\repair\bimeron-repair.exe` or
+  `/usr/libexec/bimeron/repair/bimeron-repair`.
+
+The service runs a third copy from `%ProgramFiles%\Bimeron Core\bimeron.exe`
+or `/usr/local/lib/bimeron/bimeron-core`. The foreground IKEv2 daemon is a
+fourth elevated use of the same binary.
+
+A signed core update (ADR 0002) replaces only the service copy. Desktop
+verifies the manifest, then elevates its bundled CLI with
+`service update -source <path> -version <v> -sha256 <hex>`. Under the ADR 0002
+design, Desktop decides publisher authenticity and version selection and passes
+the results to the elevated command as arguments. The bundled CLI and broker
+stay at the package version.
 
 Explicit repair (#140) compares the installed service's SHA-256 with the
 broker's own running image and replaces a byte-different service with the
-broker image (documented in [REPAIR_SESSION.md](../REPAIR_SESSION.md)). After a
-signed update the service is byte-different by construction, so repair returns
-it to the package version. Missing-service installation also installs the
-broker's version. Core updates can carry security fixes; returning to an older
-version would reintroduce a fixed problem. The package installer action that
-updates the service from the package has the same ordering question, and no
-component records the highest version or security floor a machine has
-trusted.
+broker image. After a signed update, the service is byte-different by
+construction, so repair returns it to the package version. Missing-service
+installation also installs the broker's version.
 
-This design moves the trust decision for anything that runs or is installed
-with elevation into the privileged Core process, and applies uniform rules to
-every privileged file operation in the new store:
+Core updates can carry security fixes, so returning to an older version can
+reintroduce a fixed problem. The package installer action that updates the
+service from the package raises the same ordering question. No component
+records the highest version or security floor that a machine has trusted.
 
-- signature, size and digest verification of untrusted inputs before any byte
-  is published, with fixed size bounds;
-- untrusted inputs opened once, without following links, and read through one
-  handle;
-- private staging, atomic publication under versioned names, and final
-  permissions applied only after verification;
-- explicit owner and protected DACL on every created directory, with ancestor
-  checks;
-- locks that non-administrators cannot create or pre-create;
-- tolerance of foreign open handles (no fixed file names that a busy file can
-  block, garbage collection, visible failure);
-- installation from a verified handle or store entry, never by re-resolving a
-  path;
-- restricted DLL search and digest-verified companion DLLs at load time;
-- canonical, strictly decoded metadata;
-- signed artifacts provably bound to the tag commit and its reviewed build
-  settings.
+This design moves the trust decision for everything that runs or is installed
+with elevation into the privileged Core process. It applies one set of rules
+to every privileged operation on the new store:
 
-Security is the primary goal. Implementation complexity is secondary.
+- Untrusted bytes:
+  - signature verification over the exact bytes before any parsing;
+  - fixed size bounds;
+  - no privileged process opens a path that a caller chose.
+- Files the privileged process writes:
+  - private staging;
+  - atomic publication under versioned names;
+  - final permissions applied only after verification;
+  - an explicit owner and a protected DACL on every created object;
+  - ancestor checks.
+- Contention:
+  - locks that non-administrators cannot create, pre-create or open;
+  - tolerance of foreign open handles: no fixed file names that a busy file
+    can block, garbage collection, and failures reported visibly.
+- Running:
+  - installation from a verified handle or store entry, never by re-resolving
+    a path;
+  - a restricted DLL search, and companion DLLs verified by digest at load;
+  - a sanitized environment.
+- Release artifacts:
+  - canonical, strictly decoded metadata;
+  - signed artifacts provably bound to the tag commit and its reviewed build
+    settings.
+
+Security is the primary goal; implementation complexity is secondary.
 
 ## Decision
 
 ### Summary
 
-1. A core update downloads, verifies and installs a complete signed bundle into
-   an immutable, versioned, machine-protected **core store**. The service is
-   then switched from that store.
-2. Signature verification and the anti-rollback **security floor** are enforced
-   inside the privileged process with keys embedded in Core. Desktop repeats
-   the checks as defense in depth, never as the only gate.
-3. Desktop runs the CLI and the repair broker from the newest usable store
-   version. Bundled package copies are bootstrap material only.
-4. Every launch of a store or bundled executable is preceded by a digest check
-   bound to the executed file. Elevation is never requested for an unverified
-   file.
-5. Repair restores from the store, never from its own image, and never lowers
+1. A core update streams a complete signed bundle into the privileged Core
+   process over an authenticated session. Core verifies the bundle, switches
+   the service to it, and only then promotes it into an immutable, versioned,
+   machine-protected **core store**.
+2. Signature verification, version order and the anti-rollback **security
+   floor** are enforced inside the privileged process, using keys embedded in
+   Core. Desktop repeats the checks as defense in depth, never as the only
+   gate.
+3. Desktop runs the CLI and the repair broker from the newest committed store
+   version that it supports. Bundled package copies are bootstrap material
+   only.
+4. Every launch of a Core executable is bound to a verified file. Elevation is
+   never requested for an unverified file.
+5. Repair restores from the store, never from its own image. It never lowers
    the installed version or goes below the floor.
+6. The first store-era switch re-registers the service, so that pre-store
+   tools refuse to manage it instead of rolling it back.
+7. A security floor never blocks VPN connectivity through the installed
+   service. It blocks installing and elevating below-floor code.
 
 ### Terms
 
-- **Core version**: the tag-derived `core_version` (SemVer 2.0 precedence).
-  Ordering is implemented identically in Go and C++ and pinned by a shared
-  test-vector file (`release/testdata/version-order.json`) consumed by both
-  repositories.
-- **Security floor**: the lowest core version a machine may install, run as the
-  service, or execute as CLI/broker. It is a publisher statement carried in
-  signed manifests, never typed by a user or computed from local state alone.
+- **Core version**: a string in exactly one grammar, `X.Y.Z` or
+  `X.Y.Z-beta.N`. It has no leading zeros, uses lowercase only, and carries no
+  build metadata; this is the grammar `repair_acquire.go` already enforces.
+  Ordering is SemVer 2.0 precedence. The publisher refuses any other tag. The
+  Go and C++ implementations share one test-vector file
+  (`release/testdata/version-order.json`) that also lists rejected forms. Store
+  directory names must equal the canonical string byte for byte, which rules
+  out case collisions on NTFS.
+- **Committed version**: a store version that passed a service switch with
+  readiness on this machine, or was republished by repair for the committed
+  target. Only committed versions live in `versions/`.
+- **Security floor**: the lowest core version allowed for installation or
+  elevated use. It is a publisher statement carried in signed manifests; it is
+  never typed in by a user or derived from local state alone. Floors are
+  always stable versions. The publisher refuses a release whose floor is lower
+  than the previous release's floor, unless the floor epoch increases.
+- **Elevation floor**: the lowest core version allowed to run elevated in any
+  role, including as an installer of a newer release. It is normally equal to
+  or lower than the security floor. Raise it when the updater or broker code
+  itself is affected.
 - **Active version**: the version the service was last switched to and
-  committed by a privileged Core process.
-- **Usable version**: a store version whose signed manifest and every member
-  verify, which is at least the effective floor, and (for Desktop selection)
-  whose signed GUI range includes the running Desktop.
+  committed.
+- **Usable version** (Desktop selection): a committed version whose signed
+  manifest and members verify, that is at least the effective security floor,
+  and whose signed GUI range includes the running Desktop.
 
-### Store layout and protection
+### Store location and protection
 
-Windows (recommended, pending Q1): `%ProgramFiles%\Bimeron Core\store\`, a
-Core-owned directory beside the service that MSI does not own. The initially
-proposed `%ProgramData%\Bimeron\core\` has two drawbacks. Its default DACL lets
-`Users` create subdirectories, and `CREATOR OWNER` then gives the creator full
-control, so the directory can be squatted. And default AppLocker and SRP
-executable rules allow standard users to run binaries only from
-`%ProgramFiles%` and `%WINDIR%`, which would block every Desktop CLI launch on
-machines that enforce such rules. ProgramData remains viable for a SYSTEM
-service (Defender uses
-`ProgramData\Microsoft\Windows Defender\Platform\<version>`) if the squatting
-defenses below are implemented. Linux: `/var/lib/bimeron/core/` (pending Q2).
-`/var/lib` is root-owned 0755, so it cannot be squatted. Flatpak executes from
-`/var/lib/flatpak`, so there is precedent.
+The Windows location is open question Q1; the recommended answer is
+`%ProgramFiles%\Bimeron Core\store\`. This is a Core-owned directory beside the
+service, and MSI does not own it.
+
+The initially proposed `%ProgramData%\Bimeron\core\` has two drawbacks:
+
+- Its default DACL lets `Users` create subdirectories, and `CREATOR OWNER` then
+  gives the creator full control, so the directory can be squatted.
+- Default AppLocker/SRP executable rules let standard users run binaries only
+  from `%ProgramFiles%` and `%WINDIR%`. Every Desktop CLI launch would then be
+  blocked on machines that enforce such rules.
+
+With Program Files, any unexpected pre-existing object under the store root is
+an error, because only administrators could have created it. No rename-aside
+or adoption logic is needed. If ProgramData is chosen anyway, the creation
+rules below gain the rename-aside procedure: never "fix in place", never delete
+an untrusted tree recursively by path.
+
+The Linux location is open question Q2; the recommended answer is
+`/usr/local/lib/bimeron/store/`. It shares the service's trust domain, and it
+avoids `noexec` mounts of `/var` and `var_lib_t` SELinux labeling. Pre-store
+`service uninstall` removes `/usr/local/lib/bimeron` only if it is empty, so the
+store survives. The initially proposed `/var/lib/bimeron/core/` is viable;
+Flatpak executes from `/var/lib/flatpak`. But it needs a diagnostic for
+`noexec` and MAC policy failures.
 
 ```text
 <root>/
-  versions/<version>/          immutable after publication
+  versions/<version>/          committed, immutable
     bimeron[.exe]
     wintun.dll, WINTUN-LICENSE.txt          (Windows)
     LICENSE, THIRD_PARTY_NOTICES.txt
     update-manifest.json                    exact signed bytes
     update-manifest.json.sig
-  state/
-    active.json                             active version and executable digest
-    floor.json                              highest floor evidence (see below)
-  staging/                                  privileged-only, not user-readable
-  trash/                                    pending deletion
-  lock                                      store mutex (Linux flock target)
+  staging/<random>/            privileged only
+  trash/<random>/              privileged only, pending deletion
+  state/                       privileged only
+    floor-<seq>.json           append-only floor evidence
+    active-<seq>.json          append-only active records
+    lock                       store lock
 ```
 
-- `<version>` must match the strict release version grammar; it is never taken
-  from a path supplied by a caller.
-- Windows DACL: protected (no inheritance), owner `SYSTEM` or `Administrators`,
-  `SYSTEM` and `Administrators` full control, `Users` read and execute on
-  `versions/` and `state/`. `staging/` and `trash/` grant no access to `Users`.
-  Linux: owner root, mode 0755 on `versions/` and `state/`, 0700 on
-  `staging/` and `trash/`, no group/other write anywhere.
-- Every privileged open walks from a held handle of the store root and refuses
-  reparse points/symlinks on every component (Windows:
-  `FILE_FLAG_OPEN_REPARSE_POINT` with `FileAttributeTagInfo`; Linux: `openat2`
-  with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`, falling
-  back to per-component `O_NOFOLLOW` walks on kernels without `openat2`).
-- Pre-existing root, parent or child directories are not trusted.
-  - **Windows creation**: relative to a held parent handle, with an explicit
-    protected security descriptor applied atomically at creation. Use specific
-    file rights, not generic bits:
-    `O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)`, and
-    no `CREATOR OWNER` ACE.
-  - **Linux creation**: `mkdirat` relative to a held parent fd.
-  - **An object that already existed** is validated through the opened
-    handle. It must not be a reparse point or symlink, its owner must be
-    `SYSTEM`, `Administrators` or `TrustedInstaller` (root on Linux), and its
-    DACL must be protected and grant write-class rights to no other principal.
-  - **An untrusted existing object is never "fixed in place"**: its creator may
-    still hold write or `WRITE_DAC` handles opened before the reset. It is
-    renamed aside by handle (`FileRenameInfo` to
-    `<name>.untrusted-<random>` within the trusted parent) and recreated with
-    create-new semantics.
-  - **If that rename fails** (for example, the attacker holds a handle without
-    `FILE_SHARE_DELETE`), the operation fails closed. It is a denial of service
-    only.
-  - **Privileged code never deletes an untrusted tree recursively by path**;
-    that is the ProgramData arbitrary-delete class (for example CVE-2025-58074
-    and CVE-2023-0652).
-  - Owner and DACL are always set by handle (`SetSecurityInfo`), never by
-    path.
-- Untrusted inputs (downloaded manifest, signature, archive) are opened once,
-  without following links, must be regular files, and are bounded in size.
-  They are read only into private staging; nothing is user-readable inside the
-  store until verification passes and the final permissions are applied at
-  publication.
-- On Windows 11, the privileged process opts in to the redirection trust
-  mitigation (`ProcessRedirectionTrustPolicy`, RedirectionGuard), so junctions
-  created by non-administrators are not followed. A failure on Windows 10 is
-  not fatal. Privileged temporary files never use `%TEMP%`; staging lives inside
-  the store.
-- Store files have exactly one link (`NumberOfLinks == 1`, `st_nlink == 1`).
-  Same-file comparisons use `FileIdInfo` (volume serial and 128-bit file ID) or
-  `st_dev`/`st_ino`.
-- On Linux, installed store files may optionally be sealed with fs-verity
-  where the filesystem supports it. This makes them immutable even to root
-  until deletion, and gives a cheap measured digest. It is not required; root
-  ownership is the requirement.
-- A version directory is published by renaming a fully verified staging
-  directory. It is never modified afterwards; a damaged version is moved to
-  `trash/` and republished from verified bytes.
-- Mutual exclusion uses a lock file inside the administrator-only store
-  (`state/lock`): an exclusive no-share open on Windows, `flock` on Linux.
-  Non-administrators cannot create, pre-create or open it. No fixed name in the
-  `Global\` kernel namespace is used for store operations; if a kernel object
-  is ever needed, it lives in a private namespace with an administrator-only
-  boundary descriptor.
+**Permissions**
 
-### Manifest schema 2
+- **Windows.** Every directory gets its own protected DACL (no inheritance
+  from the parent). The owner is `SYSTEM`; `SYSTEM` and `Administrators` have
+  full control. `Users` get read and execute only on `versions/` and its
+  contents, never on `staging/`, `trash/` or `state/`. The inheritable
+  read-and-execute ACE for `Users` on `versions/` must not flow into the other
+  directories.
+- **Service directory files.** In store-capable builds, the service-directory
+  files (`bimeron.exe`, `wintun.dll`) also get a DACL for `SYSTEM` and
+  `Administrators` only. An ordinary user then cannot open them at all, so a
+  sharing-mode handle cannot block a switch.
+- **Directory protection** must reapply the store root's protected DACL by
+  handle, never reapply a parent descriptor by path.
+- **Linux.** Everything is owned by root. `versions/` is 0755 (members 0755
+  or 0644); `staging/`, `trash/` and `state/` are 0700, and `lock` is 0600.
+- **Floor and active copies for Desktop.** Desktop cannot read `state/`. It
+  reads a SYSTEM-written copy of the latest floor evidence and active record:
+  a protected HKLM value under `SOFTWARE\Bimeron\Core` on Windows, and
+  `/etc/bimeron/core-state.json` (root-owned, 0644) on Linux. Registry values
+  have no sharing modes, so a reader cannot block a writer. This copy is also
+  the second location of the floor evidence, and the effective floor is the
+  maximum of both locations.
 
-The release keeps one `update-manifest.json` plus detached Ed25519 signature,
-with `schema: 2`:
+**Opening and creating store objects**
 
-- Each target gains `files`: every ZIP member with `name`, `size`, `sha256` and
-  `role` (`core` for the executable, `sidecar` for Wintun, `notice` for license
-  texts). The ZIP record keeps its `name`, `size` and `sha256`.
-- A top-level `security_floor` (core version). It must be at most the
-  manifest's own `core_version`. It comes from the reviewed
-  `release/compatibility.json`, so raising it is an explicit release decision.
-- A top-level `store_contract` integer (initially 1).
-- A top-level `source_revision`: the full tag commit. The publisher signs an
-  archive only if its executable's embedded build information matches the tag
-  commit and the reviewed build settings: `vcs.revision` equal to the tag
-  commit, `vcs.modified=false`, `-trimpath`, the expected `GOOS`/`GOARCH`, and
-  no ambient `GOFLAGS`. This is the same gate the Apple path already enforces.
+- Every privileged open walks from a held root handle and refuses reparse
+  points or symlinks on every component.
+  - Windows: `NtCreateFile` with a `RootDirectory` handle and
+    `FILE_OPEN_REPARSE_POINT`, with each opened component checked through
+    `FileAttributeTagInfo`.
+  - Linux: `openat2` with
+    `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV`,
+    falling back to per-component `O_NOFOLLOW` walks on kernels without
+    `openat2`.
+- Creation is relative to a held parent handle with create-new semantics.
+  - Windows applies an explicit security descriptor atomically at creation:
+    specific file rights, no generic bits and no `CREATOR OWNER` ACE.
+  - Linux uses `mkdirat`/`openat` with `O_EXCL`.
+- Owner and DACL are set only by handle (`SetSecurityInfo`), never by path.
+- A link-count check (`NumberOfLinks == 1`, `st_nlink == 1`) applies before
+  privileged code writes, re-ACLs or deletes a file. It does not apply when
+  reading or launching: that would turn into a denial of service wherever a
+  user can hard-link store files.
+- Same-file comparisons use `FileIdInfo` or `st_dev`/`st_ino`.
+- On Windows 11 builds that provide it, the privileged process opts in to
+  `ProcessRedirectionTrustPolicy` (RedirectionGuard) as additional hardening.
+  Failure is not fatal; on Windows 10 the handle-relative walk is the control.
+- The store lock is an exclusive no-share handle on `state/lock` on Windows, or
+  an `flock` on a 0600 file in a 0700 directory on Linux. Non-administrators
+  cannot open it. No named object in `Global\` is used for store operations.
+- Durability: every file is flushed before rename, and the containing
+  directory is flushed after rename on Linux. The Windows equivalent is
+  write-through renames and flushing the handles.
+
+### Manifest schema 2 and signatures
+
+Each release keeps `update-manifest.json`, with `schema: 2`.
+
+**Fields**
+
+- Each target gains `files`: every ZIP member, with `name`, `size`, `sha256`
+  and `role`. The roles are `core` for the executable, `sidecar` for Wintun,
+  and `notice` for license texts. The target keeps the ZIP record's `name`,
+  `size` and `sha256`.
+- A top-level `security_floor` object holds `{epoch, version}`, and
+  `elevation_floor` holds the same pair. Both come from the reviewed
+  `release/compatibility.json`. Each version must be at most the manifest's
+  own `core_version`, and each floor version must be stable.
+- A top-level `store_contract` integer, initially 1. A binary that meets a
+  higher contract than it implements treats the store as read-only. It never
+  writes to the store, and it reports that a newer component is required.
+- A top-level `source_revision` (the full tag commit) and a `build` record:
+  Go version, `-trimpath`, `CGO_ENABLED`, `GOOS`/`GOARCH`, and the absence of
+  ambient `GOFLAGS`. The publisher signs an archive only if the executable's
+  embedded build information matches the tag commit, shows
+  `vcs.modified=false`, and matches the reviewed settings. The artifacts must
+  come from the same prepared-release build. This is the gate the Apple path
+  already enforces. An independent reproducible rebuild is planned later.
+
+**Detached signatures**
+
+The detached `update-manifest.json.sig` becomes one or more lines of
+`<key_id> <base64-signature>`, each signature over the exact manifest bytes.
+
+- A verifier only tries keys that it trusts and that appear in that list. It
+  verifies over raw bytes before parsing any JSON. It then requires the
+  `key_id` inside the manifest to be one of the keys that verified.
+- The signing policy (Q3) determines how many valid signatures are required.
+
+**Strict decoding in Go and C++**
+
+A token-level pre-pass runs before struct decoding. It enforces:
+
+- a byte-exact allowlist of keys per object, with duplicates rejected by byte
+  equality;
+- rejection of invalid UTF-8, escapes inside keys, non-integer numbers,
+  integers above 2^53, and trailing data.
+
+Only then are values decoded. Case-insensitive field matching (Go) and
+last-key-wins duplicates (Qt) therefore never apply.
+
+**Publishing rules**
+
 - Backfill is retired. No tool signs metadata for an existing release from
-  whatever assets the release currently holds, or with today's
-  `compatibility.json` for an old tag. Schema 2 metadata is produced only by
-  the prepared-release publisher at tag time.
-- Parsing is strict in both Go and C++: exact field names with case-sensitive
-  matching, duplicate-key rejection after case folding, unknown fields
-  rejected, bounded sizes.
-
-Desktop 0.3.x requires `schema: 1` exactly and therefore fails closed on every
-schema 2 release. This is intended (see Compatibility).
+  whatever assets that release currently holds, or with today's
+  `compatibility.json` for an old tag.
+- The publisher never signs a schema 1 manifest for a store-era version.
+  Desktop 0.3.x accepts only `schema: 1` and single-line signatures, so it fails
+  closed on every store-era release.
 
 ### Trust and keys inside Core
 
 This amends ADR 0002, which kept signing trust out of the privileged
-executable. Repair acquisition already embeds one public key
-(`repair_acquire.go`); this decision generalizes it.
+executable. Repair acquisition already embeds one public key in Core, so this
+step generalizes existing practice. It does not raise the impact of a key
+compromise compared with ADR 0002, because a key trusted by Desktop could
+already authorize SYSTEM installation through the elevated updater.
 
-- Core embeds a key set (key ID to Ed25519 public key) generated from a
-  reviewed repository file. Desktop pins the same set. Both sides select by
-  `key_id` and reject unknown IDs.
-- Rotation: a release adds the successor key to both trust sets; signing
-  switches only after the store-capable Desktop and Core that trust it are the
-  minimum supported versions; the old key is retired later.
-- Key compromise handling is open question Q3. Recommended: a two-tier scheme
-  with an offline root key that signs a versioned key-set document, and online
-  release keys that sign manifests. Root-signed documents can revoke a release
-  key and are the only way to lower a floor.
+- Core and Desktop embed the same reviewed key set, generated from one
+  repository file.
+- **Rotation is dual-signing.** Releases carry signatures from both the old
+  and the successor key until the minimum supported store-capable Core and
+  Desktop trust the successor. Then the old key is dropped from new builds.
+  A machine whose newest broker predates the successor can still verify the
+  dual-signed releases.
+- **There is no online key-set document**, so no second freshness or rollback
+  problem arises. Key-set changes ship only inside new signed binaries.
+- **Floor epochs give compromise recovery.** A floor reset, for example to
+  undo an attacker-signed high floor, is a release whose `security_floor` and
+  `elevation_floor` carry a higher epoch. Raising the epoch requires the
+  threshold signature from Q3. The effective floor is the highest version
+  among evidence with the highest epoch seen. Evidence from lower epochs is
+  ignored, not deleted.
+- **Recommended for Q3: 2-of-2 threshold signing for every store-era
+  release.** One signature comes from the release key, the other from an
+  offline maintainer hardware key. Signing is local on prepared bytes (ADR
+  0003), so compromising one signing environment alone produces nothing that
+  can be installed.
 
-### Effective floor and its storage
+### Effective floor
 
-The floor must be monotonic, and its local file must not be the single source
-of truth. The effective floor is the maximum over all available signed
-evidence:
+The effective security floor and the effective elevation floor are each the
+maximum, within the highest epoch, over these sources:
 
-1. The `security_floor` compiled into the verifying binary (Core embeds
-   `release/compatibility.json`; Desktop embeds the value from its pinned Core
-   release).
-2. The `security_floor` of every verified manifest in `versions/*/`.
-3. `state/floor.json`, which stores the exact bytes and signature of the
-   manifest that established the highest floor, so the record is
-   self-verifying rather than a bare number. A copy of the same evidence is kept
-   in a second administrator-only location, and the floor is the maximum of the
-   two. On Windows this is a protected HKLM value under
-   `SOFTWARE\Bimeron\Core`; on Linux, `/etc/bimeron/core-floor.json`. A partial
-   restore of one location therefore does not lower the floor.
-4. For selection and UX only, floors in freshly fetched signed manifests.
+1. The floors compiled into the verifying binary. Core embeds
+   `release/compatibility.json`. Desktop embeds the floors of its pinned Core.
+2. The floors of every committed version's verified manifest in `versions/`.
+3. The newest valid `state/floor-<seq>.json`. This file contains the exact
+   manifest bytes and signatures that established the floor, so it verifies
+   itself. The same evidence is held in the HKLM or `/etc` copy.
+4. Floors from freshly fetched signed manifests. These are used for selection
+   and warnings only; see the enforcement rules below.
 
-Only a privileged Core process writes `state/floor.json`. It raises the floor
-after the service switch to a version that is at least that floor has
-committed, never before. A floor record that fails verification is ignored and
-reported, and the remaining evidence still applies. Reverting or deleting the
-file alone therefore cannot lower the floor while any newer signed manifest
-remains in the store or in a running binary. Restoring the whole machine or
-volume from an older backup or VM snapshot reverts everything; that is outside
-the local-attacker model. It is bounded by item 4 at the next online check,
-which forces an update before Desktop proceeds.
+Floor records are written only by a privileged Core process. A floor is
+appended only after a switch to a version at or above it has committed. A
+record that fails verification is ignored and reported; the remaining evidence
+still applies.
 
-A newly announced floor (item 4) does not stop a usable but older store broker
-from installing the release that raises the floor; otherwise no update could
-ever happen. It does block all other use of below-floor executables. If a
-security fix concerns the updater or broker code itself, the release must say
-so, and Desktop must require a package upgrade instead.
+Deleting or reverting one record, or one location, therefore cannot lower the
+floor while any other evidence remains. No command deletes or lowers floor or
+active evidence (see Interfaces). A whole-machine or VM-snapshot restore
+reverts every source together. That case is outside the local-attacker model,
+and source 4 bounds it at the next online check.
 
-`state/active.json` holds `{version, executable_sha256}`. It is written by
-handle, atomically (temp file in `state/`, flush, rename), after readiness
-succeeds. It is advisory: it only ever names a version that is at least the
-effective floor, and it is never trusted to lower anything.
+**Enforcement**
 
-### Privileged store installation (replaces caller-trusted `service update -source`)
+- **Locally committed floors (sources 1 to 3).**
+  - No version below the security floor is installed, switched to, or used as
+    a repair source.
+  - No elevated process runs below the elevation floor.
+  - A binary below the security floor may run elevated only to install a
+    release at or above that floor, and only if it is at or above the
+    elevation floor.
+- **Fresh floors (source 4).**
+  - They never block IPC with, or VPN connections through, the installed
+    service, and they never block diagnostics.
+  - They show a persistent "security update required" state.
+  - They block elevation of below-floor code for any purpose other than
+    installing a release at or above that floor.
+  - When the running broker is below a fresh elevation floor, Desktop requires
+    a package upgrade instead of elevating.
+- **Below-floor service.** When the installed service is below the committed
+  security floor, the service and Desktop report `below_security_floor`, and
+  Desktop offers repair. Whether the service should also refuse to start the
+  VPN engine is open question Q4. The recommended answer is no: blocking
+  connectivity hurts the user more than it protects them on censored networks,
+  and the elevated paths are already gated.
 
-New elevated command (shape, not final syntax):
+### Elevated maintenance session (replaces caller-trusted `service update -source`)
+
+All elevated store operations use one authenticated transport, generalizing
+`repair-session`:
 
 ```text
-bimeron store install -manifest <path> -signature <path> -archive <path>
+bimeron maintenance-session <128-bit-nonce> <caller-pid>
 ```
 
-- The command accepts no digest, version or key from the caller.
-- Inputs are data. Each is opened once without following links (Windows
-  `FILE_FLAG_OPEN_REPARSE_POINT`, no-reparse check, regular file; Linux
-  `O_NOFOLLOW | O_NONBLOCK`, `S_ISREG` via `fstat`). Reads have fixed upper
-  bounds (manifest 64 KiB, signature 89 bytes, archive 100 MiB, member 64 MiB).
-  Bytes are read through that one handle.
-- The process verifies the signature with the embedded key set, then schema 2,
-  its own OS and architecture target, ZIP size and SHA-256, and ZIP structure
-  (no traversal, symlinks or duplicates; exactly the expected members). Then it
-  checks every member's size and SHA-256 and the Go module and machine
-  identity.
-- It requires `core_version >= effective floor` and
-  `core_version >= max(active version, verified installed version)`.
-  Equal versions are allowed only for republishing identical bytes.
-- Members are extracted into a fresh `staging/<random>/` that only `SYSTEM`/root
-  can read. Each file is re-verified by handle, then the directory is renamed to
-  `versions/<version>/`. If the version already exists with identical verified
-  bytes, the operation is a no-op. Differing bytes for an existing version are
-  an error.
-- The service switch then uses the existing transactional replacement
-  (stop, backup, rename, start, readiness, rollback). The source is the
-  verified store file, read by handle, not the running image. Readiness
-  uses the restricted readiness pipe. A stopped service is activated and
-  verified before commit, as repair mode already does. The legacy stopped-update
-  exception (commit without verifying the version) is removed.
-- Commit order: service readiness, then `state/active.json`, then
-  `state/floor.json`, then cleanup.
-- Wintun follows the existing policy. The store keeps the signed sidecar for
-  repair, and the service directory copy is checked against the pinned hash at
-  every service start before it is loaded. The process calls
-  `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` and loads Wintun by
-  verified full path.
+**Elevation and authentication**
 
-The legacy `service update -source` command is kept only in Desktop-compatible
-pre-store builds. Store-capable builds refuse it with a message naming the
-store command, so no elevated path accepts a caller digest.
+- Desktop elevates the selected binary (see Elevated entry points) with only
+  these two arguments. No elevated store operation accepts a file path, a
+  digest, a version or a key from its caller.
+- The broker authenticates the peer exactly as `repair-session` does today: a
+  pipe DACL, a client PID bound to a retained handle, and a session ID on
+  Windows; `SO_PEERCRED` plus pidfd on Linux.
 
-### Which binary is elevated
+**Request**
 
-Desktop selects the elevated executable in this order, and stops at the first
-that verifies:
+The first request names one operation: `update`, `repair` or `import-check`.
+It also carries the consent flags.
 
-1. The newest usable store version.
-2. The installed service image, if its digest equals a member hash in a
-   verified signed manifest for its version and that version is at least the
-   effective floor. Desktop fetches that manifest if the store lacks it.
-3. The bundled package copy, if its version is at least the effective floor and
-   its bytes match the signed manifest that Desktop ships for its pinned Core.
-4. Otherwise Desktop does not elevate. It explains that a package upgrade or a
-   network fetch is required.
+**Streaming an update**
 
-Independently, the elevated Core process checks itself at startup before any
-mutation. It locks its own image by handle, hashes it, and requires a matching
-member in a verified signed manifest (its own store directory, or the manifest
-carried by the package for bootstrap) whose version is at least the effective
-floor. It refuses otherwise. A swapped binary would not run this check, but
-swapping requires write access that only administrators have (see Threat
-model).
+1. Desktop streams `manifest` (up to 64 KiB) and `signature` (up to 4 KiB) as
+   length-prefixed frames.
+2. The broker verifies the signatures over the raw manifest bytes, then
+   decodes the manifest strictly.
+3. Desktop then streams `archive`. The broker accepts exactly the size that
+   the signed target declares, writes it into a fresh `staging/<random>/` as
+   it arrives, and hashes it on the way.
+
+No byte is parsed before its authentication; the archive is authenticated by
+its signed size and digest.
+
+**Why streamed bytes instead of paths**
+
+- It removes every attack in which a privileged process opens a caller-chosen
+  path, such as UNC or WebDAV credential capture, device or pipe paths that
+  block indefinitely, or junction and object-manager redirection of
+  intermediate path components.
+- It removes Desktop's temporary staging.
+- Downloads use Desktop's network stack and proxy settings. The privileged
+  process makes no network requests, so the Wintun-only signed download in
+  `repair_acquire.go` is replaced by Desktop-streamed bundles.
+
+**Checks inside the broker**
+
+- Ordering and floors:
+  - the broker's own version must be at least the effective elevation floor;
+  - the new `core_version` must be at least the effective security floor;
+  - the new `core_version` must be at least the maximum of the active version
+    and the verified installed version.
+- Equal versions are accepted only when the bytes are identical (republishing).
+- The archive is checked against its target: OS and architecture, ZIP size and
+  SHA-256, and structure (no traversal, symlinks or duplicates; exactly the
+  expected members).
+- Each member is checked for size and SHA-256, and the executable's Go module
+  and machine identity are verified.
+
+**Switch and commit**
+
+1. The broker keeps open handles to the verified staging members for the whole
+   switch.
+2. It replaces the service executable through the existing transaction: stop,
+   backup, rename, start, readiness, rollback. The source is the verified
+   staging handle, never the broker's own image and never a re-resolved path.
+   The backup and staged names in the service directory carry a random
+   suffix, so a leftover file never blocks a later attempt. A stopped service
+   is activated and verified before commit.
+3. Readiness uses the restricted readiness channel. Its pipe name carries a
+   per-start 128-bit nonce, passed through the `StartService` arguments, so it
+   cannot be pre-created.
+4. After readiness, the broker promotes `staging/<random>` to
+   `versions/<version>` with one rename.
+5. It appends the active and floor records, then writes the HKLM or `/etc`
+   copy.
+6. It cleans up.
+
+A failed state write after readiness never rolls back the service. Instead,
+the broker reports the failure and reconciliation repeats the write. A failed
+switch deletes the staging entry, so a release that never committed is
+neither floor evidence nor usable.
+
+**Crash points**
+
+On the next privileged run, a leftover staging directory or a service-directory
+backup is reconciled against the installed service digest, under these rules:
+
+- **Installed digest equals a staging member** whose manifest verifies: the
+  broker completes promotion and appends the records.
+- **Installed digest equals the backup**: the broker removes the staging
+  directory and the backup.
+- **Anything else**: the broker treats the service as damaged and repair takes
+  over.
+
+**Wintun**
+
+The store keeps the signed sidecar. The service-directory copy is checked
+against its signed or pinned digest at every service start, before loading.
+Each elevated mode and the service call
+`SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` and load Wintun by its
+verified full path.
+
+**Legacy command**
+
+The legacy `service update -source` command is refused by store-capable builds,
+with a message naming the maintenance session.
+
+### Re-registration that disables pre-store tools
+
+The first switch to a store-era version changes the service registration in
+the same transaction as the executable, and the change is rolled back with it.
+Every pre-store validator then fails closed instead of rolling the service
+back.
+
+- **Windows.** `BinaryPathName` gains a fifth argument, for example
+  `service run <SID> store1`. Pre-store `service update`, pre-store repair
+  inspection and the 0.3.x installer action all require exactly the
+  four-argument form, so they refuse to act.
+- **Linux.** The unit text changes and the service executable moves, for
+  example to `/usr/local/lib/bimeron/service/bimeron-core`. Pre-store repair
+  compares the unit byte for byte, the 0.3.x installer matches the exact
+  `ExecStart`, and pre-store `service update` checks the fixed old path.
+- **Store-capable Desktop and Core** treat an installed service that matches no
+  committed signed member as damaged, and repair restores the committed
+  version. This covers pre-store, below-floor and unknown images.
+
+**Residual risk.** An old binary can still uninstall and reinstall the
+service. That takes two explicit elevations, and the next store-capable repair
+heals it.
+
+### Elevated entry points
+
+| Entry point | Binary | Verification | Inputs |
+| --- | --- | --- | --- |
+| Maintenance session: update, repair | Newest committed store version at or above the elevation floor. On bootstrap, the bundled copy at or above the elevation floor, verified against the signed manifest shipped with the package. | Desktop: handle-bound digest. Broker: self-check. | Nonce, PID, streamed bytes |
+| Installer action (MSI, DEB) | `bimeron-core` in the package directory, run directly as SYSTEM or root | Self-check against the shipped signed manifest | None; fixed package-relative paths |
+| Foreground IKEv2 daemon | Same as the maintenance session | Same | Existing foreground contract; per-installation policy outside the store |
+| Service | Service directory copy | Committed digest; Wintun digest at load | SCM or systemd only |
+| RepairBootstrap (Desktop) | Retired once the installer seeds the store | n/a | n/a |
+
+**Foreground policy file**
+
+The foreground policy file (`bimeron-foreground.json`) is per installation and
+cannot live in an immutable signed version directory. It moves to a protected
+location outside the store. Core and Desktop agree on that location; see the
+work split.
+
+**Elevated self-check**
+
+Every elevated Core process checks itself at startup, before any mutation:
+
+1. It locks its own image by handle.
+2. It hashes the image and requires a matching member in a verified signed
+   manifest: its own `versions/` directory, or the package-shipped manifest
+   during bootstrap.
+3. It requires its own version to be at least the effective elevation floor.
+4. It refuses to run if non-allowlisted environment variables are present:
+   `GO*`, `GODEBUG`, `ZONEINFO` and the like. Under admin-approval elevation,
+   `HKCU\Environment` is inherited, and the Go runtime reads some of these
+   variables before `main` runs.
+5. It sets the current directory to the system directory.
+6. It resolves locations only through `GetSystemDirectoryW`,
+   `SHGetKnownFolderPath` and handle-derived paths.
+
+The broker acts only at machine scope. With over-the-shoulder credentials, all
+per-user state belongs to another account.
+
+**Not elevated: the installed service image.** The installed service image is
+never used as the elevated binary. It would have to lock its own image and
+then could not be replaced.
 
 ### Launch verification in Desktop
 
-Desktop-side verification is not the security boundary against malware that
-runs as the Desktop user. Such malware can patch the Desktop process, skip the
-check, or launch anything it likes. The boundaries are:
+**Desktop verification is not the security boundary**
 
-1. The store ACL and owner rules, so no non-administrator can change a byte
-   between check and use.
-2. The self-check and narrow, data-only interface of every elevated Core
-   process.
-3. Service-side IPC authorization.
+Desktop-side verification does not protect against malware that runs as the
+Desktop user. Such malware can patch the Desktop process, skip the check, or
+launch anything it likes. For a user in the Administrators group,
+admin-approval mode is not a security boundary either: same-user malware can
+elevate silently. Most protections against same-user malware therefore hold
+only for standard accounts.
 
-Desktop verification still matters. It detects ACL misconfiguration, partial
-publication and corruption. It also guarantees that an honest Desktop never
-asks the user to approve elevation of an unverified file. And the binding below
-costs little.
+The real boundaries are:
 
-- Windows, unelevated CLI:
-  1. Open the executable with `GENERIC_READ`, share mode `FILE_SHARE_READ`
-     only, and `FILE_FLAG_OPEN_REPARSE_POINT`.
-  2. Reject reparse points, more than one link, a foreign owner or writable
-     ACEs (the existing `protectedExecutable` policy).
-  3. Confirm with `GetFinalPathNameByHandleW` that the path lies inside the
-     store.
-  4. Hash through the handle and compare with the signed member hash.
-  5. Keep the handle open while calling `CreateProcessW` on the same canonical
-     path, and close it after the process is created. While the handle is held,
-     no writer or rename can succeed. The image loader needs only read and
-     execute access, so it is compatible with this share mode; acceptance
-     verifies this on the VM. The handle also defeats herpaderping-style
-     substitution, which needs a writable handle open before the section is
-     created.
-  6. Optional binding: create the process suspended, open its image through
-     `QueryFullProcessImageNameW`, compare its `FileIdInfo` with the held
-     handle, then resume it, or terminate it on a mismatch.
+1. the store ACL and owner rules;
+2. the self-check and the narrow, data-only session of every elevated Core
+   process;
+3. service-side IPC authorization.
 
-  Creating the process from a verified image section (`NtCreateSection` plus
-  `NtCreateProcessEx`) is rejected. It is undocumented, and it is the primitive
-  behind process doppelganging and ghosting, so endpoint security flags it.
-- Windows, elevated broker: the same handle-held verification across
-  `ShellExecuteExW` with `runas`. The elevated process then performs its own
-  self-check (above). The command line carries only the session nonce, the
-  caller PID and data-file paths; nothing in it selects trust.
-- Linux, unelevated CLI:
-  1. Open with `openat2` beneath the store root, `O_RDONLY | O_CLOEXEC`.
-  2. Check with `fstat` that the file is regular, root-owned, has a single
-     link and is not group- or other-writable.
-  3. Hash through the fd.
-  4. Execute that fd, as the existing bootstrap already does with `fexecve`.
-     For `QProcess`, the program is `/proc/self/fd/<n>`, and the child
-     modifier clears `FD_CLOEXEC` on `<n>` only in that child. If the child
-     closes descriptors, the lowest descriptor it closes is set above `<n>`.
+**What Desktop verification still provides**
 
-  `fexecve` binds the inode, not the content: root-only write access (or
-  fs-verity) keeps the bytes unchanged. ETXTBSY write denial is not relied
-  on. Only ELF images are executed this way. Go code that launches the store
-  executable uses `ExtraFiles` with `/proc/self/fd/3`.
-- Linux, elevated broker: run `/usr/bin/pkexec` from its fixed path, after
-  checking it is protected (`pkexec` is never resolved from `PATH`, for any
-  elevated command), with the verified store path. The root broker performs the
-  same self-check. A verified-fd handoff through `pkexec` is not possible,
-  because `pkexec` takes a path, so the root-owned store and the self-check are
-  the binding. The default `org.freedesktop.policykit.exec` action requires
-  administrator authentication. A polkit `exec.path` pin cannot name versioned
-  paths, so no pinned or relaxed action is added. pkexec sanitizes the
-  environment, and the broker still ignores the environment and uses absolute
-  paths.
+- It detects misconfiguration, partial publication and corruption.
+- An honest Desktop never asks the user to approve an unverified file.
+- The binding to the launched file is cheap.
 
-  Later hardening, not part of this decision: a fixed, hardened systemd
-  oneshot unit started over D-Bus, authorized by a polkit rule for that unit
-  only. It removes the setuid helper and user-controlled argv (the PwnKit
-  class).
-- Elevated processes on Windows ignore inherited `PATH`, `TEMP`, `windir`,
-  `SystemRoot` and `ProgramData`, which `HKCU\Environment` can influence. They
-  resolve locations through `GetSystemDirectoryW`/`SHGetKnownFolderPath` and the
-  handle-derived store path, set the current directory to the system directory,
-  and never act on the requesting user's per-user state. With
-  over-the-shoulder credentials, the per-user state belongs to another account.
-- Every CLI launch is hashed. The cost (tens of milliseconds for about 30 MB)
-  is measured by a Desktop benchmark. A cache keyed by file ID and change time
-  is allowed only after the benchmark shows a need, and never for elevation.
+**Windows** (unelevated CLI, and the binary that gets elevated)
+
+1. Open the executable with `GENERIC_READ`, share mode `FILE_SHARE_READ` only,
+   and `FILE_FLAG_OPEN_REPARSE_POINT`.
+2. Run the existing `protectedExecutable` owner and ACL policy on the file and
+   its ancestors.
+3. Confirm with `GetFinalPathNameByHandleW` that the file lies inside the
+   store.
+4. Hash it through the handle and compare with the signed member hash.
+5. Keep the handle open while calling `CreateProcessW` or `ShellExecuteExW`
+   (`runas`) on the same canonical path. Close it after the process exists.
+
+While the handle is held, no writer, rename or delete can succeed. The image
+loader and the AppInfo service need only read and execute access, which are
+compatible with this share mode; acceptance verifies this on the VM.
+
+**Linux**
+
+- **Unelevated CLI:**
+  1. Open the executable with `openat2` beneath the store root,
+     `O_RDONLY | O_CLOEXEC`.
+  2. Run `fstat` to check that it is a regular file, owned by root, and not
+     group- or other-writable.
+  3. Hash it through the fd.
+  4. Execute it as `/proc/self/fd/<n>`. For ELF, the kernel resolves the path
+     before close-on-exec takes effect, so the fd is not leaked into the
+     child.
+  5. Go launchers use `ExtraFiles` the same way.
+- **What the fd binding guarantees:** it binds the inode, not the content.
+  Write access restricted to root keeps the content.
+- **Elevated broker:**
+  - Use `/usr/bin/pkexec` from that fixed path, after checking that it is
+    protected. pkexec is never resolved from `PATH`, and the WSL route is
+    removed, for every elevated command.
+  - Pass it the verified store path. pkexec takes a path, so the root-owned
+    store and the self-check are the binding.
+  - The default `org.freedesktop.policykit.exec` action requires
+    administrator authentication. No pinned or relaxed polkit action is added.
+  - pkexec sanitizes the environment, and the broker still applies its own
+    environment allowlist.
+
+**Cost**
+
+Every CLI launch is hashed. A Desktop benchmark measures the cost on a
+low-end ARM64 machine as well, because Qt uses software SHA-256. A cache keyed
+by file ID and change time is allowed only if the benchmark shows a need, and
+never for elevation.
+
+**Rejected binding techniques**
+
+- **Section-based process creation** (`NtCreateSection` plus
+  `NtCreateProcessEx`): undocumented, and it is the process-ghosting primitive
+  that endpoint security flags.
+- **A suspended-process identity check**: it reopens the image by path, so it
+  adds nothing over the held handle.
 
 ### Repair
 
-- `Inspect` computes the **target version**: the maximum of the active version
-  and the installed service version when the installed digest equals a signed
-  member hash. It never uses the broker's version.
-- An installed image that matches a signed member hash for a version at least
-  the target and the floor is intact, so the #140 rule "byte-different
-  compatible release must be replaced" is withdrawn. #140 corruption detection
-  is kept: missing, unreadable, or not matching any verified signed hash means
-  damaged.
-- The replacement source is `versions/<target>/` after full verification by
-  handle. The same applies to Wintun.
-- If the store copy of the target is missing or damaged, the broker acquires
-  exactly that version in the same authenticated elevated session. It extends
-  `repair_acquire.go` from Wintun-only to the full bundle, verifies with the
-  embedded key set, republishes the store entry and continues.
-- If acquisition is impossible, repair fails closed with a specific code.
-  It never falls back to a lower version, its own image, or the bundled copy
-  unless that copy is exactly the target or higher and at least the floor.
-- Missing-service installation installs the active version, or the newest
-  usable store version if no active record exists, never a version below the
-  floor.
-- Repair keeps the existing consent, ownership, readiness and rollback rules.
-  The request still carries no paths, versions or digests.
-
-### Service-side floor check
-
-A store-capable service reads the effective floor at startup. If its own
-version is below the floor, it reports `below_security_floor` (SCM error and
-event log, journal on Linux) and refuses to start the VPN engine. A
-below-floor service can only appear after a rollback outside the store path
-(an old broker or a manual install), because the floor is raised only after a
-committed switch. Availability versus security here is open question Q4.
+- **Target version.** `Inspect` takes the maximum of the active version and the
+  installed version, counting the installed version only when its digest
+  equals a committed signed member. The broker's own version never matters.
+- **Intact service.** An installed image that equals the committed member of
+  the target version is intact, so the #140 rule that a byte-different
+  compatible release must be replaced is withdrawn.
+- **Damaged service.** #140 corruption detection is kept: a missing,
+  unreadable or non-matching image is damaged. So is an image of a lower
+  version.
+- **Replacement source.**
+  - The source is `versions/<target>/`, opened and verified by handle and held
+    through the switch.
+  - If an open is blocked, for example by a foreign handle, or the store copy is
+    missing or damaged, the repair session asks Desktop to stream the signed
+    bundle for exactly the target version. That bundle goes through staging, as
+    for an update, and is then republished.
+  - The same applies to Wintun.
+- **Fail-closed rule.** If no verified source for the target is available,
+  repair fails closed with `store-unavailable`. It never falls back to a lower
+  version, to its own image, or to a bundled copy that is not exactly the
+  target or higher.
+- **Missing-service installation** installs the active version, or the newest
+  committed version if no active record exists. If nothing is committed, it
+  installs the verified package bootstrap version, which must be at least the
+  floor. It never installs `os.Executable()` bytes.
+- **Unchanged rules.** The existing consent, ownership, readiness and rollback
+  rules stay in force. The repair request still carries no paths, versions or
+  digests.
 
 ### Release discovery
 
 Desktop treats a newer release tag whose metadata is missing, unverifiable or
-inconsistent as a visible update error that names the tag, rather than
-skipping it silently. Missing metadata otherwise lets anyone who can delete
-release assets keep users on an older signed release. Q5 decides whether a
-signed index with an expiry is added on top.
+inconsistent as a visible update error that names the tag. It does not skip
+the tag silently: missing metadata would otherwise let anyone who can delete
+release assets keep users on an older signed release. Open question Q5 decides
+whether to add a signed index with an expiry on top of this.
 
 ### Cleanup
 
 After a commit, the privileged process keeps the active version and the
-previous usable version. It moves versions below the floor, unreferenced
-versions and leftover staging directories to `trash/` and deletes them. A
-sharing violation (a running CLI, or a foreign read handle without
-`FILE_SHARE_DELETE`) leaves the entry in `trash/` for the next
-privileged run. The update still succeeds and the condition is reported.
-Leftover `.update-old`/`.repair-old` sidecars are reconciled against the store
-instead of blocking all future updates.
+previous committed version.
+
+- It moves to `trash/` and deletes versions below the floor, versions nothing
+  references, and leftover staging directories. All of this happens by handle,
+  inside the store only.
+- A sharing violation (a running CLI or a foreign handle) leaves the entry in
+  `trash/` for the next privileged run. The update still succeeds, and the
+  diagnostic names the blocking process through Restart Manager.
+- Leftover service-directory backups are reconciled as described under Crash
+  points.
 
 ### Interfaces
 
-- `release/compatibility.json` gains `security_floor` (reviewed) and
-  `store_contract`.
-- `hello.capabilities` gains `core_store: <contract>` and `security_floor`.
-  `version -json` reports the same for an unlaunched binary.
-- `bimeron store status -json` (unelevated) lists versions, verification
-  results, the active version and the effective floor. It is diagnostic only:
-  Desktop verifies the store itself before trusting any launch.
-- `bimeron store install`, `store import-package`, `store purge` are elevated.
-  `repair-session` is unchanged on the wire, apart from new terminal codes
-  (`below-floor`, `store-unavailable`, `acquisition-failed`).
-- IPC protocol stays 1. Every change is additive and gated on the capability.
+**Configuration and capabilities**
+
+- `release/compatibility.json` gains `security_floor`, `elevation_floor` (both
+  `{epoch, version}`, reviewed) and `store_contract`.
+- `hello.capabilities` gains `core_store: <contract>` and the service's
+  effective floors.
+- `version -json` reports the binary's compiled contract and floors without
+  contacting a service.
+
+**Commands**
+
+- **Unelevated:** `bimeron store status -json` lists committed versions,
+  verification results, the active version and the effective floors. It is
+  diagnostic only; Desktop verifies the store itself.
+- **Elevated:**
+  - `maintenance-session` as described above.
+  - `store import-package` (installer action only; fixed package-relative
+    inputs).
+  - `store purge`, which removes `versions/` and keeps all floor and active
+    evidence.
+  - No command lowers or deletes floor or active evidence. There is no
+    `-forget-floor`. Resetting a floor requires a threshold-signed epoch raise.
+    An administrator who deletes `state/` by hand is out of scope.
+- **`service install` (store-capable builds)** installs only from the store or
+  from the verified package bootstrap, never `os.Executable()`.
+
+**Session codes and protocol version**
+
+- `repair-session` becomes a mode of the maintenance session. New terminal
+  codes: `below-floor`, `below-elevation-floor`, `store-unavailable`,
+  `newer-store-contract`.
+- IPC protocol stays 1. All changes are additive and gated on the capability.
+
+### Package installer action
+
+The installer action is reworked; it is not extended in place.
+
+- It becomes a commit-time action, not a deferred action that runs before
+  install finalization. It runs `bimeron-core store import-package` directly,
+  with no Qt GUI process running as SYSTEM or root and no window.
+- It works only upward:
+  1. It verifies the bundled Core against the package-shipped signed manifest
+     using Core's embedded keys.
+  2. If the bundled version is newer than the committed version, it performs a
+     normal switch from staging.
+  3. Otherwise it does nothing.
+- There is no rollback action, because a rollback action would itself be a
+  downgrade path running as SYSTEM.
+- The condition excludes MSI repair and maintenance modes, unless the action
+  is proven safe under an unsolicited repair started by a standard user.
+- Commit actions do not run when rollback is disabled by policy, so
+  acceptance must verify that case.
+- **Fallback:** on first launch, Desktop detects an unseeded store or a
+  bundled version newer than the committed one, and offers the normal elevated
+  maintenance session.
+- **Linux:** DEB `postinst` calls the same command.
+
+### Authenticode
+
+Authenticode signing is open question Q7. If it is adopted, sign only
+store-capable builds, which refuse `-source`. Never sign older builds
+retroactively. A signed build that still accepts caller-trusted installation
+would be a permanent publisher-signed tool for installing arbitrary services.
 
 ### Platform scope
 
 Windows and Linux amd64/arm64 only. macOS and Android are outside this updater
 (ADR 0031 and ADR 0032 keep Apple separate; Android ships inside the app). No
 store, floor or repair change applies to them. Desktop's updater already
-returns no platform on them.
+reports no platform on them.
 
 ## Threat model
 
-In scope: a local unprivileged user and malware running as the Desktop user.
-That attacker can write the user's TEMP, profile and HKCU, start processes,
-create junctions, mount points and object-manager links, open handles to
-readable files, pre-create names in `ProgramData` and `Global\`, inject into
-the Desktop process, and invoke UAC or `pkexec` on any binary. The attacker can
-also be the network: a malicious mirror, withheld releases, or replayed old
-signed metadata. Out of scope: an attacker who already has administrator or
-root rights, kernel compromise, and theft of an offline root key.
+**In scope.** A local unprivileged user, and malware running as the Desktop
+user. On a standard account, such an attacker can:
+
+- write the user's TEMP, profile and HKCU;
+- start processes and inject into the Desktop process;
+- create junctions, mount points and object-manager links;
+- open handles to any readable file;
+- pre-create names in `ProgramData` and in `Global\`;
+- invoke UAC or `pkexec` on any binary with any arguments.
+
+The network is also in scope: malicious mirrors, deleted or withheld release
+assets, and replayed old signed metadata.
+
+**Out of scope.**
+
+- An attacker who already has administrator or root rights, including through
+  admin-approval mode on an administrator account.
+- Kernel compromise.
+- Simultaneous theft of both threshold signing keys.
 
 | Threat | Mitigation |
 | --- | --- |
-| Replace store files or directories | Admin-only DACL and owner, `NumberOfLinks == 1`, handle-based walk, immutable versions |
-| Pre-create `ProgramData\Bimeron` or store children | Explicit SD on create, owner/DACL validation of existing objects, fail closed or quarantine |
-| Junction, symlink or hardlink redirection of privileged writes | No-follow opens on every component, writes only beneath the held root handle, rename inside one directory, link-count check |
-| TOCTOU between verify and execute | Windows deny-write/delete handle held across process creation; Linux exec of the verified fd; elevated self-check |
-| Swap the input bundle after Desktop verification | Elevated process verifies the signature itself and reads through one handle |
-| Rollback through repair | Target = max(active, installed verified); repair source is the store; no own-image source |
-| Rollback through installing an older signed release | Order and floor checks inside the privileged process |
-| Rollback by deleting or reverting `floor.json` | Floor is the maximum over embedded and store-manifest evidence; the file is self-verifying |
-| Rollback through a damaged store | Republish the exact target from signed bytes; never fall back lower |
-| Confused deputy: malware elevates our signed broker with chosen arguments | Arguments are data; worst case is a forced upgrade to a signed version or a DoS |
-| Malware elevates an old Bimeron binary | Old binaries fail the protected-ancestry check outside Program Files; store-capable Desktop never elevates below-floor code; residual for admin-installed old packages (below) |
-| DLL planting for the elevated process | `SetDefaultDllDirectories`, admin-only application directory, Wintun hash at load |
-| Squatting of mutex and pipe names | Restrictive DACL on create, owner check, fail closed with diagnostic |
-| Foreign handle blocking rename | Bounded retry, transaction rollback, deferred trash |
-| Release-key compromise | Q3 (root key and revocation); floor lowering only by root |
-| Freeze or withholding (deleted or withheld metadata for newer releases) | A newer tag with missing or invalid metadata is a visible error in Desktop, never a silent skip; optional signed index with expiry (Q5) |
-| Alternate administrator approves UAC | Machine paths only; readiness pipe; caller identity from the authenticated transport, as in #140 |
+| Replace store files or directories | Admin-only DACL and owner; handle-relative walk; immutable versions |
+| Pre-create the store or its children | Program Files location; any unexpected object fails closed |
+| Junction, symlink or hardlink redirection of privileged writes | No-follow opens on every component beneath a held root; link-count check before writes and deletes |
+| Make a privileged process open an attacker path (UNC, WebDAV, device, link) | No privileged path inputs; bytes are streamed over the authenticated session |
+| TOCTOU between verify and execute | Windows: deny-write/delete handle held across process creation. Linux: exec of the verified fd. Elevated self-check |
+| Swap the bundle after Desktop verification | The broker verifies the streamed bytes itself |
+| Failed floor-raising update bricks the service | Only committed versions are floor evidence or usable; failed switches delete staging |
+| Rollback through repair | Target is the maximum of active and verified installed versions; the source is the store |
+| Rollback through installing an older signed release | Order and floor checks inside the broker |
+| Rollback through pre-store tools or old Desktop | Re-registration makes them fail closed; store-capable repair heals unknown images |
+| Rollback by deleting or reverting floor records | Maximum over embedded, manifest, record and registry or `/etc` evidence; no deleting command |
+| Rollback through a damaged store | Republish the exact target from streamed signed bytes; never fall back lower |
+| Confused deputy (crafted elevation) | Only nonce, PID and streamed signed bytes; no floor deletion; `service install` only from the store |
+| Malware elevates an old Bimeron binary | Old tools refuse the re-registered service; store-capable Desktop never elevates below the elevation floor |
+| DLL planting or environment injection into elevated processes | `SetDefaultDllDirectories`; admin-only directories; Wintun digest at load; environment allowlist |
+| Squatting of locks and pipes | Lock file in admin-only `state/`; readiness pipe name with a per-start nonce |
+| Foreign handle blocking update or repair | Users cannot open service or state files; held staging handles; random backup names; streamed fallback source; deferred trash |
+| Release-key compromise | 2-of-2 threshold (Q3); epoch-based floor reset requires the threshold |
+| Freeze or withholding | Visible error for missing or invalid metadata; optional signed index with expiry (Q5) |
+| Fresh floor locks a user out of the VPN | Fresh floors never block connectivity; only elevation is gated |
+| Unsolicited MSI repair as a standard user | Installer action excluded from repair modes, upward-only, no rollback action |
+| Alternate administrator approves UAC | Machine paths only; the readiness channel; caller identity from the authenticated transport, as in #140 |
 
-Residual risks:
+**Residual risks**
 
-- An administrator who installs a pre-store Desktop package (0.3.x or older)
-  regains its old broker, and that broker's repair can still roll the service
-  back. Desktop must block MSI downgrades. The store-capable service refuses to
-  start below the floor only when the rolled-back binary itself is
-  store-capable.
-- Same-user malware can always ask the user to approve its own elevation. UAC
-  shows publisher information only for Authenticode-signed binaries; signing
-  Core with Authenticode is a separate, recommended decision.
-- A full disk or VM rollback reverts the store and floor together. Online floor
-  evidence (floor source 4) is the only bound.
+- An old binary that uninstalls and reinstalls the service takes two explicit
+  elevations; the next store-capable repair heals it.
+- Same-user malware can always ask the user to approve elevation of its own
+  binary. Authenticode (Q7) makes the publisher visible, but it is not a
+  defense on its own.
+- Restoring a whole disk or VM reverts store and floor together. Only fresh
+  online floors (source 4) bound it.
+- A foreign handle can delay cleanup indefinitely. Cleanup never blocks
+  updates.
 
 ## Compatibility and migration
 
-- **Desktop 0.3.0/0.3.1**: no store support. Schema 2 manifests fail their
-  `schema == 1` check, and store-capable Core releases set `gui_min` to the
-  first store-capable Desktop. Old Desktops are not offered these releases and
-  are told to upgrade the package. Their own repair keeps today's behavior for
-  pre-store versions. Core cannot fix that retroactively.
-- **First store-capable Desktop package**: bundles its pinned Core together with
-  that release's signed schema 2 manifest and signature. The existing MSI
-  deferred custom action and DEB `postinst` (`InstallerCore`) run
-  `store import-package` as SYSTEM/root. It verifies the bundled bytes with
-  Core's embedded keys and publishes them into the store, then performs the
-  existing never-downgrade service update from the store. The MSI action gains
-  a rollback action, or becomes a commit-time action, so a failed transaction
-  cannot leave the service newer than the store without a record.
-- **Existing installs whose service is newer than the package**: the service
-  is left in place. On the next update or repair, Desktop fetches the signed
-  bundle for the installed version (or newer), and the elevated store import
-  adopts it. No installed binary is imported without its full signed member
+- **Desktop 0.3.0/0.3.1.** These versions have no store support. Store-era
+  releases have schema 2, multi-line signatures and `gui_min` set to the first
+  store-capable Desktop, so these versions are never offered them. If a
+  store-era service reaches such a machine anyway, through package
+  uninstall/reinstall or the CLI distribution, the re-registration makes their
+  repair, update and installer action refuse it. They report failure instead
+  of rolling the service back. Upgrading the Desktop package fixes this.
+- **First store-capable Desktop.** It bundles its pinned Core together with
+  that release's signed schema 2 manifest and signatures. The installer action
+  seeds the store and switches the service upward, as described above.
+- **Existing installs whose service is newer than the package.** These were
+  updated through the pre-store updater. The service stays in place. The next
+  update or repair streams a signed bundle at or above the installed version
+  and commits it. Nothing installed is adopted without its full signed member
   set.
-- **Desktop uninstall**: the store is owned by Core, not by the MSI or DEB file
-  lists, so it persists. Service uninstall stays explicit. A new
-  `store purge` removes `versions/`, but keeps `state/floor.json` unless the
-  user passes an explicit `-forget-floor`, so reinstalling an older package
-  cannot silently roll back.
-- **Reinstall of an older Desktop package**: blocked by MSI downgrade rules. If
-  forced, the store-capable Desktop logic is gone, which is the residual risk
-  above.
-- **Linux package managers**: DEB stays the only Linux package. The store lives
-  under `/var/lib`, is not in the dpkg file list, and survives upgrades and
-  removal; `purge` does not delete it implicitly. A `noexec` `/var` mount or
-  SELinux/AppArmor policy that forbids executing from `/var/lib` breaks Desktop
-  CLI launches from the store. In that case Desktop reports an explicit
-  diagnostic and uses the bundled copy only if it is a usable version (Q2).
+- **Desktop uninstall.** The store belongs to Core and appears in no MSI or DEB
+  file list, so it persists, together with the floor evidence. Uninstalling the
+  service remains an explicit action. `store purge` keeps all evidence.
+- **Older Desktop package after a store-era one.** Pre-store tools refuse the
+  re-registered service. Desktop should also block MSI downgrades.
+- **Linux package management.** DEB remains the only Linux package. The store
+  survives upgrade, removal and purge.
 
 ## Work split
 
-Core:
+**Core**
 
-- Schema 2 producer and verifier, the `security_floor` policy, and source
-  revision binding. Strict JSON for both manifest kinds.
-- Embedded key set and the version-order test vectors.
-- Store module: protected create and open, staging, publish, verify, the
-  floor and active records, cleanup, and locks.
-- `store install`, `store import-package`, `store status`, `store purge`, and
-  the refusal of the legacy `-source` path.
-- Repair source switch, target-version computation, and full-bundle signed
-  acquisition.
-- Service-side floor check, Wintun pin at load, `SetDefaultDllDirectories`.
-- Documentation updates: UPDATE_SPEC, RELEASE_UPDATES, REPAIR_SESSION,
-  SERVICE, GUI_INTEGRATION, CONTROL.
+- Manifest and publishing:
+  - schema 2 producer and verifier, with the build-provenance gate;
+  - multi-signature format and threshold policy;
+  - strict JSON pre-pass;
+  - version grammar and test vectors;
+  - retirement of backfill.
+- Embedded key set; floor epochs; the security and elevation floor policy in
+  `compatibility.json`; publisher refusal of floor regressions.
+- Store module:
+  - handle-relative create and open, staging, promotion;
+  - append-only records, the HKLM or `/etc` copy, the lock;
+  - reconciliation and cleanup.
+- Maintenance session: streamed frames, the update, repair and import
+  operations, and the elevated self-check with its environment allowlist.
+- Service changes:
+  - re-registration in the switch transaction;
+  - the readiness pipe nonce;
+  - Wintun pin at load and `SetDefaultDllDirectories`;
+  - DACLs on service-directory files;
+  - `service install` from the store;
+  - refusal of `-source`.
+- Repair:
+  - target computation;
+  - store source;
+  - streamed fallback, replacing network acquisition in the broker.
+- Relocation of the foreground policy file, coordinated with Desktop.
+- Documentation: UPDATE_SPEC, RELEASE_UPDATES, REPAIR_SESSION, SERVICE,
+  GUI_INTEGRATION, CONTROL, and the ADR 0002 status.
 
-Desktop:
+**Desktop**
 
-- Schema 2 verification, the pinned key set, and the version-order vectors.
-- Store discovery, usable-version selection, and the effective floor.
-- Handle- or fd-bound launch for every CLI run and for elevation.
-- Fixed `pkexec`, and removal of the `PATH`/WSL elevation route.
-- The elevation-source ladder, the shipped signed manifest for the bundled
-  Core, the MSI/DEB `store import-package`, MSI downgrade blocking and the
-  rollback action.
-- UX for below-floor, mandatory-update and store-unavailable states.
-- Benchmarks for launch verification.
+- Verification:
+  - schema 2 and multi-signature verification;
+  - strict JSON pre-pass;
+  - pinned key set;
+  - version vectors.
+- Store use:
+  - discovery and usable-version selection;
+  - effective floors from the embedded value and the HKLM or `/etc` copy.
+- Launching:
+  - handle- or fd-bound launches for every CLI run and every elevation;
+  - fixed protected `pkexec`;
+  - removal of the `PATH` and WSL elevation routes.
+- Maintenance-session client:
+  - streams bundles for update and repair;
+  - shows a visible error for missing or invalid metadata.
+- Packaging:
+  - ship the signed manifest of the bundled Core;
+  - rework the installer action (commit-time, `store import-package`, no
+    rollback action, repair excluded);
+  - block MSI downgrades;
+  - retire RepairBootstrap.
+- Relocation of the foreground policy file.
+- UX for the below-floor, update-required, store-unavailable and
+  newer-store-contract states.
+- `docs/core-updates.md`.
+- Launch-verification benchmark, including ARM64.
 
 ## Acceptance plan
 
-Run on a disposable clone of the Windows 10 STD VM and a Linux (Ubuntu 22.04)
-VM, never on the host. Each case records the binary hashes and the
-service/store state before and after.
+Testing runs on a disposable clone of the Windows 10 STD VM and on an Ubuntu
+22.04 VM, never on the host. Each case records binary hashes and the service
+and store state before and after.
 
-1. Fresh install of the store-capable Desktop: the store is seeded, the service
-   is installed from the store, and there is one UAC prompt.
-2. Update A to B: store B is published, the service runs B, the floor is raised
-   only if B raises it, the CLI and broker now run from B.
-3. Repair after update: a healthy B service stays B. A damaged B service (XOR
-   at 0x1000, zeroed header, missing file) is restored to B, not to the bundled
-   A.
-4. Damaged store B (deleted file, modified member, extra hardlink, junction in
-   place of the version directory): repair re-acquires B through signed
-   acquisition. Without network, repair fails with `store-unavailable`; it
-   never installs A.
-5. Rollback attempts: elevate `store install` with a validly signed older
-   release, with release B and a reverted `floor.json`, and with a deleted
-   `floor.json`. All are refused, or keep B and the floor.
-6. Same-user substitution: replace the downloaded ZIP after Desktop
-   verification. Race a swap of the store path during launch, as a standard
-   user; it must be denied. Pre-create `C:\ProgramData\Bimeron` as a standard
-   user before the first install; it must be detected and handled. Pre-create
-   the mutex and pipe names, and hold a foreign read handle on a store file
-   during update.
-7. UAC path: a standard user approves with alternate administrator
-   credentials; repair and update succeed and preserve the owner. Malware-style
-   elevation of the store broker with crafted arguments gains nothing beyond a
-   signed upgrade.
-8. Old binaries: an old broker copied into a user directory and elevated must
-   refuse to run. A below-floor service started manually reports
-   `below_security_floor`.
-9. Desktop 0.3.1 against a schema 2 release: no update is offered and no
-   repair downgrade happens for store-era versions.
-10. Uninstall and reinstall Desktop: the store and floor persist; a downgrade
-    MSI is blocked.
-11. Linux: pkexec with alternate administrator credentials (polkit), fd-bound
-    CLI launch, and a `noexec` `/var` diagnostic.
+1. **Fresh install.** A fresh install of the store-capable Desktop seeds the
+   store, installs the service from it and re-registers it. It shows one UAC
+   prompt.
+2. **Update A to B.** B is committed and the service runs B. The floor rises
+   only if B raises it. The CLI and the broker now run from B.
+3. **Failed update.** B raises the floor but fails readiness. The service
+   returns to A and the floor is unchanged. B is not in `versions/` and is not
+   used. The VPN connects.
+4. **Repair after an update.** A healthy B service is left as B. A damaged B
+   (XOR at 0x1000, zeroed header, missing file) is restored to B, never to the
+   bundled A.
+5. **Damaged or blocked store B.** Cases: a deleted file, a modified member, an
+   extra hardlink, a junction in place of a directory, and a foreign handle with
+   share mode 0 on a member. Repair streams B again from Desktop. Offline,
+   repair fails with `store-unavailable` and never installs A.
+6. **Rollback attempts.** These must be refused, or must leave B and the floor
+   in place:
+   - a maintenance session streaming a validly signed older release;
+   - reverted or deleted floor records;
+   - a reverted HKLM or `/etc` copy;
+   - crafted arguments for `store purge`, `service uninstall` and
+     `service install`.
+7. **Pre-store tools against a store-era service.** Cases: Desktop 0.3.1
+   repair; the legacy update command of a pre-store build; the 0.3.x
+   installer action after uninstall and reinstall. Each fails closed. Then
+   store-capable repair heals an image replaced by hand.
+8. **Path and contention attacks** by a standard user:
+   - pre-create the readiness pipe, `Global\BimeronCoreUpdate` and the
+     maintenance pipe;
+   - hold share-0 handles on service, state and store files during update and
+     repair;
+   - pre-create the store root (ProgramData variant only).
+9. **UAC, alternate administrator and pkexec.** A standard user approves with
+   alternate administrator credentials, and update and repair succeed with the
+   owner preserved. A malicious `HKCU\Environment` (`GODEBUG`, `ZONEINFO`) is
+   refused. Linux uses pkexec with polkit and alternate credentials.
+10. **Fresh-floor and censored network.** A machine below a freshly announced
+    floor still connects through the installed service and shows a persistent
+    warning. Below a fresh elevation floor, Desktop requires a package upgrade.
+11. **Installer behavior.** Cases: `msiexec /fa` by a standard user; an MSI
+    rollback in mid-transaction; `DisableRollback` policy; a DEB upgrade,
+    removal and purge. The store and floor persist; no downgrade happens.
+12. **Crash injection** at every commit step (after the switch, after
+    promotion, after the records). Reconciliation reaches a consistent state.
+13. **Key rotation and threshold.** Rotation with dual signatures works with old
+    and new brokers. A single valid signature is refused under the 2-of-2
+    policy. An epoch-raise reset requires the threshold.
+14. **Version grammar.** Rejected forms, the NTFS case-collision attempt, and
+    beta-to-stable transitions.
+15. **Foreground IKEv2** on a store-era Desktop, with the relocated policy file.
+16. **Platforms and performance.** ARM64 runtime on both operating systems; the
+    `openat2` fallback on an older kernel, if supported; the hashing benchmark
+    on low-end hardware.
 
 ## Alternatives considered
 
 - **Overwrite the Desktop package files in Program Files with the updated
-  CLI/broker.** Rejected. The files belong to the MSI or DEB, whose
-  repair/self-heal or upgrade would silently restore the old bytes (a
-  rollback). It also makes the package manager's integrity metadata lie, and
-  mixes two update channels on one set of files. It still needs a separate
+  CLI/broker.** Rejected. The files belong to the MSI or DEB, and MSI
+  self-heal, repair or upgrade would silently restore the old bytes, which is a
+  rollback. It falsifies the package manager's integrity metadata, mixes two
+  update channels on one set of files, and still needs a separate
   anti-rollback record.
 - **Keep the bundled broker, but make repair compare the service with a signed
-  record and skip replacement of a newer intact service.** This is a smaller
-  change and fixes the visible rollback. Rejected as the end state, because a
-  damaged newer service can then only be repaired with older bytes or not at
-  all. The CLI keeps validating profiles with old code, and the elevated
-  updater remains old code that trusts caller digests. Its comparison rule is
-  still adopted inside this design.
+  record and skip replacement of a newer intact service.** This change is
+  smaller and fixes the visible rollback. Rejected as the end state:
+  - a damaged newer service could then be repaired only with older bytes, or
+    not at all;
+  - the CLI keeps validating profiles with old code;
+  - the elevated updater remains old code that trusts caller digests.
+
+  Its comparison rule is adopted inside this design.
 - **Release a Desktop package for every Core patch.** This keeps one trust root
-  (the package) and needs no store. Rejected: it couples security response
-  time to the Desktop release and review pipeline and to the MSI or DEB
-  rollout, and makes every Core fix wait for Desktop QA. Users who update Core
-  but not Desktop still hit the rollback.
-- **Run the service directly from the store** (SCM ImagePath or `ExecStart`
-  pointing into `versions/<version>/`). This is attractive because switching
-  versions becomes an atomic re-point. Deferred, for three reasons. It changes
-  the canonical service path that #140 ownership checks, older Desktops and the
-  installer rely on. It interacts with SELinux labels for `/var/lib`. And it
-  makes the store directory part of the service's DLL search and recovery
-  path. It can be revisited later.
-- **Have the running service perform updates itself without UAC.** This
-  removes the UAC prompt and the caller-file surface. Deferred, because it puts
-  network download and archive parsing into the always-on LocalSystem/root
-  process and makes updates depend on a healthy service. Repair exists exactly
-  for the unhealthy case.
-- **Locally signed or HMAC-protected floor record** (machine key, DPAPI,
-  TPM). Rejected: an attacker able to write the admin-only state file is
-  already out of scope, and a machine-held key adds secrets without stopping
-  whole-disk rollback. Publisher-signed evidence and the maximum rule are
-  sufficient.
-- **Integer rollback index instead of a version floor.** It avoids SemVer
-  precedence subtleties. It is kept as an option (Q6); the version floor is
-  chosen because users and release notes reason in versions, and shared test
-  vectors control the precedence risk.
+  (the package) and needs no store. Rejected:
+  - it ties security response time to the Desktop release pipeline, its
+    review, and MSI/DEB rollout;
+  - every Core fix waits for Desktop QA;
+  - users who update Core but not Desktop still hit the rollback.
+- **Path-based elevated `store install -manifest -signature -archive`.** This
+  was the first draft. Rejected because a privileged process would open
+  caller-chosen paths. Even with no-follow opens, intermediate components,
+  object-manager links, UNC/WebDAV credential exposure and blocking devices
+  stay reachable. The streamed session removes the whole class.
+- **Network download inside the privileged process** (extending
+  `repair_acquire.go`). Rejected: it adds TLS and HTTP surface to SYSTEM/root,
+  ignores user proxies, and fails on slow or censored links within the session
+  deadline. Desktop downloads, and the broker authenticates.
+- **Run the service directly from the store** (ImagePath or `ExecStart` pointing
+  into `versions/<version>/`). Deferred. It changes the canonical service path,
+  interacts with SELinux labels, and puts the store directory into the
+  service's DLL search and recovery path. The re-registration step could later
+  absorb it.
+- **Have the running service perform updates without UAC.** Deferred. It puts
+  archive handling into the always-on privileged process, and updates would
+  depend on a healthy service, while repair exists precisely for an unhealthy
+  one.
+- **Fixed package-owned elevation trampoline** that verifies and launches the
+  newest committed store version inside the boundary. It would give a stable
+  UAC and polkit target, and would allow polkit `exec.path` pinning. Deferred:
+  it is package-versioned elevated code that must understand future store
+  contracts. The self-check already provides the binding.
+- **Online, root-signed key-set document (TUF-style root).** Rejected for now.
+  It adds a second freshness and rollback problem. Threshold signing combined
+  with key sets embedded in binaries and dual-signed rotation covers the
+  realistic threats with less state.
+- **Locally signed or HMAC-protected floor record** (machine key, DPAPI, TPM).
+  Rejected. An attacker able to write the admin-only state is already out of
+  scope, and a machine key adds secrets without stopping whole-disk rollback.
+- **Integer rollback index instead of a version floor.** Kept as an option
+  (Q6). Versions match how releases are discussed, and the strict grammar plus
+  shared vectors control the precedence risk.
 
 ## Open questions for the user
 
-- Q1. Windows store location. The recommendation is
-  `%ProgramFiles%\Bimeron Core\store`: Program Files has safe default ACLs, so
-  users cannot pre-create it, and default AppLocker/SRP path rules allow
-  standard users to run binaries from it. The alternative is
-  `%ProgramData%\Bimeron\core`, as initially proposed. It requires the
-  squatting defenses described above, and it blocks Desktop CLI launches under
-  default AppLocker rules unless a publisher rule (which needs Authenticode,
-  Q7) is deployed.
-- Q2. Linux: keep `/var/lib/bimeron/core`, or use
-  `/usr/local/lib/bimeron/store` next to the service. What should happen with
-  `noexec` or MAC policies?
-- Q3. Keys: introduce an offline root key and a key-set document now, or keep a
-  single release key with an embedded set and accept the compromise impact.
-- Q4. Should a below-floor service refuse to start (security), or start with a
-  persistent warning (availability)?
-- Q5. Freeze protection: should manifests gain a signed expiry or timestamp,
-  and should Desktop warn when metadata is stale?
-- Q6. Version floor or integer rollback index?
-- Q7. Authenticode-sign the Windows Core (and Desktop) executables. This is a
-  separate decision, but it strongly affects UAC.
-  - Without signing, the consent prompt shows "Unknown publisher", which
-    malware can imitate.
-  - App Control publisher rules and the "only elevate signed executables"
-    policy cannot be used.
-  - Signing does not stop elevation of an old signed binary. The data-only
-    broker interface and the protected-ancestry check handle that.
+- **Q1. Windows store location.** The recommendation is
+  `%ProgramFiles%\Bimeron Core\store`: users cannot squat it, default
+  AppLocker rules allow it, and the code needs no rename-aside logic. The
+  alternative is `%ProgramData%\Bimeron\core`, which needs squatting
+  defenses, and blocks Desktop CLI launches under default AppLocker rules
+  unless publisher rules (Q7) are deployed.
+- **Q2. Linux store location.** The recommendation is
+  `/usr/local/lib/bimeron/store` (no `noexec`/SELinux risk). The alternative
+  is `/var/lib/bimeron/core`.
+- **Q3. Signing policy.** Options:
+  - 2-of-2 threshold signing for every store-era release (recommended);
+  - threshold only for epoch raises and key changes;
+  - a single release key.
+- **Q4. Below-floor service.** Should it refuse to start the VPN engine?
+  The recommendation is no: report it and offer repair.
+- **Q5. Freeze protection beyond visible errors.** Should we add a signed index
+  or timestamp with an expiry, and stale-metadata warnings?
+- **Q6. Floor representation.** A version floor, or an integer rollback index?
+- **Q7. Authenticode.** Adopt it for store-capable builds only?
+- **Q8. Manual downgrade.** Is "never below active" strict, or may an
+  administrator explicitly choose a version in the range from the floor up to
+  the active version (exclusive), for a regression or a beta-to-stable switch?
+  The recommendation is strict for now; switching from beta to stable waits for
+  the next stable release at or above the active version.
+- **Q9. Pre-store tools.** Do you accept that pre-store Desktop and Core tools
+  can no longer manage a store-era service (they fail closed, by design)?
