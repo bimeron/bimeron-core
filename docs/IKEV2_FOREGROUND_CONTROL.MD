@@ -162,7 +162,10 @@ Discovery is deterministic, using the intended user's SID and interactive sessio
 ```
 
 Core creates the first pipe instance exclusively. DACL permits intended owner and
-SYSTEM only; medium integrity is explicitly allowed and remote clients are
+SYSTEM only. The owner gets client read/write rights without
+`FILE_CREATE_PIPE_INSTANCE` (`0x0012019B`); only Administrators, which the
+elevated owner process holds, may create further instances. See
+[Server identity](CONTROL.MD#server-identity). Medium integrity is explicitly allowed and remote clients are
 rejected by the pinned go-winio implementation. Squatting/unknown ownership fails
 closed. Precreation or holding an owner marker can deny availability; Core never
 tries to seize or delete an unknown owner object. A machine-wide owner marker, created while holding the shared network

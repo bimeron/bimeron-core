@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 )
 
 const socketPath = unixutil.RuntimeDir + "/control.sock"
@@ -114,6 +115,46 @@ func listenUnix(runtimeDir, path string, uid uint32, release func()) (net.Listen
 	return &unixListener{UnixListener: l, release: release, uid: uid, path: path}, nil
 }
 func Dial(ctx context.Context) (net.Conn, error) {
-	return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	if err := verifySocketPath(unixutil.RuntimeDir, socketPath, 0); err != nil {
+		return nil, err
+	}
+	c, err := (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return nil, err
+	}
+	if err = trustedServer(peerUID(c.(*net.UnixConn))); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+// verifySocketPath rejects a runtime directory that root does not own or that
+// others can write, and a socket path that is not a socket. The peer
+// credential check after connecting remains authoritative.
+func verifySocketPath(dir, path string, root uint32) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || stat.Uid != root || info.Mode().Perm()&0022 != 0 {
+		return ErrServerUntrusted
+	}
+	if info, err = os.Lstat(path); err != nil {
+		return err
+	}
+	if info.Mode().Type() != os.ModeSocket {
+		return ErrServerUntrusted
+	}
+	return nil
+}
+
+// The service and the console daemon both run as root.
+func trustedServer(uid uint32, err error) error {
+	if err != nil || uid != 0 {
+		return ErrServerUntrusted
+	}
+	return nil
 }
 func DialService(ctx context.Context) (net.Conn, error) { return Dial(ctx) }

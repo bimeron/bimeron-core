@@ -4,14 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 )
 
+// ErrServerUntrusted reports a control endpoint whose server identity does not
+// match the expected service or daemon. No request has been sent.
+var ErrServerUntrusted = errors.New("control_server_untrusted")
+
 func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 func Call(ctx context.Context, r Request) (Response, error) {
 	c, err := Dial(ctx)
+	if errors.Is(err, ErrServerUntrusted) {
+		return Response{}, err
+	}
 	if err != nil {
 		return Response{}, fmt.Errorf("local control unavailable; start daemon or Windows service")
 	}

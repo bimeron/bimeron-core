@@ -15,7 +15,11 @@ import (
 
 func TestReadinessWindowsACLAndServerPID(t *testing.T) {
 	path := fmt.Sprintf(`\\.\pipe\Bimeron.Readiness.Test.%d.%d`, os.Getpid(), time.Now().UnixNano())
-	l, err := listenServiceReadinessPipe(path)
+	_, sid, err := pipeIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := listenServiceReadinessPipe(path, sid)
 	if err != nil {
 		t.Fatal(err)
 	}
