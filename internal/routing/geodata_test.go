@@ -273,14 +273,22 @@ func TestGeoLimits(t *testing.T) {
 		name     string
 		ip, site []byte
 	}{"regex count", nil, geoGroup("regex", patterns...)})
-	patterns = nil
-	for i := 0; i <= maxGeoRegexBytes/maxGeoString; i++ {
-		patterns = append(patterns, geoDomain(1, strings.Repeat("x", maxGeoString)))
+	regexCase := func(name string, n int, value string) {
+		patterns := make([][]byte, n)
+		for i := range patterns {
+			patterns[i] = geoDomain(1, value)
+		}
+		cases = append(cases, struct {
+			name     string
+			ip, site []byte
+		}{name, nil, geoGroup("regex", patterns...)})
 	}
-	cases = append(cases, struct {
-		name     string
-		ip, site []byte
-	}{"regex bytes", nil, geoGroup("regex", patterns...)})
+	regexCase("regex bytes", maxGeoRegexBytes/maxGeoRegexLen+1, "["+strings.Repeat("a", maxGeoRegexLen-2)+"]")
+	regexCase("regex length", 1, strings.Repeat("x", maxGeoRegexLen+1))
+	regexCase("regex program", 1, strings.Repeat("[a-z]{1000}", 5))
+	regexCase("regex nested program", 1, "(?:"+strings.Repeat("a?", 300)+"){1000}")
+	regexCase("regex programs", maxGeoRegexInsts/1000+1, "[a-z]{1000}")
+	regexCase("regex runes", maxGeoRegexRunes/1000+1, `\pL`)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := DecodeGeoData(tc.ip, tc.site)
@@ -289,6 +297,31 @@ func TestGeoLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+func TestGeoRegexAccepted(t *testing.T) {
+	values := []string{
+		`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`,
+		`^r+[0-9]+(---|\.)sn-(2x3|ni5|j5o)\w{5}\.googlevideo\.com$`,
+		`^(.+\.)?example\.com$`,
+		`^[a-z]{1000}$`,
+	}
+	entries := make([][]byte, len(values))
+	for i, v := range values {
+		entries[i] = geoDomain(1, v)
+	}
+	d, err := DecodeGeoData(nil, geoGroup("regex", entries...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := d.sites["regex"]
+	for _, s := range []string{"host-1", "r1---sn-2x3abcde.googlevideo.com", "a.example.com", strings.Repeat("q", 1000)} {
+		if !g.matches(s) {
+			t.Fatal(s)
+		}
+	}
+	if g.matches("a.example.org") {
+		t.Fatal("unexpected match")
 	}
 }
 func TestGeoDirectPrefixes(t *testing.T) {
@@ -309,6 +342,7 @@ func FuzzDecodeGeoData(f *testing.F) {
 	f.Add(a, b)
 	f.Add([]byte{0}, []byte{10, 255})
 	f.Add([]byte{}, []byte{})
+	f.Add([]byte{}, geoGroup("regex", geoDomain(1, "(?:a?a?){1000}"), geoDomain(1, `[a-z]{1000}\pL`)))
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		if len(a)+len(b) > 1<<20 {
 			t.Skip()

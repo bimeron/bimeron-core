@@ -38,7 +38,11 @@ Malformed protobuf, invalid entries, duplicate groups and unsupported selectors
 must be corrected before startup. The shared decoder limits each dataset to
 64 MiB. Across the supplied resources it permits at most 100,000 groups and
 2,000,000 group/entry records, 4,096 bytes per string, 10,000 regular expressions
-and 1 MiB of total regex text. Group identifiers allow ASCII letters, digits,
+and 1 MiB of total regex text. Each regular expression is limited to 1,024 bytes
+and an estimated 4,096 compiled instructions, with counted repetition expanded;
+all expressions together are limited to 131,072 estimated instructions and
+262,144 literal and character-class runes. Public V2Ray-format datasets use about 10,000
+instructions in total. Group identifiers allow ASCII letters, digits,
 hyphens, underscores and literal `!`, up to 256 bytes. Empty or group-free resources mean
 unavailable data. Unknown protobuf fields are skipped after framing validation;
 deprecated protobuf groups are rejected. No dataset downloads

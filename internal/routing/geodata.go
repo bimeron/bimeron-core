@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"regexp/syntax"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -15,12 +16,18 @@ import (
 )
 
 // Decoder limits bound allocations and work on untrusted local dataset bytes.
+// Regex limits bound estimated compiled program size per pattern and dataset;
+// real-world datasets use about 10,000 instructions in total.
 const (
 	maxGeoBytes      = 64 << 20
 	maxGeoEntries    = 2_000_000
 	maxGeoGroups     = 100_000
 	maxGeoRegex      = 10_000
 	maxGeoRegexBytes = 1 << 20
+	maxGeoRegexLen   = 1024
+	maxGeoRegexInst  = 4096
+	maxGeoRegexInsts = 1 << 17
+	maxGeoRegexRunes = 1 << 18
 	maxGeoString     = 4096
 )
 
@@ -151,7 +158,40 @@ func geoError(kind, group string, rule int, err error) *GeoDataError {
 	return &GeoDataError{Code: code, Kind: strings.ToLower(kind), Group: group, Rule: rule, Err: err}
 }
 
-type regexBudget struct{ count, bytes int }
+type regexBudget struct{ count, bytes, insts, runes int }
+
+// regexSize estimates compiled instructions as regexp/syntax does, without
+// building the program. Counted repetition expands instructions but shares
+// rune slices, so runes are counted once per parse node. Sizes saturate above
+// maxGeoRegexInst.
+func regexSize(re *syntax.Regexp, runes *int) int {
+	*runes += len(re.Rune)
+	sub := 0
+	for _, s := range re.Sub {
+		sub = min(sub+regexSize(s, runes), maxGeoRegexInst+1)
+	}
+	n := sub
+	switch re.Op {
+	case syntax.OpLiteral:
+		n = len(re.Rune)
+	case syntax.OpCapture, syntax.OpStar:
+		n = 2 + sub
+	case syntax.OpPlus, syntax.OpQuest:
+		n = 1 + sub
+	case syntax.OpAlternate:
+		n = sub + len(re.Sub) - 1
+	case syntax.OpRepeat:
+		switch {
+		case re.Max == -1 && re.Min == 0:
+			n = 2 + sub
+		case re.Max == -1:
+			n = 1 + re.Min*sub
+		default:
+			n = re.Max*sub + re.Max - re.Min
+		}
+	}
+	return min(max(n, 1), maxGeoRegexInst+1)
+}
 
 // Groups returns sorted lowercase identifiers. kind is GeoIP or GeoSite
 // (case insensitive). The returned slice is detached from the dataset.
@@ -422,7 +462,16 @@ func decodeDomain(b []byte, g *domainGroup, budget *regexBudget) error {
 	case 1:
 		budget.count++
 		budget.bytes += len(value)
-		if budget.count > maxGeoRegex || budget.bytes > maxGeoRegexBytes {
+		if budget.count > maxGeoRegex || budget.bytes > maxGeoRegexBytes || len(value) > maxGeoRegexLen {
+			return errGeoLimit
+		}
+		tree, err := syntax.Parse(value, syntax.Perl)
+		if err != nil {
+			return fmt.Errorf("invalid geosite regex")
+		}
+		n := regexSize(tree, &budget.runes)
+		budget.insts += n
+		if n > maxGeoRegexInst || budget.insts > maxGeoRegexInsts || budget.runes > maxGeoRegexRunes {
 			return errGeoLimit
 		}
 		r, err := regexp.Compile(value)
