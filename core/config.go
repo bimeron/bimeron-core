@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -17,6 +16,7 @@ import (
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/problem"
 	"bimeron/internal/routing"
+	"bimeron/internal/safefile"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
 	"bimeron/internal/telemetry"
@@ -186,18 +186,21 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true}, nil
 }
 
+// maxKeyFile matches the profile key-file limit.
+const maxKeyFile = 64 << 10
+
 // KeyFile retains the legacy command syntax. The file is reread on reconnect.
 func KeyFile(path string) SessionConfig {
 	c := DefaultConfig()
 	c.Resolve = func(ctx context.Context) (Profile, error) {
-		b, err := os.ReadFile(path)
+		b, err := safefile.Read(path, maxKeyFile)
 		if err != nil {
 			return Profile{}, fmt.Errorf("could not read key file")
 		}
 		return accesskey.NewResolver().Resolve(ctx, string(b))
 	}
 	c.ResolveOnNetwork = func(ctx context.Context, t http.RoundTripper) (Profile, error) {
-		b, err := os.ReadFile(path)
+		b, err := safefile.Read(path, maxKeyFile)
 		if err != nil {
 			return Profile{}, fmt.Errorf("could not read key file")
 		}
