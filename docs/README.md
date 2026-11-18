@@ -38,7 +38,7 @@ release's tag.
 
 - [Building and packaging](BUILDING.md) and [CI checks](CI.MD).
 - [Signed service update releases](RELEASE_UPDATES.md) and the [Apple update manifest](apple-update-manifest.md).
-- [v0.4.0-beta.1 release notes](RELEASE_NOTES_0.4.0_BETA.1.md).
+- [v0.4.0-beta.2 release notes](RELEASE_NOTES_0.4.0_BETA.2.md) and [v0.4.0-beta.1 release notes](RELEASE_NOTES_0.4.0_BETA.1.md).
 
 ## Architecture decisions
 
