@@ -15,6 +15,11 @@
       "en": "The VPN is still disconnecting. Wait until it finishes.",
       "ru": "VPN ещё отключается. Дождитесь окончания."
     },
+    "control_server_untrusted": {
+      "kind": "control",
+      "en": "Could not verify the background VPN service. Restart the Bimeron service or reinstall the application.",
+      "ru": "Не удалось проверить фоновую службу VPN. Перезапустите службу Bimeron или переустановите приложение."
+    },
     "core_identity_mismatch": {
       "kind": "control",
       "en": "The VPN core does not match this version of the application. Reinstall the application.",

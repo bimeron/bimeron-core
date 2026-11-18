@@ -5,10 +5,15 @@ package control
 import (
 	core "bimeron/core"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
+	"io"
+	"net"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -118,7 +123,7 @@ func TestServicePipeOwnerAndForeignACL(t *testing.T) {
 		}
 	}
 	path := fmt.Sprintf(`\\.\pipe\Bimeron.AccessTest.%d`, time.Now().UnixNano())
-	listener, err := listenServicePipe(path, sid)
+	listener, err := listenServicePipe(path, sid, sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,5 +152,126 @@ func TestServicePipeOwnerAndForeignACL(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
+	}
+}
+
+// countingPipe accepts every client and counts the bytes they send.
+func countingPipe(l net.Listener) (*atomic.Int64, func()) {
+	var read atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer c.Close()
+				n, _ := io.Copy(io.Discard, c)
+				read.Add(n)
+			}()
+		}
+	}()
+	return &read, func() { l.Close(); wg.Wait() }
+}
+
+func TestServicePipeIdentityBeforeWrite(t *testing.T) {
+	_, sid, err := pipeIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sid == serviceObjectOwner {
+		t.Skip("test needs a non-SYSTEM owner")
+	}
+	path := fmt.Sprintf(`\\.\pipe\Bimeron.IdentityTest.%d`, time.Now().UnixNano())
+	l, err := listenServicePipe(path, sid, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, stop := countingPipe(l)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := dialServicePipe(ctx, path, pipeTrust{serviceOwner: serviceObjectOwner}); !errors.Is(err, ErrServerUntrusted) {
+		t.Fatal("pipe owned by the current user accepted as service:", err)
+	}
+	if pid := serviceProcessID(serviceName); pid != 0 {
+		if _, err := dialServicePipe(ctx, path, pipeTrust{serviceOwner: sid, service: serviceName}); !errors.Is(err, ErrServerUntrusted) {
+			t.Fatal("server process other than the service accepted:", err)
+		}
+	}
+	c, err := dialServicePipe(ctx, path, pipeTrust{serviceOwner: sid})
+	if err != nil {
+		t.Fatal("expected owner rejected:", err)
+	}
+	c.Close()
+	stop()
+	if n := read.Load(); n != 0 {
+		t.Fatalf("server received %d bytes before identity verification", n)
+	}
+}
+
+func TestDialPipesConsoleIdentity(t *testing.T) {
+	path, sid, err := pipeIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	elevated := windows.GetCurrentProcessToken().IsElevated()
+	owner := sid
+	if elevated {
+		owner = "BA"
+	}
+	stamp := time.Now().UnixNano()
+	console := fmt.Sprintf("%s.console.%d", path, stamp)
+	missing := fmt.Sprintf(`\\.\pipe\Bimeron.IdentityTest.Missing.%d`, stamp)
+	l, err := listenConsolePipe(console, owner, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- NewServer(&fakeEngine{state: core.Disconnected, events: make(chan core.Event)}).Serve(ctx, l)
+	}()
+	defer func() { cancel(); <-done }()
+	want := pipeTrust{serviceObjectOwner, "", consoleObjectOwner, sid}
+	c, err := dialPipes(ctx, missing, console, want)
+	if !elevated {
+		if !errors.Is(err, ErrServerUntrusted) {
+			t.Fatal("non-elevated console server accepted:", err)
+		}
+	} else {
+		if err != nil {
+			t.Fatal("elevated same-user console server rejected:", err)
+		}
+		_, err = exchange(ctx, c, Request{Command: "status"})
+		c.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := want
+	other.user = "S-1-5-21-111-222-333-444"
+	if _, err := dialPipes(ctx, missing, console, other); !errors.Is(err, ErrServerUntrusted) {
+		t.Fatal("console server of another user accepted:", err)
+	}
+
+	// A rejected service endpoint must not fall back to a trusted console daemon.
+	service := fmt.Sprintf(`\\.\pipe\Bimeron.IdentityTest.Service.%d`, stamp)
+	sl, err := listenServicePipe(service, sid, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, stop := countingPipe(sl)
+	if _, err := dialPipes(ctx, service, console, want); !errors.Is(err, ErrServerUntrusted) {
+		t.Fatal("untrusted service endpoint was not rejected:", err)
+	}
+	stop()
+	if n := read.Load(); n != 0 {
+		t.Fatalf("service endpoint received %d bytes", n)
 	}
 }

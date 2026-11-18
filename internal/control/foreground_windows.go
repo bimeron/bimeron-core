@@ -182,7 +182,7 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 		releaseSelf()
 		return nil, nil, nil, errForegroundIdentity
 	}
-	l, err := winio.ListenPipe(foregroundPipe(self.SID, self.Session), &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;" + self.SID + ")S:(ML;;NW;;;ME)", InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
+	l, err := winio.ListenPipe(foregroundPipe(self.SID, self.Session), &winio.PipeConfig{SecurityDescriptor: "O:BAD:P(A;;GA;;;SY)(A;;GA;;;" + self.SID + ")S:(ML;;NW;;;ME)", InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
 	if err != nil {
 		releaseRequester()
 		releaseSelf()
