@@ -4,6 +4,7 @@ package killswitch
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -13,22 +14,26 @@ import (
 )
 
 // This fake never calls Windows; real WFP installation is a manual test.
+// Its persistent state (rules, provider, sublayer) outlives the session, which
+// closed tracks; reopen models a new process opening a session to the same state.
 type fakeAPI struct {
-	rules        []*wf.Rule
-	adds, failAt int
-	deleteErr    bool
+	rules                 []*wf.Rule
+	adds, failAt          int
+	deleteErr             bool
+	hasProvider, hasLayer bool
+	closed                bool
 }
 
 func (f *fakeAPI) Transaction(fn func() error) error {
-	old := append([]*wf.Rule(nil), f.rules...)
+	old, hadProvider, hadLayer := append([]*wf.Rule(nil), f.rules...), f.hasProvider, f.hasLayer
 	if err := fn(); err != nil {
-		f.rules = old
+		f.rules, f.hasProvider, f.hasLayer = old, hadProvider, hadLayer
 		return err
 	}
 	return nil
 }
-func (f *fakeAPI) AddProvider(*wf.Provider) error { return nil }
-func (f *fakeAPI) AddSublayer(*wf.Sublayer) error { return nil }
+func (f *fakeAPI) AddProvider(*wf.Provider) error { f.hasProvider = true; return nil }
+func (f *fakeAPI) AddSublayer(*wf.Sublayer) error { f.hasLayer = true; return nil }
 func (f *fakeAPI) AddRule(r *wf.Rule) error {
 	f.adds++
 	if f.adds == f.failAt {
@@ -50,9 +55,16 @@ func (f *fakeAPI) DeleteRule(id wf.RuleID) error {
 	}
 	return nil
 }
-func (f *fakeAPI) DeleteSublayer(wf.SublayerID) error { return nil }
-func (f *fakeAPI) DeleteProvider(wf.ProviderID) error { return nil }
-func (f *fakeAPI) Close() error                       { return nil }
+func (f *fakeAPI) DeleteSublayer(wf.SublayerID) error { f.hasLayer = false; return nil }
+func (f *fakeAPI) DeleteProvider(wf.ProviderID) error { f.hasProvider = false; return nil }
+func (f *fakeAPI) Close() error {
+	if f.closed {
+		return errors.New("session already closed")
+	}
+	f.closed = true
+	return nil
+}
+func (f *fakeAPI) reopen() *fakeAPI { f.closed = false; return f }
 func priorRule() *wf.Rule {
 	return &wf.Rule{ID: wf.RuleID(windows.GUID{Data1: 9}), Provider: provider, Sublayer: sublayer, Action: wf.ActionBlock, Persistent: true}
 }
@@ -160,6 +172,118 @@ func TestCoreExceptionRequiresAdministrativeToken(t *testing.T) {
 		}
 	}
 	assertCoreExceptions(t, f.rules, true)
+}
+
+// signatures describes rules independently of their generated IDs.
+func signatures(rules []*wf.Rule, skipInterface bool) []string {
+	var result []string
+	for _, r := range rules {
+		if skipInterface && interfacePermits([]*wf.Rule{r}) != 0 {
+			continue
+		}
+		var conditions []string
+		for _, c := range r.Conditions {
+			conditions = append(conditions, fmt.Sprint(c.Field, c.Op, c.Value))
+		}
+		result = append(result, fmt.Sprint(r.Layer, r.Weight, r.Action, r.Persistent, conditions))
+	}
+	return result
+}
+func interfacePermits(rules []*wf.Rule) int {
+	n := 0
+	for _, r := range rules {
+		for _, c := range r.Conditions {
+			if c.Field == wf.FieldIPLocalInterface {
+				n++
+			}
+		}
+	}
+	return n
+}
+func armFake(t *testing.T, f *fakeAPI, luid uint64) *Guard {
+	t.Helper()
+	plan, err := Plan(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g *Guard
+	if err = f.Transaction(func() error { var e error; g, e = arm(f, luid, "test-app", plan); return e }); err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// Without a tunnel adapter the rule set differs from the adapter rule set
+// only by the missing interface permits.
+func TestArmWithoutTunnelInterface(t *testing.T) {
+	early, adapter := &fakeAPI{}, &fakeAPI{}
+	armFake(t, early, 0)
+	armFake(t, adapter, 42)
+	if n := interfacePermits(early.rules); n != 0 {
+		t.Fatal("interface permit without an adapter", n)
+	}
+	if n := interfacePermits(adapter.rules); n != 4 {
+		t.Fatal("missing interface permits", n)
+	}
+	assertCoreExceptions(t, early.rules, true)
+	if got, want := signatures(early.rules, false), signatures(adapter.rules, true); !reflect.DeepEqual(got, want) {
+		t.Fatalf("early rule set differs beyond the interface permit:\n%v\n%v", got, want)
+	}
+}
+
+// Re-arming with the adapter replaces the early rule set in one transaction.
+func TestArmWithAdapterReplacesEarlyProtection(t *testing.T) {
+	f := &fakeAPI{}
+	early := armFake(t, f, 0)
+	g := armFake(t, f, 42)
+	if len(f.rules) != len(g.ids) {
+		t.Fatal("early rules left behind", len(f.rules), len(g.ids))
+	}
+	current := map[wf.RuleID]bool{}
+	for _, id := range g.ids {
+		current[id] = true
+	}
+	for _, id := range early.ids {
+		if current[id] {
+			t.Fatal("early rule reused")
+		}
+	}
+	for _, r := range f.rules {
+		if !current[r.ID] {
+			t.Fatal("rule not owned by the replacement guard")
+		}
+	}
+	if n := interfacePermits(f.rules); n != 4 {
+		t.Fatal("missing interface permits", n)
+	}
+	assertCoreExceptions(t, f.rules, true)
+}
+
+// Detach hands protection over without a gap: the filters stay until a later
+// Arm, possibly from a new process, replaces them, and its Close removes all.
+func TestDetachKeepsProtectionUntilReplaced(t *testing.T) {
+	f := &fakeAPI{}
+	early := armFake(t, f, 0)
+	installed := len(f.rules)
+	if err := early.Detach(); err != nil || !f.closed || len(f.rules) != installed {
+		t.Fatal("detach changed protection", err, f.closed, len(f.rules))
+	}
+	if err := early.Detach(); err != nil {
+		t.Fatal("second detach failed", err)
+	}
+	if err := early.Close(); !errors.Is(err, errDetached) || len(f.rules) != installed {
+		t.Fatal("closing a detached guard removed protection", err, len(f.rules))
+	}
+	g := armFake(t, f.reopen(), 42)
+	if len(f.rules) != len(g.ids) || interfacePermits(f.rules) != 4 {
+		t.Fatal("new session did not replace detached protection", len(f.rules), len(g.ids))
+	}
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.rules) != 0 || f.hasProvider || f.hasLayer || !f.closed {
+		t.Fatal("close left Bimeron objects", len(f.rules), f.hasProvider, f.hasLayer, f.closed)
+	}
 }
 
 // TestLiveCoreExceptionCondition installs the rule set in a WFP transaction

@@ -92,6 +92,11 @@ func interfaceLUID(index int) (uint64, error) {
 	}
 	return luid, nil
 }
+
+// Arm installs persistent protection and replaces any earlier Bimeron rules in
+// the same transaction. Index 0 means the tunnel adapter does not exist yet:
+// the rule set is identical except that no tunnel interface is permitted, so a
+// run can be protected before its first adapter and re-armed once it exists.
 func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -101,9 +106,11 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 	if err != nil {
 		return nil, err
 	}
-	luid, err := interfaceLUID(index)
-	if err != nil {
-		return nil, err
+	var luid uint64
+	if index != 0 {
+		if luid, err = interfaceLUID(index); err != nil {
+			return nil, err
+		}
 	}
 	plan, err := Plan(p, disableIPv6)
 	if err != nil {
@@ -121,6 +128,9 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 	}
 	return g, nil
 }
+
+// arm builds the only rule set. A zero luid omits the tunnel interface permit;
+// no valid interface has LUID 0.
 func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 	core, err := coreConditions(app)
 	if err != nil {
@@ -162,9 +172,11 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 			installErr = err
 			break
 		}
-		if err = add(layer, ^uint64(0)-1, true, match(wf.FieldIPLocalInterface, luid)); err != nil {
-			installErr = err
-			break
+		if luid != 0 {
+			if err = add(layer, ^uint64(0)-1, true, match(wf.FieldIPLocalInterface, luid)); err != nil {
+				installErr = err
+				break
+			}
 		}
 		ipv6 := layer == wf.LayerALEAuthConnectV6 || layer == wf.LayerALEAuthRecvAcceptV6
 		loop := netip.MustParsePrefix("127.0.0.0/8")
@@ -235,13 +247,33 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 	}
 	return g, nil
 }
+
+var errDetached = errors.New("kill switch guard is detached")
+
+// Close removes all Bimeron-owned WFP objects and closes the session.
 func (g *Guard) Close() error {
 	if g == nil {
 		return nil
 	}
+	if g.s == nil {
+		// The filters belong to whoever re-armed or will recover them.
+		return errDetached
+	}
 	err := g.s.Transaction(func() error { return remove(g.s) })
 	closeErr := g.s.Close()
+	g.s = nil
 	return errors.Join(err, closeErr)
+}
+
+// Detach closes the WFP session and leaves the persistent filters installed,
+// for a later Arm to replace or Recover to remove. It is idempotent.
+func (g *Guard) Detach() error {
+	if g == nil || g.s == nil {
+		return nil
+	}
+	err := g.s.Close()
+	g.s = nil
+	return err
 }
 func remove(s api) error {
 	rules, err := owned(s)
