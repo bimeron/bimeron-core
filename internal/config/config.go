@@ -2,16 +2,14 @@
 package config
 
 import (
-	"bimeron/internal/geofile"
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,10 +20,14 @@ import (
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/problem"
 	"bimeron/internal/routing"
+	"bimeron/internal/safefile"
 	"bimeron/internal/systemvpn"
 )
 
-const maxSize = 64 * 1024
+const (
+	maxSize    = 64 * 1024
+	maxGeoSize = 64 * 1024 * 1024
+)
 
 type File struct {
 	Version          int
@@ -100,14 +102,16 @@ type Tunnel struct {
 var interfaceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`)
 
 func readFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
+	b, err := safefile.Read(path, maxSize)
+	switch {
+	case errors.Is(err, safefile.ErrNotLocal):
+		return nil, problem.New("file_path_not_local", "configuration or key file must be on the local file system")
+	case errors.Is(err, safefile.ErrNotRegular):
+		return nil, problem.New("file_not_regular", "configuration or key path must name a data file")
+	case errors.Is(err, safefile.ErrTooLarge):
+		return nil, problem.New("file_too_large", "configuration or key file exceeds size limit").Arg("limit", "64 KiB")
+	case err != nil:
 		return nil, problem.New("file_unreadable", "could not read configuration or key file")
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxSize+1))
-	if err != nil || len(b) > maxSize {
-		return nil, problem.New("file_too_large", "configuration or key file exceeds size limit or cannot be read").Arg("limit", "64 KiB")
 	}
 	return b, nil
 }
@@ -1272,17 +1276,12 @@ func readGeoData(profile, resource, kind string) ([]byte, error) {
 	if !filepath.IsAbs(resource) {
 		resource = filepath.Join(filepath.Dir(profile), resource)
 	}
-	f, err := geofile.Open(resource)
-	if err != nil {
-		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, 64*1024*1024+1))
-	if err != nil {
-		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
-	}
-	if len(b) > 64*1024*1024 {
+	b, err := safefile.Read(resource, maxGeoSize)
+	if errors.Is(err, safefile.ErrTooLarge) {
 		return nil, &routing.GeoDataError{Code: "geodata_limit", Kind: kind, Err: fmt.Errorf("dataset exceeds size limit")}
+	}
+	if err != nil {
+		return nil, &routing.GeoDataError{Code: "geodata_unreadable", Kind: kind, Err: fmt.Errorf("dataset file unreadable")}
 	}
 	return b, nil
 }

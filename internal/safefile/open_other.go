@@ -1,6 +1,6 @@
 //go:build !linux && !darwin && !android
 
-package geofile
+package safefile
 
 import "os"
 

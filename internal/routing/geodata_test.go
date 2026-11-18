@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"regexp/syntax"
 	"strings"
 	"testing"
 
@@ -251,36 +252,46 @@ func TestGeoMalformed(t *testing.T) {
 	}
 }
 func TestGeoLimits(t *testing.T) {
-	cases := []struct {
-		name     string
-		ip, site []byte
-	}{
-		{"bytes", make([]byte, maxGeoBytes+1), nil},
+	type limitCase struct {
+		name, limit string
+		ip, site    []byte
 	}
+	cases := []limitCase{{"bytes", "", make([]byte, maxGeoBytes+1), nil}}
 	var groups []byte
 	for i := 0; i <= maxGeoGroups; i++ {
 		groups = append(groups, geoGroup(fmt.Sprintf("g%d", i))...)
 	}
-	cases = append(cases, struct {
-		name     string
-		ip, site []byte
-	}{"groups", groups, nil})
-	var patterns [][]byte
-	for i := 0; i <= maxGeoRegex; i++ {
-		patterns = append(patterns, geoDomain(1, "x"))
+	cases = append(cases, limitCase{"groups", "", groups, nil})
+	regexCase := func(limit string, n int, value string) {
+		patterns := make([][]byte, n)
+		for i := range patterns {
+			patterns[i] = geoDomain(1, value)
+		}
+		cases = append(cases, limitCase{fmt.Sprintf("%s %.40q", limit, value), limit, nil, geoGroup("regex", patterns...)})
 	}
-	cases = append(cases, struct {
-		name     string
-		ip, site []byte
-	}{"regex count", nil, geoGroup("regex", patterns...)})
-	patterns = nil
-	for i := 0; i <= maxGeoRegexBytes/maxGeoString; i++ {
-		patterns = append(patterns, geoDomain(1, strings.Repeat("x", maxGeoString)))
+	weight := func(value string) (insts, runes int) {
+		tree, err := syntax.Parse(value, syntax.Perl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return regexWeight(tree)
 	}
-	cases = append(cases, struct {
-		name     string
-		ip, site []byte
-	}{"regex bytes", nil, geoGroup("regex", patterns...)})
+	nested := strings.Repeat("(", 490) + `\pL` + strings.Repeat(")", 490)
+	regexCase("regex count", maxGeoRegex+1, "x")
+	regexCase("regex bytes", maxGeoRegexBytes/maxGeoRegexLen+1, "["+strings.Repeat("a", maxGeoRegexLen-2)+"]")
+	regexCase("regex length", 1, strings.Repeat("x", maxGeoRegexLen+1))
+	regexCase("regex instructions", 1, strings.Repeat("[a-z]{1000}", 5))
+	regexCase("regex instructions", 1, "(?:"+strings.Repeat("a?", 300)+"){1000}")
+	// Anchored patterns below stay under the instruction limits but would
+	// retain large rune sets after one-pass compilation.
+	regexCase("regex runes", 1, `^\pL{1000}\pL{1000}\pL{1000}\pL{1000}$`)
+	regexCase("regex runes", 1, `^\pL{990}$`)
+	regexCase("regex runes", 1, "^"+nested+"$")
+	regexCase("regex runes", 1, `^\pL{23}$`)
+	insts, _ := weight("[a-z]{1000}")
+	regexCase("total regex instructions", maxGeoRegexInsts/insts+1, "[a-z]{1000}")
+	_, runes := weight(`^\pL{22}$`)
+	regexCase("total regex runes", maxGeoRegexRunes/runes+1, `^\pL{22}$`)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := DecodeGeoData(tc.ip, tc.site)
@@ -288,7 +299,37 @@ func TestGeoLimits(t *testing.T) {
 			if !errors.As(err, &ge) || ge.Code != "geodata_limit" {
 				t.Fatal(err)
 			}
+			var limit geoLimit
+			if errors.As(err, &limit) != (tc.limit != "") || string(limit) != tc.limit {
+				t.Fatalf("limit %q: %v", limit, err)
+			}
 		})
+	}
+}
+func TestGeoRegexAccepted(t *testing.T) {
+	values := []string{
+		`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`,
+		`^r+[0-9]+(---|\.)sn-(2x3|ni5|j5o)\w{5}\.googlevideo\.com$`,
+		`^(.+\.)?example\.com$`,
+		`^[a-z]{1000}$`,
+		`^\pL{22}$`,
+	}
+	entries := make([][]byte, len(values))
+	for i, v := range values {
+		entries[i] = geoDomain(1, v)
+	}
+	d, err := DecodeGeoData(nil, geoGroup("regex", entries...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := d.sites["regex"]
+	for _, s := range []string{"host-1", "r1---sn-2x3abcde.googlevideo.com", "a.example.com", strings.Repeat("q", 1000), strings.Repeat("ж", 22)} {
+		if !g.matches(s) {
+			t.Fatal(s)
+		}
+	}
+	if g.matches("a.example.org") {
+		t.Fatal("unexpected match")
 	}
 }
 func TestGeoDirectPrefixes(t *testing.T) {
@@ -309,6 +350,8 @@ func FuzzDecodeGeoData(f *testing.F) {
 	f.Add(a, b)
 	f.Add([]byte{0}, []byte{10, 255})
 	f.Add([]byte{}, []byte{})
+	f.Add([]byte{}, geoGroup("regex", geoDomain(1, "(?:a?a?){1000}"), geoDomain(1, `[a-z]{1000}\pL`)))
+	f.Add([]byte{}, geoGroup("regex", geoDomain(1, `^\pL{22}$`), geoDomain(1, `^\pL{990}$`)))
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		if len(a)+len(b) > 1<<20 {
 			t.Skip()
