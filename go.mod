@@ -3,7 +3,7 @@ module bimeron
 go 1.26.11
 
 require (
-	github.com/Microsoft/go-winio v0.6.2
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/apernet/hysteria/core/v2 v2.13.0
 	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
 	github.com/dunglas/httpsfv v1.1.0
