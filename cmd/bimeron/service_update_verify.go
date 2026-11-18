@@ -74,7 +74,10 @@ func verifyUpdateFile(path, want string) error {
 // filling the system volume. Tests lower it.
 var maxUpdateSourceSize int64 = 256 << 20
 
-var errUpdateSourceNotRegular = errors.New("update source must be a regular file, not a link")
+var (
+	errUpdateSourceNotRegular = errors.New("update source must be a regular file")
+	errUpdateSourceLink       = errors.New("update source must be the file itself, not a symbolic link or junction")
+)
 
 // copyUpdateData copies at most maxUpdateSourceSize bytes, then syncs and closes out.
 func copyUpdateData(out *os.File, in io.Reader) error {
