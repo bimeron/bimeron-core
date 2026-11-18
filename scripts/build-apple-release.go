@@ -28,7 +28,7 @@ func run() error {
 	version := flag.String("version", "", "explicit approved exact version")
 	revision := flag.String("revision", "", "explicit approved full source revision")
 	out := flag.String("out", ".tmp/apple-release", "local output directory")
-	goPath := flag.String("go", filepath.Join(runtime.GOROOT(), "bin", "go"), "installed exact go1.26.9 compiler")
+	goPath := flag.String("go", filepath.Join(runtime.GOROOT(), "bin", "go"), "installed exact go1.26.11 compiler")
 	gitPath := flag.String("git", "git", "installed Git executable")
 	flag.Parse()
 	if os.Getenv("GOFLAGS") != "" {
@@ -96,8 +96,8 @@ func run() error {
 		return e
 	}
 	v := strings.TrimSpace(string(compiler))
-	if v != "go version go1.26.9 darwin/arm64" && v != "go version go1.26.9 darwin/amd64" {
-		return fmt.Errorf("unsupported compiler: %s; require exact go1.26.9 darwin/arm64 or darwin/amd64", v)
+	if v != "go version go1.26.11 darwin/arm64" && v != "go version go1.26.11 darwin/amd64" {
+		return fmt.Errorf("unsupported compiler: %s; require exact go1.26.11 darwin/arm64 or darwin/amd64", v)
 	}
 	head, e := command(git, "rev-parse", "HEAD")
 	if e != nil {
