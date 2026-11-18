@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -17,6 +18,29 @@ import (
 
 var provider = wf.ProviderID(windows.GUID{Data1: 0x9e7f8658, Data2: 0x5303, Data3: 0x43dd, Data4: [8]byte{0xa2, 0x80, 0x85, 0x96, 0xf9, 0x07, 0x0b, 0x31}})
 var sublayer = wf.SublayerID(windows.GUID{Data1: 0xb1379d15, Data2: 0x3743, Data3: 0x45d0, Data4: [8]byte{0x9f, 0x51, 0xf1, 0x8c, 0x21, 0xa9, 0x42, 0x97}})
+
+// coreTokenSDDL limits the core executable exception to SYSTEM and elevated
+// Administrators. WFP evaluates ALE_USER_ID with an access check for
+// FWP_ACTRL_MATCH_FILTER (0x1, "CC"); a filtered administrator token carries
+// BUILTIN\Administrators as deny-only and therefore does not match.
+const coreTokenSDDL = "O:SYG:SYD:(A;;CC;;;BA)(A;;CC;;;SY)"
+
+var coreTokenSD = sync.OnceValues(func() (*windows.SECURITY_DESCRIPTOR, error) {
+	return windows.SecurityDescriptorFromString(coreTokenSDDL)
+})
+
+// coreConditions binds the executable exception to both the image path and an
+// administrative token; the image path alone is not a security principal.
+func coreConditions(app string) ([]*wf.Match, error) {
+	sd, err := coreTokenSD()
+	if err != nil {
+		return nil, err
+	}
+	return []*wf.Match{
+		{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: app},
+		{Field: wf.FieldALEUserID, Op: wf.MatchTypeEqual, Value: sd},
+	}, nil
+}
 
 type api interface {
 	Transaction(func() error) error
@@ -98,6 +122,10 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 	return g, nil
 }
 func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
+	core, err := coreConditions(app)
+	if err != nil {
+		return nil, err
+	}
 	prior, err := owned(s)
 	if err != nil {
 		return nil, err
@@ -130,7 +158,7 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 	match := func(f wf.FieldID, v any) *wf.Match { return &wf.Match{Field: f, Op: wf.MatchTypeEqual, Value: v} }
 	var installErr error
 	for _, layer := range []wf.LayerID{wf.LayerALEAuthConnectV4, wf.LayerALEAuthConnectV6, wf.LayerALEAuthRecvAcceptV4, wf.LayerALEAuthRecvAcceptV6} {
-		if err = add(layer, ^uint64(0), true, match(wf.FieldALEAppID, app)); err != nil {
+		if err = add(layer, ^uint64(0), true, core...); err != nil {
 			installErr = err
 			break
 		}

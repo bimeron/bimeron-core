@@ -27,6 +27,10 @@ and removal use atomic WFP transactions.
 - Connections through the Bimeron interface are allowed.
 - The core executable itself is allowed to operate the upstream transport,
   `ssconf`, service DNS, and direct forwarding according to core policy.
+  This exception applies only to processes of the core image that run as
+  `SYSTEM` or with an elevated administrator token. Other instances of the same
+  executable, such as CLI commands started by a standard user or from a
+  non-elevated terminal, are subject to the same rules as other applications.
 - Other applications may access destinations outside the tunnel only through
   `direct`. `proxy` and `block` deny such access. First-match order is
   retained, including multiple CIDRs in one section. `Default = direct` allows
