@@ -801,11 +801,12 @@ func TestRunPanicRetainsProtection(t *testing.T) {
 	}
 }
 
-// Flapping interfaces end at most one wait per cycle early: the pause between
-// cycles is kept.
+// Flapping interfaces end at most one wait per cycle early, so they cannot
+// cut every backoff: after one early attempt the next backoff runs out.
 func TestNetworkFlapsWakeOncePerCycle(t *testing.T) {
 	var opens atomic.Int32
 	e := waitingEngine(t, &opens, 0)
+	e.opts.RetryMin, e.opts.CycleRetryMax = time.Hour, time.Hour
 	var generation atomic.Int64
 	e.observe = func(string) string { return strconv.FormatInt(generation.Add(1), 10) }
 	e.pollEvery = time.Millisecond
@@ -813,11 +814,10 @@ func TestNetworkFlapsWakeOncePerCycle(t *testing.T) {
 	if err := e.Start(ctx, testConfig()); err != nil {
 		t.Fatal(err)
 	}
-	s := awaitWaiting(t, e)
-	before := opens.Load()
+	awaitStatus(t, e, func(s Status) bool { return opens.Load() == 2 && s.ReconnectAttempt == 2 })
 	time.Sleep(50 * time.Millisecond)
-	if after := e.Status(); after.ReconnectPhase != PhaseWaiting || after.ReconnectCycle != s.ReconnectCycle || opens.Load() != before {
-		t.Fatal("network flaps bypassed the pause", after, opens.Load(), before)
+	if s := e.Status(); opens.Load() != 2 || s.ReconnectAttempt != 2 || s.ReconnectCycle != 1 {
+		t.Fatal("network flaps bypassed the backoff", s, opens.Load())
 	}
 	if err := e.Stop(ctx); err != nil {
 		t.Fatal(err)
