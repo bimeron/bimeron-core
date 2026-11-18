@@ -66,12 +66,15 @@ These local details are not included in doctor output or the event log.
 | stats | Counters from the last Start, retained after Stop |
 | stats_snapshot | Counters bound to a session; see [below](#optional-session-bound-statistics) |
 | auth_pending / auth_reply | Interactive SSH authentication; see [SSH.MD](SSH.MD) |
+| reconnect_now | Ends a pending recovery wait or retries a held failed session; see [below](#reconnect-recovery-and-kill-switch-hold) |
 | stop | Waits for session cleanup; the daemon remains available |
 | shutdown | Waits for cleanup and exits the daemon; remains available on error |
 
 States: disconnected, connecting, connected, reconnecting, stopping, failed.
 Repeated stop is safe. Concurrent mutating commands are serialized.
-Starting an active session again returns session_already_running.
+Starting an active session again returns session_already_running, except for
+a failed session whose kill switch is held (see
+[Kill switch hold](#kill-switch-hold)).
 ID provides correlation, not request deduplication. If a start response is lost,
 check status first. If a stop response is lost, repeat stop.
 
@@ -79,8 +82,8 @@ Error codes: `unsupported_protocol`, `invalid_request`, `invalid_cursor`,
 `absolute_config_path_required`, `invalid_configuration`, `session_already_running`,
 `session_start_failed`, `session_stop_failed`, `daemon_shutting_down`,
 `unknown_command`, `response_too_large`, `stale_instance`, `stale_session`,
-`invalid_auth_challenge`, `invalid_auth_response`, and
-`ikev2_requires_foreground_user_session`.
+`invalid_auth_challenge`, `invalid_auth_response`, `kill_switch_held`,
+`reconnect_not_pending`, and `ikev2_requires_foreground_user_session`.
 Check the code, not console text. Connection-failure details are available through
 Status.LastError and events; display a generic message for an unknown diagnostic
 code. Responses do not contain secrets or configuration contents.
@@ -259,13 +262,16 @@ hello/version. Without the flag, do not send guards. A guarded client copies
 ```
 
 - `start` succeeds only for the current instance with no active session; omit
-  `session`.
-- `stop` requires the current instance and the ID of the active session.
+  `session`. A failed session with a held kill switch does not block it (see
+  [Kill switch hold](#kill-switch-hold)).
+- `stop` and `reconnect_now` require the current instance and the ID of the
+  active session.
 - `stale_instance`: the daemon restarted. `stale_session`: the session was
   replaced or already stopped. A guarded start during an active session returns
   `session_already_running`.
-- `invalid_request`: `session` without `instance`, guarded stop without
-  `session`, or guards on any other command, including `shutdown`.
+- `invalid_request`: `session` without `instance`, guarded stop or
+  `reconnect_now` without `session`, or guards on any other command, including
+  `shutdown`.
 
 Guard fields must be non-null strings: an empty `instance`, a `null` identity, or
 `session` without `instance` is rejected before any command runs, and such
@@ -316,50 +322,179 @@ TCP statistics update after every successful write, not only when a connection
 closes. Adding optional fields is compatible: the GUI must ignore unknown response
 fields. The GUI must not assume that every platform has identical capabilities.
 
-## Bounded reconnect recovery (Desktop 0.3.0)
+## Reconnect recovery and kill switch hold
 
-Core allows three reconnect attempts after a failed initial Open or a later
-interruption. The initial Open is excluded. Both ordinary close/open recovery
-and persistent tunnel transport recovery use this policy. Successful connection
-resets the recovery budget for the next interruption. Nonretryable failures stop
-immediately. Stop cancels pending backoff and recovery. After the third failure,
-Core cleans up and enters `failed` with the final `LastError` and `ErrorStage`;
-a cleanup failure takes precedence. No fourth attempt is scheduled.
+<a id="bounded-reconnect-recovery-desktop-030"></a>
 
-A later `stop`, `shutdown` or service stop reports only teardown. After reconnect
-exhaustion or `session_stopped_unexpectedly`, teardown has already completed:
-`stop` and `shutdown` succeed, and the daemon exits with status 0. `Status` keeps
-`failed`, `LastError` and recovery progress. A session that ended with a cleanup
-failure still returns `session_stop_failed` and a nonzero daemon exit, because
-service repair uses that exit status as cleanup evidence.
+### Recovery policy
 
-Status and every Event add optional capitalized integer fields:
+A run is everything between an accepted `start` and the end of its session.
+Recovery depends on whether the run has reached `connected`:
 
-- `ReconnectAttempt`: upcoming/current recovery attempt, 1 through 3. Published
-  before its backoff, retained after exhaustion, reset on success/disconnection
-  and a new Start. A cleanup transition can precede scheduling the first retry.
-- `ReconnectLimit`: 3 while recovery progress is present; omitted when reset.
+- **Initial connection** (before the first `connected` of a run, including a
+  GUI auto-connect): the first attempt plus up to 3 retries with 1, 2 and 4
+  second backoff, then `failed`. A nonretryable failure is `failed` at once.
+- **Loss of an established session**: recovery continues in cycles until
+  success or an explicit stop. A cycle has up to 10 attempts with 1, 2, 4, 8,
+  then 15 second backoff. After a failed cycle, Core waits 60 seconds (phase
+  `waiting`), then starts the next cycle with an immediate first attempt. A
+  connection that drops again within 1 minute of `connected` continues the
+  previous cycle position instead of starting a fresh cycle.
 
-Zero values are omitted. `Attempt` retains its cumulative per-Start semantics,
-including initial Open and transport generations; it is not a recovery counter.
-`reconnect_attempt` events publish progress even when state/error did not change.
-Status remains authoritative if events are dropped. `LastError` carries the last
-catalog code, not the generic retry log message. Localize it through the error
-catalog and retain its textual code in the tooltip, including terminal failure.
+Any scheduled wait, either a backoff or the pause between cycles, ends early on
+`reconnect_now`, on a change of local network interfaces (checked every 5
+seconds) or on a detected resume from sleep. An attempt in progress is never
+interrupted. Stop cancels pending waits and attempts.
 
-These fields are additive: IPC remains version 1, profile format remains 1 and
-`release/compatibility.json` is unchanged (GUI `[0.3.0, 0.3.1)`, IPC 1/1).
-Older services can omit both fields; GUIs must not infer a `/3` limit from
-`Attempt`, count log messages, or terminate a service-owned connection locally.
-The frozen e1cada7d candidate is unchanged; Desktop 0.3.0 requires a new reviewed
-Core master candidate containing this change before release acceptance.
+After loss of an established session, failures that end an initial connection
+are retried in the same cycles, for example an unavailable `ssconf` key (HTTP
+401, 403, 404 or 410), a TLS or handshake rejection, a changed `ssconf`
+transport, SSH authentication or loss of the tunnel adapter. `LastError` keeps
+the specific code. These still end the run with `failed`: codes ending in
+`_run_recover` (cleanup or protection failures), a failed session close and a
+maintenance seal.
 
-Local validation for issue #136: Windows amd64 `go vet ./...` and
-`go test -p 1 ./...` passed; `go test -race ./core ./internal/control` passed.
-The core suite also passed ten consecutive runs. Added tests assert both wire
-field names in status/events, exact exhaustion, cleanup priority, reset on
-success, cancellation during backoff and omission after reset. Existing
-persistent-success and cancellation fixtures remain green. Diff review found no
-compatibility/profile version changes. Benchmarks/profiling are not applicable
-to this bounded control-flow correction. Cross-platform CI, a merge commit on
-master and new-candidate Desktop VM acceptance remain release gates.
+Ordinary close/open recovery and persistent tunnel recovery share this policy.
+A persistent VPN session keeps its tunnel while the transport recovers: `proxy`
+traffic is blocked and `direct` traffic continues. Failures of the tunnel itself
+(`tunnel_adapter_lost`, `dns_recovery_failed`, `conflicting_dns_policy`,
+`adapter_name_in_use`) close the tunnel and open it again. Native IKEv2
+sessions keep the bounded policy (3 retries) and do not use cycles.
+
+### Kill switch hold
+
+With `[Interface] KillSwitch = true` (VPN mode on Windows and Linux), Core
+installs protection as the first step of a run, before network inspection,
+key or `ssconf` resolution, bootstrap DNS and the transport check. Protection
+stays installed through every attempt and wait, and while `failed`. It is
+released only when the session is stopped: `stop` or `shutdown` (IPC or CLI),
+Ctrl+C of a foreground `bimeron connect`, or a service stop, followed by
+successful cleanup. See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD).
+
+A `start` with the kill switch enabled returns only after the run has installed
+its protection or failed to, so an accepted `start` never precedes protection.
+A maintenance seal ends the run like a service stop and releases protection.
+The filters are persistent: after a crash, a forced process termination or a
+power loss during any phase they stay installed until a session with the kill
+switch replaces them or `bimeron recover` removes them. A new run that fails in
+setup before it installs protection (for example `session_lock_failed`) after
+a handover leaves the earlier filters in place; use `recover`.
+
+With the kill switch enabled, a run that reaches `failed` stays open. Status
+shows `failed` with `LastError`, `KillSwitch: "holding"` and
+`Session.active: true`. In this state:
+
+- `reconnect_now` restarts the initial attempts (first attempt plus 3 retries)
+  with the same profile. Protection stays installed. Network changes and resume
+  do not restart a held session.
+- `start` with a profile that also enables the kill switch in VPN mode (not
+  IKEv2) replaces the held session without releasing protection; the new run
+  replaces the filters transactionally. A guarded `start` is admitted in this
+  state. Any other profile is rejected with `kill_switch_held`; send `stop`
+  first.
+- `stop` and `shutdown` release protection. If removal fails, the session ends
+  `failed` with `cleanup_failed_run_recover`, the command returns
+  `session_stop_failed` and protection stays until `bimeron recover`.
+
+With the kill switch disabled, the same recovery policy applies, but there is
+no guarantee that traffic does not leave outside the tunnel while connecting,
+reconnecting or after `failed`. A failed run without held protection ends:
+`Session.active` becomes `false`.
+
+`stop`, `shutdown` and service stop report only their own teardown. When a run
+without held protection has already ended in `failed` (bounded attempts
+exhausted, a nonretryable failure or `session_stopped_unexpectedly`), teardown
+has already completed: `stop` and `shutdown` succeed and the daemon exits with
+status 0. A held run is torn down by the stop itself, which reports the result
+of that teardown. `Status` keeps `failed`, `LastError` and recovery progress
+until the next transition. A session that ended with a cleanup failure still
+returns `session_stop_failed` and a nonzero daemon exit, because service repair
+uses that exit status as cleanup evidence.
+
+### Status and event fields
+
+Status and every Event carry these optional capitalized fields. Zero values are
+omitted.
+
+- `ReconnectAttempt` (integer): upcoming or current attempt, 1 to 3 during
+  initial retries and 1 to 10 within a cycle. Published before its backoff and
+  omitted during `waiting`. Retained in `failed` after the initial attempts;
+  reset on `connected`, `disconnected`, a new `start` and `reconnect_now` on a
+  held session.
+- `ReconnectLimit` (integer): 3 during initial retries, 10 within a cycle;
+  present together with `ReconnectAttempt`.
+- `ReconnectCycle` (integer): the current or most recent cycle (1-based) after
+  loss of an established session; omitted during initial attempts. During
+  `waiting` it is the cycle that just failed; it increments when the next cycle
+  starts.
+- `ReconnectPhase` (string): `attempting` while an attempt is scheduled
+  (`NextAttemptAt` is set) or running (`NextAttemptAt` is omitted); `waiting`
+  during the pause between cycles. Omitted outside `reconnecting`, and briefly
+  while the previous session closes before the first attempt is scheduled.
+- `NextAttemptAt` (RFC 3339 UTC timestamp, whole seconds): when the next
+  scheduled attempt or cycle starts. Omitted when nothing is scheduled: an
+  attempt is in progress, or the state is not `reconnecting`. It uses the core
+  host's clock; compute countdowns locally from it.
+- `KillSwitch` (string): `active` while protection is installed and the session
+  is `connected`; `holding` while protection is installed and the tunnel carries
+  no traffic (`connecting`, `reconnecting`, held `failed`, `stopping`): traffic
+  that the routing policy does not send `direct` is blocked until the VPN
+  connects or the session is stopped. Omitted when the run owns no protection
+  (kill switch disabled, proxy mode, native IKEv2, which reports its own
+  protection under `native`) and after the run ends, including when filters
+  remain for `recover` after a cleanup failure.
+
+`Attempt` keeps its cumulative per-Start semantics, including initial Open and
+transport generations; it is not a recovery counter. Status remains
+authoritative if events are dropped. `LastError` carries the last catalog code,
+not the generic retry log message; localize it through the error catalog and
+keep its textual code visible, including in `failed`.
+
+Progress event codes (not catalog codes):
+
+| Code | Meaning |
+|---|---|
+| `reconnect_attempt` | An attempt is scheduled, or a new cycle starts; published even when state and error did not change |
+| `reconnect_wait` | A cycle failed; waiting for the next cycle |
+| `reconnect_requested` | `reconnect_now` ended a wait or restarted a held session |
+| `network_changed`, `resume_detected` | A network change or resume from sleep ended a wait early (also reported by session monitoring) |
+| `kill_switch_holding` | Protection was installed at the start of a run |
+| `kill_switch_held` | The run failed and protection is held until stop |
+
+### `reconnect_now` command
+
+```json
+{"version":1,"id":"retry-1","command":"reconnect_now","instance":"<hello.instance>","session":"<status.Session.id>"}
+```
+
+Admission matches `stop`: with `instance`, the request must name the active
+session; without `instance` and `session` it runs unguarded, as the CLI
+`bimeron reconnect` does. `config` and `after` are rejected with
+`invalid_request`. The command ends a pending wait (backoff or pause between
+cycles) or restarts the attempts of a held failed session. It never cancels an
+attempt in progress. Errors: `reconnect_not_pending` (no wait is pending and no
+session is held), `stale_session`, `stale_instance` and `invalid_request`.
+
+Capabilities add two booleans. `reconnect_now` reports that the daemon accepts
+the command. `kill_switch_hold` reports that an enabled kill switch is held from
+start until an explicit stop and published in `Status.KillSwitch`; it is `true`
+on Windows and Linux. Older cores omit both.
+
+### Compatibility
+
+All fields, events, the command and the `kill_switch_held` and
+`reconnect_not_pending` errors are additive: IPC remains version 1 and profile
+format remains 1. Older services omit the new fields; GUIs must not infer a
+limit from `Attempt`, count log messages, or terminate a service-owned
+connection locally. Desktop 0.3.0 behavior with this policy is listed in
+[GUI_INTEGRATION.MD](GUI_INTEGRATION.MD#desktop-030-compatibility).
+`release/compatibility.json` currently accepts GUI `[0.3.0, 0.3.1)`; the release
+that ships Desktop 0.3.1 support must widen that range.
+
+Automated tests cover cycle backoff and pauses, flap handling, early wake on
+`reconnect_now` and network change, stop during a wait, IKEv2 exclusion, the
+held kill switch after initial and nonretryable failures, retry and handover of
+a held session, cleanup and release failures, guarded `reconnect_now` and
+`start` admission, early Windows arming and detach through a stub WFP API, and
+the early Linux nftables guard. Real-network validation on Windows and Linux
+remains a release gate.

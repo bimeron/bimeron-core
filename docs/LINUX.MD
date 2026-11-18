@@ -110,8 +110,11 @@ normal routing applies. This is not a VPN gateway for other machines.
 The table is installed when a run starts, before access key resolution,
 bootstrap DNS and the upstream connection; until the TUN exists, only loopback,
 marked core sockets, DHCP, IPv6 ND and `direct` CIDRs leave the host. It stays
-installed across every reconnect attempt, including failed and closed sessions,
-and is removed only when the run ends with an explicit stop.
+installed across every reconnect attempt, recovery wait, closed session and
+`failed`, and is removed only when the session is stopped (`stop`, `shutdown`,
+Ctrl+C, SIGTERM or SIGHUP of the daemon, or a service stop); see
+[CONTROL.MD](CONTROL.MD#kill-switch-hold). Without the kill switch, traffic can
+leave outside the tunnel while connecting, reconnecting or after a failure.
 
 nftables rules survive SIGKILL. Restarting with the kill switch enabled retains
 protection during preparation and replaces it atomically. Starting with the kill
