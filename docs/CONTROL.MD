@@ -443,6 +443,11 @@ omitted.
   (kill switch disabled, proxy mode, native IKEv2, which reports its own
   protection under `native`) and after the run ends, including when filters
   remain for `recover` after a cleanup failure.
+- `LastErrorPermanent` (boolean): `LastError` is a failure that retrying alone
+  does not fix, for example `access_key_unavailable` (a rejected or removed
+  key) or a TLS rejection. It ends an initial connection at once; after loss of
+  an established session Core still retries it in cycles. Omitted for
+  transient failures and when `LastError` is cleared.
 
 `Attempt` keeps its cumulative per-Start semantics, including initial Open and
 transport generations; it is not a recovery counter. Status remains

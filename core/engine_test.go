@@ -205,7 +205,7 @@ func TestEstablishedPermanentFailureKeepsRecovering(t *testing.T) {
 	for opens.Load() < 5 {
 		time.Sleep(time.Millisecond)
 	}
-	if s := engine.Status(); s.State != Reconnecting || s.LastError != "access_key_unavailable" || s.ReconnectLimit != cycleAttemptLimit || s.ReconnectCycle != 1 {
+	if s := engine.Status(); s.State != Reconnecting || s.LastError != "access_key_unavailable" || !s.LastErrorPermanent || s.ReconnectLimit != cycleAttemptLimit || s.ReconnectCycle != 1 {
 		t.Fatal(s)
 	}
 	if err := engine.Stop(ctx); err != nil {

@@ -246,10 +246,12 @@ backend independently of the top-level packet capabilities (see
 
 Field casing: `status` contains `State`, `Attempt`, `Since`, `LastError`, and the
 optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`, `ReconnectCycle`,
-`ReconnectPhase`, `NextAttemptAt`, `KillSwitch`, `Session`, and `native`; each
+`ReconnectPhase`, `NextAttemptAt`, `KillSwitch`, `LastErrorPermanent`,
+`Session`, and `native`; each
 event contains `Time`, `State`, `Code`, `Message`, `Attempt`, `LastError`, and
 the optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`,
-`ReconnectCycle`, `ReconnectPhase`, `NextAttemptAt`, and `KillSwitch` (see
+`ReconnectCycle`, `ReconnectPhase`, `NextAttemptAt`, `KillSwitch`, and
+`LastErrorPermanent` (see
 [Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold)).
 All other RPC fields use snake_case. Do not normalize names. `Time`, `Since`,
 and `NextAttemptAt` are RFC 3339 timestamps that may include fractional seconds
@@ -822,6 +824,7 @@ Status and every Event carry optional fields; zero values are omitted:
 | `ReconnectPhase` | `attempting` (an attempt is scheduled, with `NextAttemptAt`, or running, without it) or `waiting` (pause between cycles); omitted outside `reconnecting`. |
 | `NextAttemptAt` | RFC 3339 UTC, whole seconds: start of the next scheduled attempt or cycle; omitted when nothing is scheduled. Core host clock. |
 | `KillSwitch` | `active` (protection installed, `connected`) or `holding` (protection installed, the tunnel carries no traffic: `connecting`, `reconnecting`, held `failed`, `stopping`); omitted when the run owns no protection (kill switch disabled, proxy mode, IKEv2) and after the run ends. |
+| `LastErrorPermanent` | `true` when `LastError` is not fixed by retrying alone (for example `access_key_unavailable`, TLS rejection); Core still retries it after loss of an established session. Omitted for transient failures. |
 
 New progress events: `reconnect_wait`, `reconnect_attempt` (also at the start of
 a cycle), `reconnect_requested`, `kill_switch_holding` and `kill_switch_held`;

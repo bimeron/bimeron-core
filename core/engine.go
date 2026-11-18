@@ -27,18 +27,19 @@ const (
 // or credentials. Events may be dropped if the consumer is slow; Status is authoritative.
 
 type Event struct {
-	ReconnectAttempt int       `json:",omitempty"`
-	ReconnectLimit   int       `json:",omitempty"`
-	ReconnectCycle   int       `json:",omitempty"`
-	ReconnectPhase   string    `json:",omitempty"`
-	NextAttemptAt    time.Time `json:",omitzero"`
-	KillSwitch       string    `json:",omitempty"`
-	Time             time.Time
-	State            State
-	Code, Message    string
-	Attempt          int
-	LastError        string
-	ErrorStage       string `json:",omitempty"`
+	ReconnectAttempt   int       `json:",omitempty"`
+	ReconnectLimit     int       `json:",omitempty"`
+	ReconnectCycle     int       `json:",omitempty"`
+	ReconnectPhase     string    `json:",omitempty"`
+	NextAttemptAt      time.Time `json:",omitzero"`
+	KillSwitch         string    `json:",omitempty"`
+	Time               time.Time
+	State              State
+	Code, Message      string
+	Attempt            int
+	LastError          string
+	ErrorStage         string `json:",omitempty"`
+	LastErrorPermanent bool   `json:",omitempty"`
 }
 type Status struct {
 	ReconnectAttempt int `json:",omitempty"`
@@ -60,6 +61,10 @@ type Status struct {
 	Since      time.Time
 	LastError  string
 	ErrorStage string `json:",omitempty"`
+	// LastErrorPermanent marks a LastError that retrying alone does not fix,
+	// for example a rejected access key. It ends an initial connection at
+	// once; after loss of an established session Core still retries it.
+	LastErrorPermanent bool `json:",omitempty"`
 }
 
 // StatsSnapshot binds cumulative counters to a per-Start session.
@@ -248,7 +253,7 @@ func (e *Engine) emitLocked(code, message string) {
 }
 func (e *Engine) eventLocked(code, message string) Event {
 	s := e.statusLocked()
-	return Event{Time: time.Now(), State: s.State, Code: code, Message: message, Attempt: s.Attempt, LastError: s.LastError, ErrorStage: s.ErrorStage,
+	return Event{Time: time.Now(), State: s.State, Code: code, Message: message, Attempt: s.Attempt, LastError: s.LastError, ErrorStage: s.ErrorStage, LastErrorPermanent: s.LastErrorPermanent,
 		ReconnectAttempt: s.ReconnectAttempt, ReconnectLimit: s.ReconnectLimit, ReconnectCycle: s.ReconnectCycle, ReconnectPhase: s.ReconnectPhase, NextAttemptAt: s.NextAttemptAt, KillSwitch: s.KillSwitch}
 }
 func (e *Engine) transition(state State, err error) {
@@ -274,8 +279,10 @@ func (e *Engine) transitionLocked(state State, err error) {
 		} else {
 			e.status.ErrorStage = ""
 		}
+		e.status.LastErrorPermanent = staged != nil && !staged.retry
 	} else if state == Connected || state == Disconnected {
 		e.status.LastError = ""
+		e.status.LastErrorPermanent = false
 		e.status.ReconnectAttempt = 0
 		e.status.ReconnectLimit = 0
 		e.status.ReconnectCycle = 0

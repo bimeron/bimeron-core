@@ -35,7 +35,7 @@ func TestReconnectBudgetExhaustion(t *testing.T) {
 		t.Fatal("missing terminal error")
 	}
 	status := e.Status()
-	if status.State != Failed || status.LastError != "transport_check_failed" || status.ReconnectAttempt != 3 || status.ReconnectLimit != 3 {
+	if status.State != Failed || status.LastError != "transport_check_failed" || status.LastErrorPermanent || status.ReconnectAttempt != 3 || status.ReconnectLimit != 3 {
 		t.Fatal(status)
 	}
 	if status.ReconnectCycle != 0 || status.ReconnectPhase != "" || !status.NextAttemptAt.IsZero() || status.KillSwitch != "" {
