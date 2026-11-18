@@ -4,7 +4,7 @@
 of v0.4.0-beta.1. Publication is pending candidate freeze, VM acceptance of the
 Desktop 0.3.1 candidate with this Core candidate, and explicit approval.
 
-The reviewed source range is `5fcadd71..34433dc6` on master. `5fcadd71` is the
+The reviewed source range is `5fcadd71..aea4fca6` on master. `5fcadd71` is the
 v0.4.0-beta.1 tag commit. The final candidate commit is recorded at freeze.
 
 For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.2/README.md).
@@ -20,7 +20,8 @@ for all users of v0.4.0-beta.1 and earlier.
 ## Fixed vulnerabilities
 
 Updated in [#150](https://github.com/bimeron/bimeron-core/pull/150) (tracked by
-[#149](https://github.com/bimeron/bimeron-core/issues/149)). The impact
+[#149](https://github.com/bimeron/bimeron-core/issues/149)) and
+[#154](https://github.com/bimeron/bimeron-core/pull/154). The impact
 assessment below reflects how Bimeron Core uses each component.
 
 | Advisory | Component | Previous | Fixed | Impact on Bimeron Core |
@@ -30,6 +31,7 @@ assessment below reflects how Bimeron Core uses each component.
 | GO-2026-6348, GO-2026-6061 | `google.golang.org/grpc` | v1.79.3 | v1.83.2 | Medium for gRPC transports |
 | GO-2026-6809 | Go standard library `crypto/x509` | go1.26.9 | go1.26.11 | Low; hardening |
 | GO-2026-6859 | Go standard library `net/http` | go1.26.9 | go1.26.11 | Not practically affected |
+| GO-2026-6866, GO-2026-6860 | `golang.org/x/net` (`html`) | v0.61.0 | v0.62.0 | Not affected; package not built |
 
 ### Certificate decompression in fingerprinted TLS (zstd, brotli)
 
@@ -63,6 +65,13 @@ Go 1.26.11 distrusts certificates issued by compromised intermediate
 certificate authorities. This hardens verification of TLS server certificates
 for all TLS-based protocols and for HTTPS requests such as SSConf and signed
 release acquisition.
+
+### HTML parsing (golang.org/x/net)
+
+The fixed issues are in the `golang.org/x/net/html` package, which Bimeron
+Core does not build. The update removes the module-level finding
+([#154](https://github.com/bimeron/bimeron-core/pull/154), tracked by
+[#151](https://github.com/bimeron/bimeron-core/issues/151)).
 
 ### HTTP server (net/http)
 
