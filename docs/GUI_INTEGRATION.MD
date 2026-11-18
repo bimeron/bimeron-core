@@ -316,7 +316,9 @@ profiles, send `stop`, wait for cleanup, then `start` with the new absolute path
 The exception is a session that owns kill switch protection (`KillSwitch`
 `active` or `holding`): `start` with a different kill switch VPN profile
 replaces it directly without releasing protection, which avoids an unprotected
-gap. A repeated start of the same profile keeps the live session. Hot reload, pause, and
+gap. A repeated start of the same profile keeps the live session; profile
+identity is the file path, so apply edits to the same file with `stop`, then
+`start`. Hot reload, pause, and
 general single-command profile switching are not implemented.
 
 To avoid acting on stale state, a daemon that reports `daemon_session_guards: true`

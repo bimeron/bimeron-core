@@ -843,3 +843,66 @@ func TestNextAttemptAtIsNotEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An abandoned engine accepts no later Start, so nothing can install and then
+// release protection after its owner failed.
+func TestStartAfterAbandonIsRefused(t *testing.T) {
+	e := testEngine(&protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { return fakeSession{}, nil }}})
+	e.MarkAbandon()
+	if err := e.Start(testDeadline(t), killSwitchConfig()); !errors.Is(err, errEngineExiting) {
+		t.Fatal(err)
+	}
+}
+
+// The owner failing while a handover waits for the previous session keeps the
+// previous filters installed and starts no new run.
+func TestAbandonDuringHandoverKeepsProtection(t *testing.T) {
+	release := make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { <-release; return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx, cancel := context.WithCancel(testDeadline(t))
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	result := make(chan error, 1)
+	go func() { result <- e.Start(ctx, otherKillSwitchProfile()) }()
+	awaitStatus(t, e, func(s Status) bool { return s.State == Stopping })
+	e.MarkAbandon()
+	cancel()
+	close(release)
+	if err := <-result; err == nil {
+		t.Fatal("handover started after the owner failed")
+	}
+	if acquires, _, retains, installed := b.snapshot(); acquires != 1 || retains != 1 || !installed {
+		t.Fatal("protection released", acquires, retains, installed)
+	}
+}
+
+// A user's stop already in progress releases protection even if the owner
+// fails meanwhile.
+func TestAbandonDoesNotOverrideUserStop(t *testing.T) {
+	release := make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { <-release; return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.Stop(ctx) }()
+	awaitStatus(t, e, func(s Status) bool { return s.State == Stopping })
+	e.MarkAbandon()
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 0 || installed {
+		t.Fatal("user stop did not release protection", releases, retains, installed)
+	}
+}

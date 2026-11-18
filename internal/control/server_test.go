@@ -235,3 +235,24 @@ func TestListenerFailureAbandonsSessionBeforeCancel(t *testing.T) {
 		t.Fatal("shutdown did not stop the session", stopped.marked, stopped.stopped)
 	}
 }
+
+type panickingListener struct{}
+
+func (panickingListener) Accept() (net.Conn, error) { panic("accept") }
+func (panickingListener) Close() error              { return nil }
+func (panickingListener) Addr() net.Addr            { return &net.TCPAddr{} }
+
+// A panic in Serve keeps kill switch protection: the session is marked
+// abandoned before it is stopped, and the panic is rethrown.
+func TestServePanicAbandonsSession(t *testing.T) {
+	e := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
+	defer func() {
+		if p := recover(); p != "accept" {
+			t.Fatal("panic not rethrown", p)
+		}
+		if !e.marked || !e.stopped {
+			t.Fatal("panic did not abandon the session", e.marked, e.stopped)
+		}
+	}()
+	_ = NewServer(e).Serve(context.Background(), panickingListener{})
+}
