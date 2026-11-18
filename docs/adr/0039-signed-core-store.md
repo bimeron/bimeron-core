@@ -1,6 +1,6 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 2, November 18, 2026. Not accepted. This
+Status: proposed draft, revision 3, November 18, 2026. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
 replacement policy of #140 in [REPAIR_SESSION.md](../REPAIR_SESSION.md).
@@ -96,38 +96,46 @@ Security is the primary goal; implementation complexity is secondary.
 ### Terms
 
 - **Core version**: a string in exactly one grammar, `X.Y.Z` or
-  `X.Y.Z-beta.N`. It has no leading zeros, uses lowercase only, and carries no
-  build metadata; this is the grammar `repair_acquire.go` already enforces.
-  Ordering is SemVer 2.0 precedence. The publisher refuses any other tag. The
-  Go and C++ implementations share one test-vector file
-  (`release/testdata/version-order.json`) that also lists rejected forms. Store
-  directory names must equal the canonical string byte for byte, which rules
-  out case collisions on NTFS.
+  `X.Y.Z-beta.N`, with no leading zeros, lowercase only and no build metadata
+  (the grammar `repair_acquire.go` already enforces). Ordering is SemVer 2.0
+  precedence. The publisher refuses any other tag. Go and C++ share one
+  test-vector file (`release/testdata/version-order.json`) that includes
+  rejected forms. Store directory names must byte-equal the canonical string,
+  so NTFS case collisions cannot occur. Version order is used only for the
+  "never below active" rule and for update selection.
+- **Security level** (proposed, pending confirmation): a non-negative integer
+  that every release carries in its signed manifest and embedded
+  `compatibility.json`. It is shared by the stable and beta channels. The
+  publisher refuses a release whose level is lower than the level of any
+  earlier published release. A release that fixes a security problem raises
+  the level when the fix must never be undone. Integers avoid any version
+  grammar or channel ambiguity in floor decisions.
+- **Security floor**: the minimum security level allowed for installation,
+  switching or use as a repair source. Each manifest states it as
+  `min_security_level`, which is at most its own `security_level`. It is a
+  publisher statement, never user input or local inference.
+- **Elevation floor**: the minimum security level allowed to run elevated in
+  any role, including as the installer of a newer release
+  (`min_elevation_level`). It is normally at or below the security floor, and
+  is raised when updater or broker code itself is affected.
+- **Floor epoch**: an integer that is normally 0. Only a release with the
+  stronger signature policy (see Trust and keys) can raise it. Floors from a
+  lower epoch are ignored; this is the only way floors can go down, and it
+  exists for key-compromise recovery.
 - **Committed version**: a store version that passed a service switch with
-  readiness on this machine, or was republished by repair for the committed
+  readiness on this machine, or that repair republished for the committed
   target. Only committed versions live in `versions/`.
-- **Security floor**: the lowest core version allowed for installation or
-  elevated use. It is a publisher statement carried in signed manifests; it is
-  never typed in by a user or derived from local state alone. Floors are
-  always stable versions. The publisher refuses a release whose floor is lower
-  than the previous release's floor, unless the floor epoch increases.
-- **Elevation floor**: the lowest core version allowed to run elevated in any
-  role, including as an installer of a newer release. It is normally equal to
-  or lower than the security floor. Raise it when the updater or broker code
-  itself is affected.
 - **Active version**: the version the service was last switched to and
   committed.
 - **Usable version** (Desktop selection): a committed version whose signed
-  manifest and members verify, that is at least the effective security floor,
-  and whose signed GUI range includes the running Desktop.
+  manifest and members verify, whose level meets the effective security
+  floor, and whose signed GUI range includes the running Desktop.
 
 ### Store location and protection
 
-The Windows location is open question Q1; the recommended answer is
-`%ProgramFiles%\Bimeron Core\store\`. This is a Core-owned directory beside the
-service, and MSI does not own it.
-
-The initially proposed `%ProgramData%\Bimeron\core\` has two drawbacks:
+Windows (decided): `%ProgramFiles%\Bimeron Core\store\`, a Core-owned
+directory beside the service that MSI does not own. The alternative,
+`%ProgramData%\Bimeron\core\`, was rejected for two reasons:
 
 - Its default DACL lets `Users` create subdirectories, and `CREATOR OWNER` then
   gives the creator full control, so the directory can be squatted.
@@ -135,19 +143,15 @@ The initially proposed `%ProgramData%\Bimeron\core\` has two drawbacks:
   from `%ProgramFiles%` and `%WINDIR%`. Every Desktop CLI launch would then be
   blocked on machines that enforce such rules.
 
-With Program Files, any unexpected pre-existing object under the store root is
+Under Program Files, any unexpected pre-existing object under the store root is
 an error, because only administrators could have created it. No rename-aside
-or adoption logic is needed. If ProgramData is chosen anyway, the creation
-rules below gain the rename-aside procedure: never "fix in place", never delete
-an untrusted tree recursively by path.
+or adoption logic is needed.
 
-The Linux location is open question Q2; the recommended answer is
-`/usr/local/lib/bimeron/store/`. It shares the service's trust domain, and it
+Linux (decided): `/usr/local/lib/bimeron/store/`. It shares the service's trust domain, and it
 avoids `noexec` mounts of `/var` and `var_lib_t` SELinux labeling. Pre-store
 `service uninstall` removes `/usr/local/lib/bimeron` only if it is empty, so the
-store survives. The initially proposed `/var/lib/bimeron/core/` is viable;
-Flatpak executes from `/var/lib/flatpak`. But it needs a diagnostic for
-`noexec` and MAC policy failures.
+store survives. `/var/lib/bimeron/core/` was rejected because of `noexec` and MAC-policy
+risk.
 
 ```text
 <root>/
@@ -222,137 +226,231 @@ Flatpak executes from `/var/lib/flatpak`. But it needs a diagnostic for
 
 ### Manifest schema 2 and signatures
 
-Each release keeps `update-manifest.json`, with `schema: 2`.
+`update-manifest.json` stays the release metadata file, with `schema: 2`.
 
-**Fields**
+**Per-target files.** Each target gains `files`: every ZIP member with `name`,
+`size`, `sha256` and `role`. The roles are `core` (executable), `sidecar`
+(Wintun) and `notice` (license texts). The target keeps its ZIP `name`,
+`size` and `sha256`.
 
-- Each target gains `files`: every ZIP member, with `name`, `size`, `sha256`
-  and `role`. The roles are `core` for the executable, `sidecar` for Wintun,
-  and `notice` for license texts. The target keeps the ZIP record's `name`,
-  `size` and `sha256`.
-- A top-level `security_floor` object holds `{epoch, version}`, and
-  `elevation_floor` holds the same pair. Both come from the reviewed
-  `release/compatibility.json`. Each version must be at most the manifest's
-  own `core_version`, and each floor version must be stable.
-- A top-level `store_contract` integer, initially 1. A binary that meets a
-  higher contract than it implements treats the store as read-only. It never
-  writes to the store, and it reports that a newer component is required.
-- A top-level `source_revision` (the full tag commit) and a `build` record:
-  Go version, `-trimpath`, `CGO_ENABLED`, `GOOS`/`GOARCH`, and the absence of
-  ambient `GOFLAGS`. The publisher signs an archive only if the executable's
-  embedded build information matches the tag commit, shows
-  `vcs.modified=false`, and matches the reviewed settings. The artifacts must
-  come from the same prepared-release build. This is the gate the Apple path
-  already enforces. An independent reproducible rebuild is planned later.
+**Security fields.** Top-level `security_level`, `min_security_level`,
+`min_elevation_level` and `floor_epoch` (see Terms). All come from the
+reviewed `release/compatibility.json`. The publisher refuses a level
+regression and a floor above the release's own level.
 
-**Detached signatures**
+**Store contract.** A top-level `store_contract` integer, initially 1. A
+binary that meets a higher contract than it implements treats the store as
+read-only and reports that a newer component is required.
 
-The detached `update-manifest.json.sig` becomes one or more lines of
-`<key_id> <base64-signature>`, each signature over the exact manifest bytes.
+**Provenance.** A top-level `source_revision` (full tag commit) and a `build`
+record: Go version, `-trimpath`, `CGO_ENABLED`, `GOOS`/`GOARCH`, and no
+ambient `GOFLAGS`. The publisher signs an archive only if its executable's
+embedded build information matches the tag commit, shows
+`vcs.modified=false`, and matches the reviewed settings. The archive must come
+from the same prepared-release build. This is the gate the Apple path already
+enforces. An independent reproducible rebuild is planned later.
 
-- A verifier only tries keys that it trusts and that appear in that list. It
-  verifies over raw bytes before parsing any JSON. It then requires the
-  `key_id` inside the manifest to be one of the keys that verified.
-- The signing policy (Q3) determines how many valid signatures are required.
+**Signed statement.** Every signature, from any key, is a raw Ed25519
+signature (PureEdDSA, RFC 8032) over the same short, domain-separated
+statement:
 
-**Strict decoding in Go and C++**
+```text
+bimeron-update-manifest-v2\n<lowercase hex SHA-256 of the exact manifest bytes>\n
+```
 
-A token-level pre-pass runs before struct decoding. It enforces:
+A short statement fits the input limit of hardware tokens. Domain separation
+prevents a signature made for any other purpose from being accepted.
+Verifiers compute the digest of the exact bytes, build the statement, and
+verify before parsing any JSON.
 
-- a byte-exact allowlist of keys per object, with duplicates rejected by byte
-  equality;
-- rejection of invalid UTF-8, escapes inside keys, non-integer numbers,
-  integers above 2^53, and trailing data.
+**Signature file.** `update-manifest.json.sig` holds one line per signature,
+`<key_id> <base64-signature>`. A verifier tries only keys that it trusts and
+that are listed in the file. It evaluates the signature policy over the keys
+that verified, and finally requires the manifest's own `key_id` list to equal
+the verified set.
 
-Only then are values decoded. Case-insensitive field matching (Go) and
-last-key-wins duplicates (Qt) therefore never apply.
+**Strict decoding (Go and C++).** A token-level pre-pass runs before struct
+decoding. It requires a byte-exact key allowlist per object and rejects
+duplicates by byte equality. It also rejects invalid UTF-8, escapes in keys,
+non-integers, numbers above 2^53 and trailing data. Case-insensitive field
+matching (Go) and last-key-wins duplicates (Qt) therefore cannot matter.
 
-**Publishing rules**
-
-- Backfill is retired. No tool signs metadata for an existing release from
-  whatever assets that release currently holds, or with today's
-  `compatibility.json` for an old tag.
-- The publisher never signs a schema 1 manifest for a store-era version.
-  Desktop 0.3.x accepts only `schema: 1` and single-line signatures, so it fails
-  closed on every store-era release.
+**Publishing rules.** Backfill is retired: nothing signs metadata for an
+existing release from its current assets or with today's
+`compatibility.json`. The publisher never signs a schema 1 manifest for a
+store-era version. Desktop 0.3.x accepts only `schema: 1` and single-line
+signatures, so it fails closed on every store-era release.
 
 ### Trust and keys inside Core
 
 This amends ADR 0002, which kept signing trust out of the privileged
 executable. Repair acquisition already embeds one public key in Core, so this
-step generalizes existing practice. It does not raise the impact of a key
-compromise compared with ADR 0002, because a key trusted by Desktop could
-already authorize SYSTEM installation through the elevated updater.
+generalizes existing practice. It does not raise compromise impact over ADR
+0002: a key that Desktop trusts could already authorize SYSTEM installation
+through the elevated updater.
 
-- Core and Desktop embed the same reviewed key set, generated from one
-  repository file.
-- **Rotation is dual-signing.** Releases carry signatures from both the old
-  and the successor key until the minimum supported store-capable Core and
-  Desktop trust the successor. Then the old key is dropped from new builds.
-  A machine whose newest broker predates the successor can still verify the
-  dual-signed releases.
-- **There is no online key-set document**, so no second freshness or rollback
-  problem arises. Key-set changes ship only inside new signed binaries.
-- **Floor epochs give compromise recovery.** A floor reset, for example to
-  undo an attacker-signed high floor, is a release whose `security_floor` and
-  `elevation_floor` carry a higher epoch. Raising the epoch requires the
-  threshold signature from Q3. The effective floor is the highest version
-  among evidence with the highest epoch seen. Evidence from lower epochs is
-  ignored, not deleted.
-- **Recommended for Q3: 2-of-2 threshold signing for every store-era
-  release.** One signature comes from the release key, the other from an
-  offline maintainer hardware key. Signing is local on prepared bytes (ADR
-  0003), so compromising one signing environment alone produces nothing that
-  can be installed.
+#### Key roles
+
+| Role | Keys | Where the private key lives | Use |
+| --- | --- | --- | --- |
+| Release | `R` (one active, rotated) | Generated on an offline maintainer machine; encrypted offline backups; never in CI, GitHub secrets or online storage | Every release |
+| Hardware | `H1`, `H2` | Generated on two YubiKeys; not exportable | Every release; `H2` is the spare, stored separately |
+| Freshness index (proposed, see Release freshness) | `F` | Scheduled job | Signs only the freshness index; never trusted for code or floors |
+
+Core and Desktop embed the same reviewed trust file (`release/trust.json`). It
+lists the public keys with their key IDs, their roles, and the YubiKey
+attestation material described below.
+
+#### Signature policy
+
+- **Ordinary release**: valid signatures from `R` **and** from at least one of
+  `H1`, `H2`.
+- **Floor-epoch raise** (key-compromise recovery only): `R` **and** both `H1`
+  and `H2`.
+
+Verifiers enforce the policy on the verified key set. Without both a release
+key and a hardware key, nothing can be installed. No single stolen secret or
+lost device can lower a floor.
+
+#### YubiKey requirements
+
+- **Supported models.** Use YubiKey 5 Series devices (5 NFC, 5C, 5C NFC,
+  5Ci, 5 Nano, 5C Nano) or the 5 FIPS equivalents. Security Key Series and Bio
+  Series devices have no OpenPGP or PIV application and cannot be used.
+  Firmware cannot be upgraded, so check each device with `ykman info`.
+- **Firmware 5.7.0 or later (preferred).** Use the PIV Ed25519 key in a
+  dedicated slot (for example `9c`), generated on the device. PIV attestation
+  is available. Firmware 5.7+ is also outside the scope of the Infineon ECDSA
+  side-channel advisory (YSA-2024-03).
+- **Firmware 5.2.3 to 5.6.x.** Use the OpenPGP application's Ed25519
+  signature key, generated on the device (`gpg --card-edit` →
+  `generate`, or `ykman openpgp`). It is attested with
+  `ykman openpgp keys attest sig`. That advisory concerns ECDSA; Ed25519 is
+  Yubico's stated mitigation, and the attack also needs physical possession.
+- **Firmware below 5.2.3** has no Ed25519 support and cannot be used.
+- **Raw signing.** Both applications must produce a raw PureEdDSA signature
+  over the statement above. Before first production use, the key ceremony
+  checks this with a test vector against `crypto/ed25519.Verify` and the
+  Desktop verifier. If an application can only sign through OpenPGP packet
+  framing, it is not used; signatures must not require OpenPGP parsing in
+  privileged code.
+- **Device policy.** Each YubiKey key is used only for Bimeron release
+  signing, never for git commits, SSH or email. Set touch policy to always,
+  PIN required, non-default PIN, PUK and management key, and PIN retry
+  counters left at their defaults.
+
+#### Key ceremony
+
+The ceremony is recorded in `release/trust/CEREMONY.md`, which contains public
+data only.
+
+1. Record each device's model, firmware and serial number.
+2. Generate the signing key on the device, then export the public key and the
+   attestation certificate, together with the Yubico attestation chain.
+3. Verify the attestation offline: chain to the Yubico root, serial number,
+   and an origin of "generated on device".
+4. Generate the new release key `R2` on an offline machine. Store two
+   encrypted offline backups, in separate places.
+5. Sign a test statement with each key and verify it in Go and C++.
+6. Commit `trust.json` and the attestation files through a reviewed change.
+   Store `H2` in a different physical location from `H1`.
+
+#### Planned rotation of the current release key
+
+Treat the current release key `R1` (key ID `7370a2d8cf890e5e`) as possibly
+exposed. Store-era builds do not trust it at all. Their trust set is `{R2, H1,
+H2}` from the first store-era release onward. `R1` stays only in pre-store
+clients and is used, if at all, solely for schema 1 releases to pre-store
+Desktops until those leave support.
+
+Exposure of `R1` alone cannot authorize anything for store-era clients. Its
+residual impact on pre-store Desktops is ended by upgrading the package. This
+is a separate incident-response decision, outside this ADR.
+
+Later rotations of `R` follow the same pattern:
+
+1. A release adds `R(n+1)` to the trust set while it is still signed with
+   `R(n)` and a hardware key.
+2. Once the minimum supported store-era Core and Desktop trust `R(n+1)`,
+   signing switches to it.
+3. `R(n)` is removed from the trust set in the next release.
+
+#### Lost or compromised YubiKey
+
+- **Losing one YubiKey** does not stop releases. They continue with `R` plus
+  the remaining device. A thief also needs the PIN, which locks after three
+  attempts, and the release key `R`.
+- **Revocation:**
+  1. Prepare a replacement device `H3` through the ceremony.
+  2. Publish a release, signed with `R` and the remaining device, whose trust
+     set drops the lost key and adds `H3`.
+  3. Raise `min_elevation_level` to that release's level. Every machine then
+     stops elevating builds that still trust the lost key, as soon as it
+     learns of the release.
+- **Until a machine updates**, its current broker still trusts the lost key.
+  This is acceptable, because a forgery also requires `R`.
+- **Losing both YubiKeys** means no new release can be signed until a release
+  with a new trust set is shipped. It must be signed by a policy the old
+  builds accept, which is not possible. In that case, a Desktop package
+  release (installer-delivered trust) is the only recovery. This is why the
+  spare is stored separately.
+- **If `R` and a YubiKey are compromised together**, do the following:
+  1. Release a new trust set signed with `R` and **both** hardware keys,
+     raising the floor epoch, levels and elevation floor.
+  2. Rotate `R`.
+  3. Accept that machines are protected only after they receive that release.
+
+#### Freeze resistance and Core trust
+
+Core itself never fetches trust updates. Changes to the trust set ship only
+inside new signed binaries, so there is no online key-set document with a
+freshness or rollback problem of its own.
 
 ### Effective floor
 
-The effective security floor and the effective elevation floor are each the
-maximum, within the highest epoch, over these sources:
+Each effective floor (security and elevation) is computed in the same way.
+First find the highest floor epoch among the available evidence. Within that
+epoch, the floor is the maximum level over these sources:
 
 1. The floors compiled into the verifying binary. Core embeds
-   `release/compatibility.json`. Desktop embeds the floors of its pinned Core.
-2. The floors of every committed version's verified manifest in `versions/`.
-3. The newest valid `state/floor-<seq>.json`. This file contains the exact
-   manifest bytes and signatures that established the floor, so it verifies
-   itself. The same evidence is held in the HKLM or `/etc` copy.
-4. Floors from freshly fetched signed manifests. These are used for selection
-   and warnings only; see the enforcement rules below.
+   `release/compatibility.json`; Desktop embeds the floors of its pinned Core.
+2. The floors in the verified manifest of every committed version in
+   `versions/`.
+3. The newest valid `state/floor-<seq>.json`. It contains the exact manifest
+   bytes and signatures that established the floor, so it verifies itself. The
+   same evidence is kept in the HKLM or `/etc` copy.
+4. Floors from freshly fetched signed manifests. They are used for selection
+   and warnings only (see Enforcement).
 
-Floor records are written only by a privileged Core process. A floor is
-appended only after a switch to a version at or above it has committed. A
-record that fails verification is ignored and reported; the remaining evidence
-still applies.
+Only a privileged Core process writes floor records. A floor is appended only
+after a switch to a version that meets it has committed. A record that fails
+verification is ignored and reported; the remaining evidence still applies.
+Deleting or reverting one record or one location cannot lower the floor while
+other evidence remains. No command deletes or lowers floor or active evidence.
 
-Deleting or reverting one record, or one location, therefore cannot lower the
-floor while any other evidence remains. No command deletes or lowers floor or
-active evidence (see Interfaces). A whole-machine or VM-snapshot restore
-reverts every source together. That case is outside the local-attacker model,
-and source 4 bounds it at the next online check.
+A whole-machine or VM-snapshot restore reverts all sources together. That is
+outside the local-attacker model, and source 4 bounds it at the next online
+check.
 
 **Enforcement**
 
-- **Locally committed floors (sources 1 to 3).**
-  - No version below the security floor is installed, switched to, or used as
-    a repair source.
+- **Locally committed floors (sources 1–3).**
+  - No release below the security floor is installed, switched to or used as a
+    repair source.
   - No elevated process runs below the elevation floor.
   - A binary below the security floor may run elevated only to install a
-    release at or above that floor, and only if it is at or above the
+    release that meets the floor, and only if the binary itself meets the
     elevation floor.
 - **Fresh floors (source 4).**
-  - They never block IPC with, or VPN connections through, the installed
-    service, and they never block diagnostics.
+  - They never block IPC with the installed service, VPN connections through
+    it, or diagnostics.
   - They show a persistent "security update required" state.
   - They block elevation of below-floor code for any purpose other than
-    installing a release at or above that floor.
-  - When the running broker is below a fresh elevation floor, Desktop requires
-    a package upgrade instead of elevating.
-- **Below-floor service.** When the installed service is below the committed
-  security floor, the service and Desktop report `below_security_floor`, and
-  Desktop offers repair. Whether the service should also refuse to start the
-  VPN engine is open question Q4. The recommended answer is no: blocking
-  connectivity hurts the user more than it protects them on censored networks,
-  and the elevated paths are already gated.
+    installing a release that meets them.
+  - Below a fresh elevation floor, Desktop requires a package upgrade.
+- **Below-floor service (decided).** An installed service below the committed
+  security floor does not block the VPN. The service and Desktop report
+  `below_security_floor`, and Desktop offers repair.
 
 ### Elevated maintenance session (replaces caller-trusted `service update -source`)
 
@@ -404,8 +502,8 @@ its signed size and digest.
 **Checks inside the broker**
 
 - Ordering and floors:
-  - the broker's own version must be at least the effective elevation floor;
-  - the new `core_version` must be at least the effective security floor;
+  - the broker's own security level must meet the effective elevation floor;
+  - the new release's security level must meet the effective security floor;
   - the new `core_version` must be at least the maximum of the active version
     and the verified installed version.
 - Equal versions are accepted only when the bytes are identical (republishing).
@@ -512,7 +610,7 @@ Every elevated Core process checks itself at startup, before any mutation:
 2. It hashes the image and requires a matching member in a verified signed
    manifest: its own `versions/` directory, or the package-shipped manifest
    during bootstrap.
-3. It requires its own version to be at least the effective elevation floor.
+3. It requires its own security level to meet the effective elevation floor.
 4. It refuses to run if non-allowlisted environment variables are present:
    `GO*`, `GODEBUG`, `ZONEINFO` and the like. Under admin-approval elevation,
    `HKCU\Environment` is inherited, and the Go runtime reads some of these
@@ -633,7 +731,7 @@ never for elevation.
   target or higher.
 - **Missing-service installation** installs the active version, or the newest
   committed version if no active record exists. If nothing is committed, it
-  installs the verified package bootstrap version, which must be at least the
+  installs the verified package bootstrap version, which must meet the
   floor. It never installs `os.Executable()` bytes.
 - **Unchanged rules.** The existing consent, ownership, readiness and rollback
   rules stay in force. The repair request still carries no paths, versions or
@@ -641,11 +739,43 @@ never for elevation.
 
 ### Release discovery
 
-Desktop treats a newer release tag whose metadata is missing, unverifiable or
-inconsistent as a visible update error that names the tag. It does not skip
-the tag silently: missing metadata would otherwise let anyone who can delete
-release assets keep users on an older signed release. Open question Q5 decides
-whether to add a signed index with an expiry on top of this.
+Desktop treats a newer release tag whose metadata is missing, cannot be
+verified or is inconsistent as a visible update error that names the tag. It
+does not skip the tag silently. Missing metadata would otherwise let anyone
+who can delete release assets keep users on an older signed release.
+
+### Release freshness index (proposed, pending confirmation)
+
+Visible errors do not reveal a release that was never visible, for example
+when the release listing is hidden or replayed. The proposed addition below
+must also keep working if the maintainer is unavailable for a long time.
+
+- **The index.** A small signed file is published with every release and
+  re-signed on a schedule. Its name is `freshness-index.json` plus
+  `freshness-index.json.sig`. It contains, per channel, the newest version,
+  the SHA-256 of its manifest and its security level, plus `issued` and
+  `expires` timestamps. The expiry is about 90 days after issue.
+- **Signing.** A dedicated freshness key `F` signs the index, in the same
+  statement format with the domain `bimeron-freshness-index-v1`.
+  - The verifiers' trust file grants `F` a single role. A signature by `F` is
+    never accepted for a manifest, a trust change or a floor.
+  - `F` therefore cannot authorize code. The most a stolen `F` can do is claim
+    a release that does not exist, which shows up as a visible error, or keep
+    re-signing an old "latest", which is the freeze that the index cannot stop
+    either way.
+- **Unattended re-signing.** A scheduled job re-signs the index, for example
+  monthly, using only `F`. It runs without the maintainer, so a long absence
+  does not let the index expire. `F` may live in CI because its power is
+  narrow. It is rotated like `R`, through the trust set.
+- **Client behavior.**
+  - Desktop fetches the index. If the index names a newer version than
+    discovery found, or its manifest digest does not match, Desktop shows a
+    visible error.
+  - An expired or missing index produces only a warning such as "update
+    information is stale". It never blocks the VPN, the CLI or repair.
+  - The index level is used as a fresh floor hint (source 4): a warning only.
+- **If the job stops** (the maintainer is absent and CI is down), users see a
+  stale warning after the expiry. Nothing else changes.
 
 ### Cleanup
 
@@ -665,8 +795,9 @@ previous committed version.
 
 **Configuration and capabilities**
 
-- `release/compatibility.json` gains `security_floor`, `elevation_floor` (both
-  `{epoch, version}`, reviewed) and `store_contract`.
+- `release/compatibility.json` gains `security_level`,
+  `min_security_level`, `min_elevation_level`, `floor_epoch` (all reviewed)
+  and `store_contract`.
 - `hello.capabilities` gains `core_store: <contract>` and the service's
   effective floors.
 - `version -json` reports the binary's compiled contract and floors without
@@ -684,7 +815,7 @@ previous committed version.
   - `store purge`, which removes `versions/` and keeps all floor and active
     evidence.
   - No command lowers or deletes floor or active evidence. There is no
-    `-forget-floor`. Resetting a floor requires a threshold-signed epoch raise.
+    `-forget-floor`. Resetting a floor requires an epoch raise signed with the release key and both hardware keys.
     An administrator who deletes `state/` by hand is out of scope.
 - **`service install` (store-capable builds)** installs only from the store or
   from the verified package bootstrap, never `os.Executable()`.
@@ -720,12 +851,33 @@ The installer action is reworked; it is not extended in place.
   maintenance session.
 - **Linux:** DEB `postinst` calls the same command.
 
-### Authenticode
+### Authenticode (deferred)
 
-Authenticode signing is open question Q7. If it is adopted, sign only
-store-capable builds, which refuse `-source`. Never sign older builds
-retroactively. A signed build that still accepts caller-trusted installation
-would be a permanent publisher-signed tool for installing arbitrary services.
+Authenticode signing is a later decision. This ADR reserves the following
+constraints for it:
+
+- Only store-capable builds, which refuse `-source`, may ever be signed. Older
+  builds are never signed retroactively. A signed build that still accepts
+  caller-trusted installation would be a permanent, publisher-signed tool for
+  installing arbitrary services.
+- The Authenticode certificate is a separate trust chain. Store and floor
+  decisions never depend on it.
+- When it is adopted, the self-check additionally verifies the signature with
+  `WinVerifyTrust`, and Windows publisher rules (App Control, AppLocker)
+  become possible.
+
+### Related decisions recorded separately
+
+- **"Always VPN" at boot** (approved, separate ADR). The service connects a
+  kill-switch profile at boot and blocks traffic until the connection is up.
+  Intersections with this record:
+  - The service needs a service-owned profile store. That store is separate
+    from the core store: the core store holds immutable signed code only, and
+    profiles never live in `versions/`.
+  - Fresh or committed floors must never block that boot connection either.
+- **Service reading of profile files** (separate ADR). This ADR's streamed,
+  authenticated session pattern can carry profile content from client to
+  service, so the service never opens a path the user chose.
 
 ### Platform scope
 
@@ -754,7 +906,7 @@ assets, and replayed old signed metadata.
 - An attacker who already has administrator or root rights, including through
   admin-approval mode on an administrator account.
 - Kernel compromise.
-- Simultaneous theft of both threshold signing keys.
+- Simultaneous compromise of the release key and a hardware key, including its PIN.
 
 | Threat | Mitigation |
 | --- | --- |
@@ -775,8 +927,8 @@ assets, and replayed old signed metadata.
 | DLL planting or environment injection into elevated processes | `SetDefaultDllDirectories`; admin-only directories; Wintun digest at load; environment allowlist |
 | Squatting of locks and pipes | Lock file in admin-only `state/`; readiness pipe name with a per-start nonce |
 | Foreign handle blocking update or repair | Users cannot open service or state files; held staging handles; random backup names; streamed fallback source; deferred trash |
-| Release-key compromise | 2-of-2 threshold (Q3); epoch-based floor reset requires the threshold |
-| Freeze or withholding | Visible error for missing or invalid metadata; optional signed index with expiry (Q5) |
+| Release-key or hardware-key compromise | Every release needs the release key and a YubiKey; an epoch reset needs the release key and both YubiKeys; planned rotation of the current release key |
+| Freeze or withholding | Visible error for missing or invalid metadata; proposed freshness index with expiry (Q5) |
 | Fresh floor locks a user out of the VPN | Fresh floors never block connectivity; only elevation is gated |
 | Unsolicited MSI repair as a standard user | Installer action excluded from repair modes, upward-only, no rollback action |
 | Alternate administrator approves UAC | Machine paths only; the readiness channel; caller identity from the authenticated transport, as in #140 |
@@ -824,7 +976,7 @@ assets, and replayed old signed metadata.
 
 - Manifest and publishing:
   - schema 2 producer and verifier, with the build-provenance gate;
-  - multi-signature format and threshold policy;
+  - multi-signature format and the release-key-and-YubiKey policy;
   - strict JSON pre-pass;
   - version grammar and test vectors;
   - retirement of backfill.
@@ -852,6 +1004,11 @@ assets, and replayed old signed metadata.
   GUI_INTEGRATION, CONTROL, and the ADR 0002 status.
 
 **Desktop**
+
+The Desktop part is implemented in the bimeron-desktop repository
+(bimeron/bimeron-desktop#58). Core publishes the contract for it: the schema 2
+format, the signature policy and trust file, the maintenance-session protocol,
+and the test vectors.
 
 - Verification:
   - schema 2 and multi-signature verification;
@@ -930,9 +1087,16 @@ and store state before and after.
     removal and purge. The store and floor persist; no downgrade happens.
 12. **Crash injection** at every commit step (after the switch, after
     promotion, after the records). Reconciliation reaches a consistent state.
-13. **Key rotation and threshold.** Rotation with dual signatures works with old
-    and new brokers. A single valid signature is refused under the 2-of-2
-    policy. An epoch-raise reset requires the threshold.
+13. **Keys.**
+    - A release signed only by `R`, or only by YubiKeys, is refused.
+    - `R` plus either YubiKey is accepted.
+    - A store-era build refuses `R1` signatures.
+    - Rotation of `R` works with old and new brokers.
+    - An epoch raise needs `R` plus both YubiKeys.
+    - YubiKey signatures from the ceremony test vectors verify in Go and
+      C++.
+    - The freshness key is refused for manifests.
+    - An expired freshness index only warns.
 14. **Version grammar.** Rejected forms, the NTFS case-collision attempt, and
     beta-to-stable transitions.
 15. **Foreground IKEv2** on a store-era Desktop, with the relocated policy file.
@@ -993,35 +1157,37 @@ and store state before and after.
 - **Locally signed or HMAC-protected floor record** (machine key, DPAPI, TPM).
   Rejected. An attacker able to write the admin-only state is already out of
   scope, and a machine key adds secrets without stopping whole-disk rollback.
-- **Integer rollback index instead of a version floor.** Kept as an option
-  (Q6). Versions match how releases are discussed, and the strict grammar plus
-  shared vectors control the precedence risk.
+- **Version floors instead of integer security levels.** This was the second
+  draft. Rejected in favor of levels (pending Q6). Version floors depend on
+  precedence and grammar across channels. A beta floor cannot be satisfied by
+  a stable-only user, and "floors are always stable versions" was an extra
+  rule. A level is one integer, shared by all channels and compared the same
+  way in Go and C++.
+- **Online, root-signed key-set document combined with a threshold of
+  software keys.** Hardware-backed keys that cannot be exported, plus key sets
+  embedded in binaries, protect against the realistic threat of a copied
+  signing secret without adding online trust state.
 
-## Open questions for the user
+## Decisions and pending confirmations
 
-- **Q1. Windows store location.** The recommendation is
-  `%ProgramFiles%\Bimeron Core\store`: users cannot squat it, default
-  AppLocker rules allow it, and the code needs no rename-aside logic. The
-  alternative is `%ProgramData%\Bimeron\core`, which needs squatting
-  defenses, and blocks Desktop CLI launches under default AppLocker rules
-  unless publisher rules (Q7) are deployed.
-- **Q2. Linux store location.** The recommendation is
-  `/usr/local/lib/bimeron/store` (no `noexec`/SELinux risk). The alternative
-  is `/var/lib/bimeron/core`.
-- **Q3. Signing policy.** Options:
-  - 2-of-2 threshold signing for every store-era release (recommended);
-  - threshold only for epoch raises and key changes;
-  - a single release key.
-- **Q4. Below-floor service.** Should it refuse to start the VPN engine?
-  The recommendation is no: report it and offer repair.
-- **Q5. Freeze protection beyond visible errors.** Should we add a signed index
-  or timestamp with an expiry, and stale-metadata warnings?
-- **Q6. Floor representation.** A version floor, or an integer rollback index?
-- **Q7. Authenticode.** Adopt it for store-capable builds only?
-- **Q8. Manual downgrade.** Is "never below active" strict, or may an
-  administrator explicitly choose a version in the range from the floor up to
-  the active version (exclusive), for a regression or a beta-to-stable switch?
-  The recommendation is strict for now; switching from beta to stable waits for
-  the next stable release at or above the active version.
-- **Q9. Pre-store tools.** Do you accept that pre-store Desktop and Core tools
-  can no longer manage a store-era service (they fail closed, by design)?
+Decided by the user (November 18, 2026):
+
+| # | Decision |
+| --- | --- |
+| Q1 | Windows store: `%ProgramFiles%\Bimeron Core\store` |
+| Q2 | Linux store: `/usr/local/lib/bimeron/store` |
+| Q3 | Two-key policy for every release: release key and one of two YubiKeys; planned rotation of the current release key (see Trust and keys) |
+| Q4 | A below-floor service does not block the VPN |
+| Q7 | Authenticode is deferred; constraints are reserved |
+| Q8 | "Never below active" is strict; no manual downgrade |
+| Q9 | Pre-store tools are intentionally unable to manage store-era services |
+
+Proposed, pending confirmation:
+
+- **Q5**: the release freshness index with a narrow freshness key, an expiry of
+  about 90 days, unattended re-signing, and a warning only on expiry.
+- **Q6**: integer security levels for floors, instead of version floors.
+- **Hardware details**: which signing path each YubiKey uses, either PIV
+  Ed25519 (firmware 5.7+) or OpenPGP Ed25519 (firmware 5.2.3+). This depends
+  on `ykman info` for both devices.
+
