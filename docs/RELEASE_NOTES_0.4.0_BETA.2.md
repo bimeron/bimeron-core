@@ -90,7 +90,7 @@ IPC remains version **1** and profile format remains version **1**. No
 capabilities, document operations or structured error codes were added or
 removed.
 
-**GUI compatibility range: [0.3.0, 0.3.2)** (proposed, pending Desktop review)
+**GUI compatibility range: [0.3.0, 0.3.2)**
 
 ## Upgrade notes / Desktop
 
@@ -103,6 +103,13 @@ service update when the user enables **Include beta core updates**. A service
 update alone does not replace the CLI and repair broker bundled with Desktop
 0.3.0, which remain v0.4.0-beta.1. To keep the bundled components current,
 upgrade to Desktop 0.3.1.
+
+Explicit repair restores the service executable bundled with the GUI package.
+In Desktop 0.3.0, running Repair after this update therefore restores the Core
+bundled with Desktop 0.3.0 (v0.4.0-beta.1). Desktop 0.3.0 shows Repair only
+when the service is not ready. Install the update again afterwards, or upgrade
+to Desktop 0.3.1, which bundles v0.4.0-beta.2. Reinstalling Desktop 0.3.0 does
+not downgrade a newer installed service.
 
 The repair broker embeds the reviewed compatibility policy from
 `release/compatibility.json`, so signed acquisition of its own release accepts
