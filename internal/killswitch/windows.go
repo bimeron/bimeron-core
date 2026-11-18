@@ -205,6 +205,20 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 				}
 			}
 		}
+		// DNS outside the tunnel would reveal destinations even to a resolver
+		// inside a direct CIDR. Only the core, loopback and the tunnel, whose
+		// permits weigh more, reach DNS ports; direct CIDR permits weigh less.
+		if installErr == nil && (layer == wf.LayerALEAuthConnectV4 || layer == wf.LayerALEAuthConnectV6) {
+			for _, dns := range DNSPorts {
+				if err = add(layer, ^uint64(0)-5, false, match(wf.FieldIPProtocol, dns.Protocol), match(wf.FieldIPRemotePort, dns.Port)); err != nil {
+					installErr = err
+					break
+				}
+			}
+		}
+		if installErr != nil {
+			break
+		}
 	}
 	// Prefix rules retain first-match order. Allows first, blocks afterwards:
 	// setup cannot accidentally cut off its own recovery transport mid-install.

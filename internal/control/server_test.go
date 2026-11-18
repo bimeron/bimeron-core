@@ -159,3 +159,39 @@ func TestProtocolAndBoundedHistory(t *testing.T) {
 		}
 	}
 }
+
+// abandonEngine records whether the server ended the session without a stop.
+type abandonEngine struct {
+	fakeEngine
+	abandoned, stopped bool
+}
+
+func (e *abandonEngine) Abandon(context.Context) error { e.abandoned = true; return nil }
+func (e *abandonEngine) Stop(context.Context) error    { e.stopped = true; return nil }
+
+type failingListener struct{ net.Listener }
+
+func (failingListener) Accept() (net.Conn, error) { return nil, errors.New("broken pipe instance") }
+func (failingListener) Close() error              { return nil }
+func (failingListener) Addr() net.Addr            { return &net.TCPAddr{} }
+
+// A broken control listener is not a user's stop: kill switch protection must
+// stay installed.
+func TestListenerFailureAbandonsSession(t *testing.T) {
+	e := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
+	if err := NewServer(e).Serve(context.Background(), failingListener{}); err == nil {
+		t.Fatal("listener failure swallowed")
+	}
+	if !e.abandoned || e.stopped {
+		t.Fatal("listener failure stopped the session", e.abandoned, e.stopped)
+	}
+	stopped := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := NewServer(stopped).Serve(ctx, failingListener{}); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.abandoned || !stopped.stopped {
+		t.Fatal("shutdown did not stop the session", stopped.abandoned, stopped.stopped)
+	}
+}

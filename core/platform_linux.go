@@ -68,6 +68,12 @@ func (p *linuxPlatform) acquire(ctx context.Context, unlock func()) (func(), err
 			unlock()
 			return nil, fault("network_inspect_failed", false)
 		}
+		// The guard accepts the tunnel by name. A foreign interface with that
+		// name would be exempted, so refuse before installing anything.
+		if _, err := net.InterfaceByName(p.name); err == nil {
+			unlock()
+			return nil, fault("adapter_name_in_use", false)
+		}
 		// A failed install keeps whatever protection and journal exist.
 		if err := p.manager.Guard(ctx, p.name, p.policy, p.disableIPv6); err != nil {
 			unlock()

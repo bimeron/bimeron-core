@@ -310,8 +310,9 @@ and up to 2 minutes for `stop` and `shutdown`. A disconnected client does not st
 an accepted session or cancel server cleanup. After a `start` timeout, check
 `status` instead of repeating `start` blindly; `stop` is safe to repeat. To switch
 profiles, send `stop`, wait for cleanup, then `start` with the new absolute path.
-The only exception is a failed session with a held kill switch, which `start`
-with another kill switch profile replaces directly. Hot reload, pause, and
+The exception is a session that owns kill switch protection (`KillSwitch`
+`active` or `holding`): `start` with another kill switch VPN profile replaces it
+directly without releasing protection, which avoids an unprotected gap. Hot reload, pause, and
 general single-command profile switching are not implemented.
 
 To avoid acting on stale state, a daemon that reports `daemon_session_guards: true`

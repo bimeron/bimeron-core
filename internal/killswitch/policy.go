@@ -14,6 +14,17 @@ type EgressRule struct {
 	Weight uint64
 }
 
+// DNSPort is a transport protocol and destination port for name resolution.
+// Kill switch rules block it outside the tunnel for every process but the core,
+// with priority over direct CIDR permits.
+type DNSPort struct {
+	Protocol uint8
+	Port     uint16
+}
+
+// DNSPorts lists DNS over UDP/TCP and DNS over TLS/QUIC.
+var DNSPorts = []DNSPort{{6, 53}, {17, 53}, {6, 853}, {17, 853}}
+
 func Plan(p *routing.Policy, disableIPv6 bool) ([]EgressRule, error) {
 	c := p.Config()
 	var rules []EgressRule

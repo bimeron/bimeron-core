@@ -61,6 +61,7 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		}
 		go func() {
 			if err := server.ServeReadiness(ctx, readiness); err != nil {
+				server.AbandonOnExit()
 				cancel()
 			}
 		}()

@@ -394,6 +394,17 @@ shows `failed` with `LastError`, `KillSwitch: "holding"` and
   replaces the filters transactionally. A guarded `start` is admitted in this
   state. Any other profile is rejected with `kill_switch_held`; send `stop`
   first.
+
+The same handover applies to any active session that owns protection
+(`KillSwitch` is `active` or `holding`): `start` with another kill switch VPN
+profile closes the current session and starts the new one without releasing
+protection, so switching servers leaves no gap. With a profile without the kill
+switch, an active session returns `session_already_running` as before.
+
+Protection also stays installed when the daemon or service ends for a reason
+other than a stop, for example a failed control listener or a crash: the
+session is closed, the filters remain and an idle core then reports
+`KillSwitch: "residual"`.
 - `stop` and `shutdown` release protection. If removal fails, the session ends
   `failed` with `cleanup_failed_run_recover`, the command returns
   `session_stop_failed` and protection stays until `bimeron recover`.

@@ -146,6 +146,7 @@ type Engine struct {
 	holding   bool // a failed run keeps kill switch protection until Stop
 	protected bool // the run owns kill switch protection
 	handover  bool // the held run exits for a new Start and keeps protection
+	abandon   bool // the run exits without a user stop and keeps protection
 	pollEvery time.Duration
 	observe   func(tunnel string) string
 	network   func() string
@@ -349,17 +350,19 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	if e.maintenance != nil {
 		return errMaintenanceSealed
 	}
-	if e.active && e.holding {
-		if !cfg.KillSwitch || cfg.Mode != "vpn" || cfg.IKEv2 != nil {
-			return ErrKillSwitchHeld
-		}
-		// Hand the installed protection over: the held run releases its lock
-		// but keeps the persistent filters for the next Acquire to replace.
+	keepsProtection := cfg.KillSwitch && cfg.Mode == "vpn" && cfg.IKEv2 == nil
+	if e.active && e.holding && !keepsProtection {
+		return ErrKillSwitchHeld
+	}
+	if e.active && (e.holding || e.protected) && keepsProtection {
+		// Hand the installed protection over: the previous run closes its
+		// session and releases its lock but keeps the persistent filters for
+		// the next Acquire to replace, so switching profiles leaves no gap.
 		e.handover = true
 		e.cancel()
 		previous := e.runResult
 		e.mu.Unlock()
-		<-previous.done // bounded: the held run only releases its lock
+		<-previous.done // bounded by the previous session's cleanup
 		e.mu.Lock()
 	}
 	if e.active {
@@ -370,7 +373,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	ctx, e.cancel = context.WithCancel(ctx)
 	e.runResult = &runResult{done: make(chan struct{}), acquired: make(chan struct{})}
 	e.active = true
-	e.holding, e.handover, e.protected = false, false, false
+	e.holding, e.handover, e.protected, e.abandon = false, false, false, false
 	e.residual = false // the run owns or replaces any earlier protection
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
@@ -398,6 +401,19 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	}
 	return nil
 }
+
+// Abandon ends the session like Stop but keeps kill switch protection
+// installed, for exits that are not a user's stop, such as a failed control
+// listener. The protection is then reported as residual until recover.
+func (e *Engine) Abandon(ctx context.Context) error {
+	e.mu.Lock()
+	if e.active {
+		e.abandon = true
+	}
+	e.mu.Unlock()
+	return e.Stop(ctx)
+}
+func (e *Engine) abandoned() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.abandon }
 
 // Stop is idempotent. A caller timeout ends only its wait: cleanup continues in
 // the background, and another Start remains forbidden until it has finished.
@@ -470,12 +486,20 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	acquired := sync.OnceFunc(func() { close(r.acquired) })
 	defer func() {
 		acquired()
+		if p := recover(); p != nil {
+			// A crash keeps persistent protection, as after process termination.
+			if owner != nil {
+				owner.RetainProtection()
+			}
+			release()
+			panic(p)
+		}
 		e.mu.Lock()
 		handover := e.handover
 		e.mu.Unlock()
 		// Protection outlives the run only for a handover or a failed cleanup,
 		// which needs explicit recovery; every other exit is an explicit stop.
-		retained := owner != nil && (handover || cleanupFailed(result))
+		retained := owner != nil && (handover || e.abandoned() || cleanupFailed(result))
 		if retained {
 			owner.RetainProtection()
 		}
@@ -551,11 +575,11 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 func (e *Engine) hold(ctx context.Context, err error) bool {
 	e.mu.Lock()
 	e.transitionLocked(Failed, err)
+	drain(e.wake)
 	e.holding = true
 	e.emitLocked("kill_switch_held", "Connection failed; kill switch keeps traffic blocked until stop")
 	wake := e.wake
 	e.mu.Unlock()
-	drain(wake)
 	select {
 	case <-ctx.Done():
 		return false
@@ -589,6 +613,10 @@ func (e *Engine) connect(ctx context.Context, cfg SessionConfig, b backend) (err
 			return err, false
 		}
 		s, err := b.Open(ctx, cfg, e.report)
+		if err != nil && ctx.Err() == nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			// The setup deadline expired while the run continues: retry.
+			err = fault("network_setup_failed", true)
+		}
 		if err == nil {
 			if ctx.Err() == nil {
 				e.transition(Connected, nil)

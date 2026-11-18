@@ -40,7 +40,13 @@ and removal use atomic WFP transactions.
   retained, including multiple CIDRs in one section. `Default = direct` allows
   remaining destinations; `Default = proxy` and `block` deny them outside the tunnel.
 - Loopback, DHCP, and local ICMPv6 neighbor-discovery traffic are allowed regardless
-  of policy. There is no general exemption for physical-interface DNS servers.
+  of policy. There is no general exemption for physical-interface DNS servers:
+  DNS ports (53 and 853, TCP and UDP) are blocked outside the tunnel for every
+  process except the core, even to a resolver inside a `direct` CIDR, so names
+  are not resolved outside the tunnel while protection holds.
+- Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
+  guests) does not pass the application layers these filters use and is not
+  covered by the kill switch.
 - With `IPv6 = disable`, ordinary IPv6 destinations outside the tunnel are
   blocked even with `direct`; local ICMPv6 control traffic and loopback remain available.
 

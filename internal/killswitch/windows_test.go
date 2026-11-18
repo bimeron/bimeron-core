@@ -329,3 +329,37 @@ func TestLiveCoreExceptionCondition(t *testing.T) {
 		t.Fatal("aborted transaction left filters", len(rules), err)
 	}
 }
+
+// DNS ports are blocked outside the tunnel with priority over direct CIDR
+// permits, and below the core, loopback and tunnel permits.
+func TestDNSPortsBlockedAboveDirectRules(t *testing.T) {
+	f := &fakeAPI{}
+	armFake(t, f, 42)
+	blocks := 0
+	for _, r := range f.rules {
+		var port, proto bool
+		for _, c := range r.Conditions {
+			port = port || c.Field == wf.FieldIPRemotePort
+			proto = proto || c.Field == wf.FieldIPProtocol
+		}
+		if !port || !proto || r.Action != wf.ActionBlock {
+			continue
+		}
+		blocks++
+		if r.Weight != ^uint64(0)-5 || (r.Layer != wf.LayerALEAuthConnectV4 && r.Layer != wf.LayerALEAuthConnectV6) {
+			t.Fatal("DNS block has wrong weight or layer", r.Weight, r.Layer)
+		}
+	}
+	if blocks != 2*len(DNSPorts) {
+		t.Fatal("DNS blocks", blocks)
+	}
+	for _, r := range f.rules {
+		if r.Action == wf.ActionPermit && r.Weight < ^uint64(0)-5 {
+			for _, c := range r.Conditions {
+				if c.Field == wf.FieldIPRemotePort {
+					t.Fatal("port permit below the DNS block", r.Weight)
+				}
+			}
+		}
+	}
+}

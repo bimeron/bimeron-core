@@ -12,6 +12,7 @@ import (
 	"net"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -83,6 +84,12 @@ type Engine interface {
 	Stats() telemetry.Snapshot
 }
 
+// abandoner is implemented by engines that can end a session without a user
+// stop while keeping kill switch protection.
+type abandoner interface {
+	Abandon(context.Context) error
+}
+
 // reconnector is implemented by engines that support reconnect_now.
 type reconnector interface {
 	ReconnectNow() error
@@ -114,6 +121,7 @@ type Server struct {
 	load                  func(string) (core.SessionConfig, error)
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
+	abandonOnExit         atomic.Bool
 	authMu                sync.Mutex
 	pending               *pendingAuth
 }
@@ -181,11 +189,17 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	defer stop()
 	defer func() {
 		stopEngine := !s.foreground || ctx.Err() != nil
+		// A broken listener is not a user's stop: keep kill switch protection.
+		abandon := result != nil && ctx.Err() == nil || s.abandonOnExit.Load()
 		cancel()
 		_ = l.Close()
 		workers.Wait()
 		if stopEngine {
-			result = errors.Join(result, s.engine.Stop(context.Background()))
+			if a, ok := s.engine.(abandoner); ok && abandon {
+				result = errors.Join(result, a.Abandon(context.Background()))
+			} else {
+				result = errors.Join(result, s.engine.Stop(context.Background()))
+			}
 		}
 	}()
 	slots := make(chan struct{}, 32)
@@ -265,9 +279,10 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				if r.Instance != s.instance {
 					answer.Error = "stale_instance"
 				} else if r.Command == "start" {
-					// A failed session with a held kill switch may be replaced.
-					held := answer.Status.State == core.Failed && answer.Status.KillSwitch == core.KillSwitchHolding
-					if answer.Status.Session != nil && answer.Status.Session.Active && !held {
+					// A session that owns kill switch protection may be handed
+					// over; the engine decides whether the new profile keeps it.
+					protected := answer.Status.KillSwitch == core.KillSwitchHolding || answer.Status.KillSwitch == core.KillSwitchActive
+					if answer.Status.Session != nil && answer.Status.Session.Active && !protected {
 						answer.Error = "session_already_running"
 					}
 				} else if answer.Status.Session == nil || !answer.Status.Session.Active || answer.Status.Session.ID != r.Session {
@@ -433,6 +448,12 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer.Status = s.engine.Status()
 	return answer
 }
+
+// AbandonOnExit makes the next Serve exit keep kill switch protection, for
+// owner failures that are not a user's stop (for example a failed readiness
+// listener). Cancel the Serve context afterwards.
+func (s *Server) AbandonOnExit() { s.abandonOnExit.Store(true) }
+
 func (s *Server) handle(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	if s.authorize != nil {

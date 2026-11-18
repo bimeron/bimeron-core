@@ -79,6 +79,8 @@ func (e *Engine) connectedLocked() {
 // session every failure is retried except those that need explicit recovery.
 func (e *Engine) recoverable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Context errors are terminal only after Stop; connect maps an
+		// expired setup deadline to a retryable fault first.
 		return false
 	}
 	if retryable(err) {
@@ -188,7 +190,12 @@ func (e *Engine) scheduleLocked(err error) (delay time.Duration, pause, ok bool)
 		e.status.ReconnectAttempt, e.status.ReconnectLimit = r.attempt, initialRetryLimit
 		e.status.ReconnectPhase = PhaseAttempting
 	}
-	e.status.NextAttemptAt = time.Now().Add(delay).UTC().Truncate(time.Second)
+	// Whole seconds, rounded up: the attempt never starts before this time.
+	next := time.Now().Add(delay).UTC()
+	if rounded := next.Truncate(time.Second); rounded.Before(next) {
+		next = rounded.Add(time.Second)
+	}
+	e.status.NextAttemptAt = next
 	e.transitionLocked(Reconnecting, err)
 	// The state/error can be unchanged between retries; still publish progress.
 	if pause {
@@ -204,6 +211,9 @@ func (e *Engine) scheduleLocked(err error) (delay time.Duration, pause, ok bool)
 // is exhausted, or the context error after Stop.
 func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 	e.mu.Lock()
+	// Discard requests for an earlier wait before this one is published, so a
+	// reconnect_now accepted for it is never lost.
+	drain(e.wake)
 	delay, pause, ok := e.scheduleLocked(err)
 	wake := e.wake
 	e.mu.Unlock()
@@ -234,7 +244,6 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 // sleep waits for delay. A reconnect request, a changed set of local network
 // interfaces or a detected resume from sleep ends the wait early.
 func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
-	drain(wake)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	poll := time.NewTicker(e.pollEvery)

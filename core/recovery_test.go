@@ -182,7 +182,7 @@ func TestWaitingPhaseStatusAndReconnectNow(t *testing.T) {
 	if s.State != Reconnecting || s.ReconnectCycle != 1 || s.LastError != "transport_check_failed" {
 		t.Fatal(s)
 	}
-	if until := time.Until(s.NextAttemptAt); until < 58*time.Minute || until > time.Hour {
+	if until := time.Until(s.NextAttemptAt); until < 58*time.Minute || until > time.Hour+time.Second {
 		t.Fatal("next attempt", s.NextAttemptAt)
 	}
 	data, err := json.Marshal(s)
@@ -672,5 +672,36 @@ func TestLostAdapterRecreatesLinkUnderProtection(t *testing.T) {
 	}
 	if _, releases, retains, installed := b.snapshot(); closes.Load() != 2 || releases != 1 || retains != 0 || installed {
 		t.Fatal(closes.Load(), releases, retains, installed)
+	}
+}
+
+// Switching between kill switch profiles hands protection over from any
+// active state, so a profile change leaves no unprotected gap.
+func TestKillSwitchHandoverFromConnectedSession(t *testing.T) {
+	var closes atomic.Int32
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { closes.Add(1); return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if err := e.Start(ctx, testConfig()); !errors.Is(err, ErrSessionRunning) {
+		t.Fatal("profile without kill switch replaced a running session", err)
+	}
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if acquires, releases, retains, installed := b.snapshot(); acquires != 2 || releases != 1 || retains != 1 || !installed || closes.Load() != 1 {
+		t.Fatal("handover released protection", acquires, releases, retains, installed, closes.Load())
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, installed := b.snapshot(); installed {
+		t.Fatal("stop after handover kept protection")
 	}
 }

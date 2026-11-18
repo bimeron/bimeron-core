@@ -131,7 +131,14 @@ func nativeCleanup(c Config) error {
 		return nil
 	}
 	adapter := windows.MibIfRow2{InterfaceIndex: resources.index}
-	if err := windows.GetIfEntry2Ex(windows.MibIfTableNormalWithoutStatistics, &adapter); err != nil {
+	if err := windows.GetIfEntry2Ex(windows.MibIfTableNormalWithoutStatistics, &adapter); errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_NOT_FOUND) {
+		// The interface is gone and Windows removed its routes and addresses
+		// with it. A reused index is caught by the identity check below.
+		ownedNative.Lock()
+		delete(ownedNative.byTag, c.Tag)
+		ownedNative.Unlock()
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("cannot verify tunnel adapter before cleanup: %w", err)
 	}
 	if adapter.InterfaceGuid != resources.adapter {
