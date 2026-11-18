@@ -100,12 +100,26 @@ func (c closeFailure) Unwrap() error { return c.error }
 // own: failed cleanup or protection changes (codes ending in _run_recover),
 // a failed session Close and a maintenance seal.
 func requiresRecovery(err error) bool {
+	return errors.Is(err, errMaintenanceSealed) || cleanupFailed(err)
+}
+
+// cleanupFailed marks failures that may leave network state behind. Kill
+// switch protection is then retained until an explicit recover.
+func cleanupFailed(err error) bool {
 	var closed closeFailure
-	if errors.Is(err, errMaintenanceSealed) || errors.As(err, &closed) {
+	if errors.As(err, &closed) {
 		return true
 	}
 	var staged *stageError
 	return errors.As(err, &staged) && strings.HasSuffix(staged.code, "_run_recover")
+}
+
+// drain discards a reconnect request that arrived for an earlier wait.
+func drain(wake <-chan struct{}) {
+	select {
+	case <-wake:
+	default:
+	}
 }
 
 // linkFault marks failures of the installed tunnel itself. A persistent
@@ -220,6 +234,7 @@ func (e *Engine) awaitAttempt(ctx context.Context, err error) error {
 // sleep waits for delay. A reconnect request, a changed set of local network
 // interfaces or a detected resume from sleep ends the wait early.
 func (e *Engine) sleep(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	drain(wake)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	poll := time.NewTicker(e.pollEvery)

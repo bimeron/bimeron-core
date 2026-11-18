@@ -165,6 +165,8 @@ func (e *Engine) Stats() telemetry.Snapshot {
 
 type runResult struct {
 	done chan struct{}
+	// acquired is closed once Acquire has returned or the run ended earlier.
+	acquired chan struct{}
 	err  error
 	// settled marks a terminal session failure whose teardown already
 	// completed. Wait still reports err; a later Stop has nothing left to clean.
@@ -347,7 +349,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.stats = &telemetry.Counters{}
 	cfg.stats = e.stats
 	ctx, e.cancel = context.WithCancel(ctx)
-	e.runResult = &runResult{done: make(chan struct{})}
+	e.runResult = &runResult{done: make(chan struct{}), acquired: make(chan struct{})}
 	e.active = true
 	e.holding, e.handover, e.protected = false, false, false
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
@@ -365,7 +367,15 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	}
 	e.lastReport = map[string]time.Time{}
 	e.emitLocked("state", string(Connecting))
-	go e.run(ctx, cfg, e.runResult)
+	r := e.runResult
+	go e.run(ctx, cfg, r)
+	if cfg.KillSwitch {
+		// Return only once the run has installed its protection (or failed
+		// to), so an accepted Start never precedes the kill switch.
+		e.mu.Unlock()
+		<-r.acquired
+		e.mu.Lock()
+	}
 	return nil
 }
 
@@ -437,16 +447,18 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	var result error
 	release := func() {}
 	var owner protectionOwner
+	acquired := sync.OnceFunc(func() { close(r.acquired) })
 	defer func() {
+		acquired()
 		e.mu.Lock()
 		handover := e.handover
 		e.mu.Unlock()
 		// Protection outlives the run only for a handover or a failed cleanup,
 		// which needs explicit recovery; every other exit is an explicit stop.
-		if owner != nil && (handover || requiresRecovery(result)) {
+		retained := owner != nil && (handover || cleanupFailed(result))
+		if retained {
 			owner.RetainProtection()
 		}
-		retained := owner != nil && (handover || requiresRecovery(result))
 		release() // includes OS-thread-owned session lock; runs on this goroutine.
 		if owner != nil && !retained && owner.ReleaseError() != nil && result == nil {
 			// Protection is still installed: the stop did not clean up.
@@ -476,7 +488,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		result = err
 		return
 	}
-	acquired, err := b.Acquire(ctx)
+	releaseRun, err := b.Acquire(ctx)
 	if err != nil {
 		if cfg.IKEv2 != nil && err.Error() == "ikev2_existing_kill_switch_requires_recovery" {
 			cfg.updateNative(func(n *NativeStatus) { n.WFP = "unknown"; n.DNS = "unknown"; n.RecoveryRequired = true })
@@ -486,7 +498,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		}
 		return
 	}
-	release = acquired
+	release = releaseRun
 	if o, ok := b.(protectionOwner); ok && o.Protected() {
 		owner = o
 		e.mu.Lock()
@@ -494,6 +506,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.emitLocked("kill_switch_holding", "Kill switch active; traffic outside the tunnel is blocked until connection or stop")
 		e.mu.Unlock()
 	}
+	acquired()
 	for {
 		err, settled := e.connect(ctx, cfg, b)
 		// A cleanup failure stays visible even when Stop arrived at the same time.
@@ -521,6 +534,7 @@ func (e *Engine) hold(ctx context.Context, err error) bool {
 	e.emitLocked("kill_switch_held", "Connection failed; kill switch keeps traffic blocked until stop")
 	wake := e.wake
 	e.mu.Unlock()
+	drain(wake)
 	select {
 	case <-ctx.Done():
 		return false
