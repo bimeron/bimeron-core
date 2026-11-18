@@ -280,3 +280,93 @@ func TestDaemonGuardRejectionSnapshotAdmission(t *testing.T) {
 		})
 	}
 }
+
+// heldEngine models a failed session whose kill switch is held, and the
+// reconnect_now command.
+type heldEngine struct {
+	guardEngine
+	held       bool
+	reconnects int
+	refuse     error
+}
+
+func (e *heldEngine) Start(ctx context.Context, cfg core.SessionConfig) error {
+	e.mu.Lock()
+	refuse := e.refuse
+	e.mu.Unlock()
+	if refuse != nil {
+		return refuse
+	}
+	err := e.guardEngine.Start(ctx, cfg)
+	e.mu.Lock()
+	e.held = false
+	e.mu.Unlock()
+	return err
+}
+func (e *heldEngine) Status() core.Status {
+	s := e.guardEngine.Status()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.held {
+		s.State = core.Failed
+		s.KillSwitch = core.KillSwitchHolding
+	}
+	return s
+}
+func (e *heldEngine) ReconnectNow() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.held && e.state != core.Reconnecting {
+		return core.ErrReconnectNotPending
+	}
+	e.reconnects++
+	return nil
+}
+
+func TestReconnectNowAndHeldStartGuards(t *testing.T) {
+	e := &heldEngine{}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
+	path, _ := filepath.Abs("unused.conf")
+	call := func(command, instance, session string) Response {
+		r := Request{Version: Version, Command: command, Instance: instance, Session: session}
+		if command == "start" {
+			r.Config = path
+		}
+		return s.dispatch(context.Background(), r)
+	}
+	check := func(a Response, want string) {
+		t.Helper()
+		if a.Error != want {
+			t.Fatalf("got %+v, want %q", a, want)
+		}
+	}
+	check(call("reconnect_now", "", ""), "reconnect_not_pending")
+	check(call("start", s.instance, ""), "")
+	check(call("reconnect_now", s.instance, ""), "invalid_request")
+	check(call("reconnect_now", s.instance, "old"), "stale_session")
+	check(call("reconnect_now", s.instance, "1"), "reconnect_not_pending")
+	e.mu.Lock()
+	e.held = true
+	e.mu.Unlock()
+	check(call("reconnect_now", s.instance, "1"), "")
+	check(call("reconnect_now", "", ""), "")
+	if e.reconnects != 2 {
+		t.Fatal(e.reconnects)
+	}
+	// A held failed session may be replaced by a guarded start; the engine
+	// decides whether the new profile keeps the protection.
+	e.mu.Lock()
+	e.refuse = core.ErrKillSwitchHeld
+	e.mu.Unlock()
+	check(call("start", s.instance, ""), "kill_switch_held")
+	e.mu.Lock()
+	e.refuse = nil
+	e.mu.Unlock()
+	check(call("start", s.instance, ""), "")
+	check(call("start", s.instance, ""), "session_already_running")
+	data, err := json.Marshal(core.PlatformCapabilities())
+	if err != nil || !strings.Contains(string(data), `"reconnect_now":`) || !strings.Contains(string(data), `"kill_switch_hold":`) {
+		t.Fatal(string(data))
+	}
+}

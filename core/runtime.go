@@ -51,6 +51,9 @@ type protectedPlatform interface {
 	// RetainProtection makes the pending release keep the protection
 	// installed: a handover to the next session or a failed cleanup.
 	RetainProtection()
+	// ReleaseError reports a failed removal by the last release; the
+	// protection then stays installed until recover.
+	ReleaseError() error
 }
 
 func hysteria2Fault(err error) error {
@@ -112,6 +115,14 @@ func (b *vpnBackend) RetainProtection() {
 	if p, ok := b.platform.(protectedPlatform); ok {
 		p.RetainProtection()
 	}
+}
+
+// ReleaseError reports a failed removal of run-scoped protection.
+func (b *vpnBackend) ReleaseError() error {
+	if p, ok := b.platform.(protectedPlatform); ok {
+		return p.ReleaseError()
+	}
+	return nil
 }
 func (b *vpnBackend) Open(ctx context.Context, c SessionConfig, report func(string, string)) (session, error) {
 	setupCtx, cancel := context.WithTimeout(ctx, 75*time.Second)

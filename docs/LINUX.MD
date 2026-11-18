@@ -107,6 +107,12 @@ Protection covers local outgoing traffic. Forwarded container/router traffic is
 not tunneled; with the kill switch it is blocked in FORWARD, and without it,
 normal routing applies. This is not a VPN gateway for other machines.
 
+The table is installed when a run starts, before access key resolution,
+bootstrap DNS and the upstream connection; until the TUN exists, only loopback,
+marked core sockets, DHCP, IPv6 ND and `direct` CIDRs leave the host. It stays
+installed across every reconnect attempt, including failed and closed sessions,
+and is removed only when the run ends with an explicit stop.
+
 nftables rules survive SIGKILL. Restarting with the kill switch enabled retains
 protection during preparation and replaces it atomically. Starting with the kill
 switch disabled while protection remains requires explicit `recover`.

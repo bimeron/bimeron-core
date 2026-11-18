@@ -30,6 +30,13 @@ type Capabilities struct {
 	// AccessConversion reports the document operations access_to_fields and
 	// access_to_uri, which convert [AccessKey] between a URI and parameters.
 	AccessConversion bool `json:"access_conversion"`
+	// ReconnectNow reports the daemon command reconnect_now, which ends a
+	// pending recovery wait or retries a failed session with a held kill switch.
+	ReconnectNow bool `json:"reconnect_now"`
+	// KillSwitchHold reports that an enabled kill switch is held from Start
+	// until an explicit stop, including recovery waits and failed, and that
+	// Status.KillSwitch publishes it.
+	KillSwitchHold bool `json:"kill_switch_hold"`
 }
 
 // IKEv2Capabilities applies only to the system backend. Top-level flags retain
@@ -57,7 +64,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}
@@ -66,11 +73,13 @@ func PlatformCapabilities() Capabilities {
 		c.VPN = true
 		c.DomainSplit = true
 		c.KillSwitch = true
+		c.KillSwitchHold = true
 	case "darwin":
 		c.VPN = true
 		c.DomainSplit = true
 	default:
 		c.Daemon = false
+		c.ReconnectNow = false
 		c.VPN = false
 		c.IPSplit = false
 	}

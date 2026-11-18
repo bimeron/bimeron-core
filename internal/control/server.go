@@ -82,6 +82,11 @@ type Engine interface {
 	Events() <-chan core.Event
 	Stats() telemetry.Snapshot
 }
+
+// reconnector is implemented by engines that support reconnect_now.
+type reconnector interface {
+	ReconnectNow() error
+}
 type statsSnapshotProvider interface {
 	StatsSnapshot() core.StatsSnapshot
 }
@@ -234,7 +239,7 @@ func (s *Server) record(e core.Event) {
 }
 func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer := Response{Version: Version, ID: r.ID, Instance: s.instance}
-	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 		s.command.Lock()
 		defer s.command.Unlock()
 	}
@@ -253,14 +258,16 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
 	} else {
-		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 			// Guard validation and mutation share admission with legacy commands.
 			if !s.foreground && r.Instance != "" {
 				answer.Status = s.engine.Status()
 				if r.Instance != s.instance {
 					answer.Error = "stale_instance"
 				} else if r.Command == "start" {
-					if answer.Status.Session != nil && answer.Status.Session.Active {
+					// A failed session with a held kill switch may be replaced.
+					held := answer.Status.State == core.Failed && answer.Status.KillSwitch == core.KillSwitchHolding
+					if answer.Status.Session != nil && answer.Status.Session.Active && !held {
 						answer.Error = "session_already_running"
 					}
 				} else if answer.Status.Session == nil || !answer.Status.Session.Active || answer.Status.Session.ID != r.Session {
@@ -393,6 +400,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 					answer.Error = "session_start_failed"
 					if errors.Is(err, core.ErrSessionRunning) {
 						answer.Error = "session_already_running"
+					} else if errors.Is(err, core.ErrKillSwitchHeld) {
+						answer.Error = "kill_switch_held"
 					}
 				}
 			}
@@ -405,6 +414,17 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				answer.Error = "session_stop_failed"
 			} else if r.Command == "shutdown" {
 				s.closing = true
+			}
+		case "reconnect_now":
+			if r.Config != "" || r.After != 0 {
+				answer.Error = "invalid_request"
+				break
+			}
+			engine, ok := s.engine.(reconnector)
+			if !ok {
+				answer.Error = "unknown_command"
+			} else if engine.ReconnectNow() != nil {
+				answer.Error = "reconnect_not_pending"
 			}
 		default:
 			answer.Error = "unknown_command"
