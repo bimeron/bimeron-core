@@ -147,6 +147,9 @@ type Engine struct {
 	protected bool // the run owns kill switch protection
 	handover  bool // the held run exits for a new Start and keeps protection
 	abandon   bool // the run exits without a user stop and keeps protection
+	// exiting is set for good once the owner abandons the engine: no later
+	// Start may install, and then release, protection.
+	exiting   bool
 	pollEvery time.Duration
 	observe   func(tunnel string) string
 	network   func() string
@@ -352,6 +355,13 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	if e.maintenance != nil {
 		return errMaintenanceSealed
 	}
+	// The owner may have failed while this Start waited for the lock.
+	if e.exiting {
+		return errEngineExiting
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	keepsProtection := cfg.KillSwitch && cfg.Mode == "vpn" && cfg.IKEv2 == nil
 	if e.active && e.holding && !keepsProtection {
 		return ErrKillSwitchHeld
@@ -369,6 +379,14 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		e.mu.Unlock()
 		<-previous.done // bounded by the previous session's cleanup
 		e.mu.Lock()
+		// The previous run kept its filters for the handover; if the owner
+		// failed meanwhile, leave them installed (residual) and start nothing.
+		if e.exiting {
+			return errEngineExiting
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if previous.err != nil && cleanupFailed(previous.err) {
 			// The previous teardown left state behind; report it, never mask it.
 			e.status.Session = nil
@@ -423,10 +441,15 @@ func (e *Engine) Abandon(ctx context.Context) error {
 
 // MarkAbandon makes the current run keep its protection however it ends. Call
 // it before cancelling the context the session was started with.
+//
+// A user's stop already in progress is left to release protection, and no
+// later Start is accepted.
 func (e *Engine) MarkAbandon() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.active {
+	e.exiting = true
+	userStop := e.status.State == Stopping && !e.handover
+	if e.active && !userStop {
 		e.abandon = true
 	}
 }

@@ -189,12 +189,18 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	defer func() {
-		stopEngine := !s.foreground || ctx.Err() != nil
+		// A panic here is not a user's stop either: keep protection, close the
+		// session, then rethrow.
+		panicked := recover()
+		stopEngine := !s.foreground || ctx.Err() != nil || panicked != nil
 		// A broken listener is not a user's stop: keep kill switch protection.
 		// Sessions run under contexts derived from ctx, so mark the session
 		// before anything is cancelled.
-		if a, ok := s.engine.(abandoner); ok && stopEngine && (result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
+		if a, ok := s.engine.(abandoner); ok && stopEngine && (panicked != nil || result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
 			a.MarkAbandon()
+		}
+		if panicked != nil {
+			defer panic(panicked)
 		}
 		cancel()
 		_ = l.Close()

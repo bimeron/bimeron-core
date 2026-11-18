@@ -402,7 +402,7 @@ shows `failed` with `LastError`, `KillSwitch: "holding"` and
 
 The same handover applies to any active session that owns protection
 (`KillSwitch` is `active` or `holding`) when the new kill switch VPN profile is
-a different profile (profile ID, or name without an ID): the current session is
+a different profile: the current session is
 closed and the new one starts without releasing protection, so switching
 servers leaves no gap. A repeated start of the same profile while it is
 connecting, connected or reconnecting returns `session_already_running` and
@@ -410,6 +410,17 @@ keeps the live session. With a profile without the kill switch, an active
 session returns `session_already_running`. If the previous session fails to
 clean up during a handover, `start` fails, the status reports `failed` with the
 cleanup code and protection stays until `recover`.
+
+Profile identity is the profile file: `Session.profile_id` is derived from the
+absolute path of the configuration file (case-insensitive on Windows). Edits to
+a profile saved at the same path are therefore the same profile; apply them
+with `stop` followed by `start`, because a repeated `start` keeps the running
+session. Embedders without a profile path are compared by profile name.
+
+If the daemon or service fails while a `start` waits for a handover, the
+previous session's filters stay installed and the `start` fails; once the owner
+has abandoned the engine, no later `start` is accepted. A user's `stop` that is
+already in progress still releases protection.
 
 Protection also stays installed when the daemon or service ends for a reason
 other than a stop, for example a failed control listener or a crash: the
