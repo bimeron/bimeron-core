@@ -121,19 +121,43 @@ non-administrator cannot create a pipe owned by Administrators or SYSTEM, and
 an elevated administrator cannot assign SYSTEM without enabling
 `SeRestorePrivilege`.
 
+The owner applies to the whole pipe, and `GetNamedPipeServerProcessId` reports
+the process that created the pipe, also for a later instance that another
+process serves. Neither identifies the server of an individual instance. The
+pipe DACLs therefore grant `FILE_CREATE_PIPE_INSTANCE` (`0x4`) only to the
+server principal. Clients get `0x0012019B`: `FILE_GENERIC_READ |
+FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`, and without
+`WRITE_DAC` or `WRITE_OWNER`. With these rights a client opens the pipe with
+`GENERIC_READ | GENERIC_WRITE`, reads and writes, and reads the owner.
+
+| Endpoint | DACL (protected) |
+|---|---|
+| `\\.\pipe\Bimeron.Core.Service` | SYSTEM: full; control owner: `0x0012019B` |
+| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: full |
+| `\\.\pipe\Bimeron.Core.<user-hash>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4` |
+| `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4`; medium no-write-up label |
+
+The console daemon and the IKEv2 foreground owner run elevated as the user, so
+the user and Administrators entries together give them the rights to serve
+further instances. Non-elevated processes of the user hold Administrators only
+as a deny-only group and cannot serve the pipe.
+
 ### Windows service pipe
 
 1. Connect to `\\.\pipe\Bimeron.Core.Service` with identification or anonymous
    impersonation level. The handle has `READ_CONTROL`.
 2. Read the owner with `GetSecurityInfo(handle, SE_KERNEL_OBJECT,
    OWNER_SECURITY_INFORMATION)`. Require exactly `S-1-5-18`.
-3. Bind the service process when SCM reports one. Open the service with
+3. Bind the service process. Open the service with
    `OpenSCManager(SC_MANAGER_CONNECT)` and `OpenService("BimeronCore",
-   SERVICE_QUERY_STATUS)`, then call `QueryServiceStatusEx`. If it reports a
-   nonzero process ID, `GetNamedPipeServerProcessId` must return the same ID.
-   Standard users have these rights under the default service security.
-   Core skips this step when the service or its process ID is unavailable,
-   because step 2 already limits the server to SYSTEM.
+   SERVICE_QUERY_STATUS)`, then call `QueryServiceStatusEx`. It must succeed
+   and report a nonzero process ID, and `GetNamedPipeServerProcessId` must
+   return the same ID. A service that serves the pipe always has a nonzero
+   process ID. If the pipe exists but the service is not installed, is
+   stopped, reports process ID 0 or the query fails, the endpoint is
+   untrusted. Standard users have these rights under the default service
+   security, so a failed query, including access denied, is not expected and
+   fails closed.
 
 Do not open the server process token. Standard users cannot open a LocalSystem
 token, so a check that requires it fails for a normal GUI.
@@ -142,7 +166,9 @@ A service built before explicit owners leaves the pipe owned by Administrators
 (`S-1-5-32-544`). Clients with this check reject it until the service is
 updated. `bimeron service update` is unaffected: it stops and starts the
 service through SCM and verifies the updated service, which already sets the
-new owner.
+new owner. `bimeron version -daemon` sends its request only after these checks,
+so it reports `control_server_untrusted` for such a service instead of its
+version. Core does not show the version that an unverified endpoint claims.
 
 ### Windows readiness pipe
 
@@ -156,13 +182,20 @@ Fall back to `\\.\pipe\Bimeron.Core.<user-hash>` only when the service pipe does
 not exist (`ERROR_FILE_NOT_FOUND`). Then:
 
 1. Require pipe owner `S-1-5-32-544`.
-2. Get the server process with `GetNamedPipeServerProcessId`, open it with
-   `PROCESS_QUERY_LIMITED_INFORMATION` and its token with `TOKEN_QUERY`.
-   Require token user equal to the client's user SID and `TokenElevation`
-   true. The daemon refuses to start without elevation. A same-user client can
-   open this token without elevation.
+2. Get the server process with `GetNamedPipeServerProcessId` and open it once
+   with `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE`. Open its token
+   through that handle with `TOKEN_QUERY`. Require token user equal to the
+   client's user SID and `TokenElevation` true. Then require the process to
+   still be running, and keep the handle until the connection is closed, so
+   the process ID cannot be reused in between. The daemon refuses to start
+   without elevation.
 3. If the client launched the daemon, also require the server process ID to
    match the retained process handle of that launch.
+
+A non-elevated client can open the process and token of a daemon that the same
+user elevated through UAC in the same logon. A daemon elevated in another logon
+session, for example one started remotely, cannot be opened by a non-elevated
+client and is rejected.
 
 ### Windows IKEv2 foreground pipe
 

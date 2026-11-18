@@ -127,12 +127,21 @@ Verify the server before writing the first byte, as described in
 [Server identity](CONTROL.MD#server-identity). In short:
 
 - Service pipe: the pipe object owner, read from the connected handle with
-  `GetSecurityInfo`, must be `S-1-5-18`. When SCM reports a BimeronCore process
-  ID, `GetNamedPipeServerProcessId` must match it. Do not open the server
-  token: a standard user cannot open a LocalSystem token.
+  `GetSecurityInfo`, must be `S-1-5-18`. SCM must report a nonzero BimeronCore
+  process ID, and `GetNamedPipeServerProcessId` must match it. If the pipe
+  exists but SCM reports no service, process ID 0 or the query fails, the
+  endpoint is untrusted. Do not open the server token: a standard user cannot
+  open a LocalSystem token.
 - Console daemon pipe: the owner must be `S-1-5-32-544`, and the server token
-  must belong to the current user and be elevated. If the GUI launched the
-  daemon, the server process ID must also match that launch.
+  must belong to the current user and be elevated. Open the server process
+  once, inspect its token through that handle and keep the handle until the
+  connection is closed. If the GUI launched the daemon, the server process ID
+  must also match that launch.
+- The process ID binding does not identify the server of an individual pipe
+  instance. Only the server principal may create instances: the user has
+  `0x0012019B` (read and write without `FILE_CREATE_PIPE_INSTANCE`) on the
+  service, console daemon and IKEv2 foreground pipes. Open them with
+  `GENERIC_READ | GENERIC_WRITE` as before.
 - IKEv2 foreground and repair pipes: follow the checks in the same section.
 - Unix sockets: the peer credentials (`SO_PEERCRED`, `getpeereid` or
   `LOCAL_PEERCRED`) must report UID 0. Check the runtime directory with `lstat`
@@ -140,7 +149,9 @@ Verify the server before writing the first byte, as described in
 
 On failure, close the connection and report `control_server_untrusted`. Do not
 fall back to another endpoint. A service built before this check leaves the
-service pipe owned by `S-1-5-32-544` and is rejected until it is updated.
+service pipe owned by `S-1-5-32-544` and is rejected until it is updated. Its
+version is not available through the pipe then: `version -daemon` reports
+`control_server_untrusted` as well.
 
 On Linux the socket is `/run/bimeron/control.sock`; on macOS it is
 `/var/run/bimeron/control.sock`. The socket mode is 0600. The client UID must be
