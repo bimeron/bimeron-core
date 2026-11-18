@@ -12,13 +12,13 @@
     },
     "file_not_regular": {
       "kind": "config",
-      "en": "The profile or key path must name a regular file, not a folder, device or pipe.",
-      "ru": "Путь к профилю или ключу должен указывать на обычный файл, а не на папку, устройство или канал."
+      "en": "The profile or key path must name a file, not a folder, device, pipe or socket.",
+      "ru": "Путь к профилю или ключу должен указывать на файл, а не на папку, устройство, канал или сокет."
     },
     "file_path_not_local": {
       "kind": "config",
-      "en": "The profile or key file must be on a local drive. Network shares, device paths and reserved device names are not supported.",
-      "ru": "Файл профиля или ключа должен находиться на локальном диске. Сетевые папки, пути устройств и зарезервированные имена устройств не поддерживаются."
+      "en": "The profile or key file must be on a local drive. Network shares, mapped network drives, device paths and reserved device names are not supported.",
+      "ru": "Файл профиля или ключа должен находиться на локальном диске. Сетевые папки, подключённые сетевые диски, пути устройств и зарезервированные имена устройств не поддерживаются."
     },
     "file_not_utf8": {
       "kind": "config",

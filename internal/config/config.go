@@ -105,9 +105,9 @@ func readFile(path string) ([]byte, error) {
 	b, err := safefile.Read(path, maxSize)
 	switch {
 	case errors.Is(err, safefile.ErrNotLocal):
-		return nil, problem.New("file_path_not_local", "configuration or key file path must name a local file")
+		return nil, problem.New("file_path_not_local", "configuration or key file must be on the local file system")
 	case errors.Is(err, safefile.ErrNotRegular):
-		return nil, problem.New("file_not_regular", "configuration or key file must be a regular file")
+		return nil, problem.New("file_not_regular", "configuration or key path must name a data file")
 	case errors.Is(err, safefile.ErrTooLarge):
 		return nil, problem.New("file_too_large", "configuration or key file exceeds size limit").Arg("limit", "64 KiB")
 	case err != nil:
