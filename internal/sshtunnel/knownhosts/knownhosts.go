@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright 2017 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// license that can be found in the LICENSE file
+// (third_party/knownhosts/LICENSE in this repository).
 
 // Package knownhosts implements a parser for the OpenSSH known_hosts
 // host key database, and provides utility functions for writing
