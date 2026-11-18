@@ -4,7 +4,7 @@
 of v0.4.0-beta.1. Publication is pending candidate freeze, VM acceptance of the
 Desktop 0.3.1 candidate with this Core candidate, and explicit approval.
 
-The reviewed source range is `5fcadd71..438e38f4` on master. `5fcadd71` is the
+The reviewed source range is `5fcadd71..9521d8b4` on master. `5fcadd71` is the
 v0.4.0-beta.1 tag commit. The final candidate commit is recorded at freeze.
 
 For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.2/README.md).
@@ -15,8 +15,10 @@ This release updates the Go toolchain and several dependencies to versions that
 fix publicly disclosed vulnerabilities, makes `govulncheck` a blocking CI
 check, and hardens local trust boundaries and resource limits: control server
 identity, service update staging, profile file reads, geosite regex size,
-HTTP upgrade handshakes and the Windows kill switch exception. IPC and profile
-format versions are unchanged. Some previously accepted inputs are now
+HTTP upgrade handshakes and the Windows kill switch exception. It also changes
+reconnect recovery to retry indefinitely after an established session is lost
+and holds kill switch protection from start until an explicit disconnect. IPC
+and profile format versions are unchanged; all IPC changes are additive. Some previously accepted inputs are now
 rejected, and three structured problem codes are new; see
 [Compatibility](#compatibility). Upgrading is recommended for all users of
 v0.4.0-beta.1 and earlier.
@@ -82,6 +84,73 @@ Core does not build. The update removes the module-level finding
 The fixed issues affect HTTP/1 servers. Shipped Bimeron Core code does not run
 an HTTP server, so it is not practically affected. The toolchain update
 removes the finding.
+
+## Reconnection and kill switch
+
+Changed in [#163](https://github.com/bimeron/bimeron-core/pull/163). See
+[Reconnect recovery and kill switch hold](CONTROL.MD#reconnect-recovery-and-kill-switch-hold).
+
+- **Reconnect policy.** After an established session is lost, Core reconnects
+  indefinitely in cycles of 10 attempts. Attempts within a cycle back off 1, 2,
+  4, 8, then 15 seconds; cycles are separated by a 60-second pause. A network
+  change, a resume from sleep, or the new `reconnect_now` command (CLI:
+  `bimeron reconnect`) starts the next attempt immediately. A network change
+  ends at most one wait per cycle. The initial connection is unchanged: the
+  first attempt plus 3 retries. Native IKEv2 sessions keep the bounded policy.
+  This replaces the three-attempt limit after an interruption introduced in
+  v0.4.0-beta.1.
+- **Kill switch hold.** When a profile enables the kill switch
+  (`[Interface] KillSwitch = true`, Windows and Linux VPN mode), protection is
+  installed before any connection traffic, including access key and `ssconf`
+  resolution. It is held across all attempts, waits and the `failed` state, and
+  is released only when the user disconnects. While it is held, applications
+  other than Core cannot resolve names outside the tunnel (DNS ports 53 and
+  853), including through resolvers in `direct` ranges.
+- **Profile switching.** Starting a different kill switch profile while one is
+  active switches without an unprotected gap. Starting the same profile again
+  keeps the running session.
+- **Leftover protection.** Protection left after a crash or power loss is
+  reported as `KillSwitch: "residual"` together with `failed` and
+  `cleanup_failed_run_recover`. Connecting a kill switch profile or running
+  network recovery clears it.
+- **Without the kill switch.** The same reconnect policy applies, but traffic
+  may leave outside the tunnel while connecting, reconnecting or after a
+  failure.
+
+### IPC additions (IPC 1)
+
+All fields are omitted when zero.
+
+- `ReconnectAttempt` and `ReconnectLimit`: 1–3 of 3 during the initial
+  connection, 1–10 of 10 within a cycle, omitted while `waiting`.
+- `ReconnectCycle`: the current or most recent cycle after loss of an
+  established session; omitted during the initial connection.
+- `ReconnectPhase`: `attempting` or `waiting`.
+- `NextAttemptAt`: RFC 3339 UTC timestamp in whole seconds; the attempt does
+  not start earlier.
+- `KillSwitch`: `active` (installed and connected), `holding` (installed while
+  the tunnel carries no traffic: connecting, reconnecting, held failure,
+  stopping) or `residual` (idle with leftover protection).
+- `LastErrorPermanent`: `LastError` is a failure that retrying alone does not
+  fix.
+- Events: `reconnect_attempt`, `reconnect_wait`, `reconnect_requested`,
+  `kill_switch_holding` and `kill_switch_held`.
+- Capabilities: `reconnect_now` and `kill_switch_hold`.
+- Command `reconnect_now`, with the same guards as `stop`. Errors:
+  `reconnect_not_pending`, `stale_session`, `stale_instance` and
+  `invalid_request`.
+- New `start` error `kill_switch_held`: a failed session holds protection and
+  the new profile has no kill switch.
+
+### Known limitations
+
+- The Windows kill switch does not cover forwarded traffic, such as Internet
+  Connection Sharing or WSL2 and Hyper-V NAT
+  ([#164](https://github.com/bimeron/bimeron-core/issues/164)).
+- mDNS (UDP 5353) remains allowed to `direct` ranges.
+- With the outbound path blocked, loss of a session is detected after about
+  80 seconds (a health check every 30 seconds, 3 failures). This is unchanged.
+- `service update` releases kill switch protection while the service restarts.
 
 ## Hardening
 
@@ -173,12 +242,15 @@ removes the finding.
 
 ## Compatibility
 
-IPC remains version **1** and profile format remains version **1**. No
-capabilities or document operations were added or removed.
+IPC remains version **1** and profile format remains version **1**. IPC
+changes are additive: the reconnect and kill switch fields, events,
+capabilities and the `reconnect_now` command listed under
+[IPC additions](#ipc-additions-ipc-1). No document operations were added or
+removed.
 
 - New structured problem codes: `control_server_untrusted`,
-  `file_path_not_local` and `file_not_regular`. Clients should render them from
-  the catalog.
+  `file_path_not_local`, `file_not_regular`, `reconnect_not_pending` and
+  `kill_switch_held`. Clients should render them from the catalog.
 - Profiles that reference files in the locations listed under
   [Profile and referenced files](#profile-and-referenced-files) now fail
   validation.
@@ -213,6 +285,18 @@ bundled with Desktop 0.3.0 (v0.4.0-beta.1). Desktop 0.3.0 shows Repair only
 when the service is not ready. Install the update again afterwards, or upgrade
 to Desktop 0.3.1, which bundles v0.4.0-beta.2. Reinstalling Desktop 0.3.0 does
 not downgrade a newer installed service.
+
+Desktop 0.3.0 with this service shows reconnection as follows. It shows a
+counter only while `reconnecting` with an attempt within the limit.
+
+| Core state | Desktop 0.3.0 shows |
+| --- | --- |
+| Initial retries (1–3 of 3) | "Reconnecting… (n/3)", unchanged |
+| Attempt within a cycle (1–10 of 10) | "Reconnecting… (n/10)" |
+| Pause between cycles | "Reconnecting…" without a counter |
+| Failure with protection held | The failure as before; **Disconnect** sends `stop` and releases protection |
+| Leftover protection after a crash or reboot | The **Emergency network recovery** button |
+| Failure without the kill switch | Unchanged |
 
 Desktop 0.3.0 does not verify the identity of the local control server before
 sending requests, and updating the service does not add this check to it.
