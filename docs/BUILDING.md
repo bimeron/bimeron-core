@@ -1,6 +1,6 @@
 # Building and packaging
 
-Run commands from the repository root. Building the CLI requires Go 1.26.9 or newer. The Windows
+Run commands from the repository root. Building the CLI requires Go 1.26.11 or newer. The Windows
 distribution build also uses `curl` to download the verified Wintun archive.
 
 ## CLI distributions

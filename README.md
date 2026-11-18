@@ -82,7 +82,7 @@ found DNS leakage without that protection; broader interoperability remains unve
 
 ## Try a local proxy
 
-This quick start runs **from source**. You need Git, Go 1.26.9 or newer, `curl`, and a working
+This quick start runs **from source**. You need Git, Go 1.26.11 or newer, `curl`, and a working
 access URI for a supported upstream. It runs without administrator privileges or a system
 tunnel. Go is not required for a prebuilt CLI package; see the note after step 4.
 

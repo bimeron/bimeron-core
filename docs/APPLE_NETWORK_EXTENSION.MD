@@ -58,7 +58,7 @@ group; see [TN3137: On Mac keychain APIs and implementations](https://developer.
 
 ## Building on a Mac
 
-Requirements: macOS, Go 1.26.9 or newer, Xcode, and Python 3. The build targets
+Requirements: macOS, Go 1.26.11 or newer, Xcode, and Python 3. The build targets
 macOS 13.0 or later and was tested with the macOS 15.5 SDK and Xcode 16.4. To
 build and run the C ABI smoke test without installing the extension:
 

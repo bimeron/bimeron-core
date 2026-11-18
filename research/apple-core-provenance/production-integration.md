@@ -53,7 +53,7 @@ export BIMERON_TEST_GIT=<LOCAL_HOME>/.local/bin/git
 export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOWORK=off
 export GOCACHE="$PWD/.tmp/gocache" GOTMPDIR="$PWD/.tmp" TMPDIR="$PWD/.tmp"
 mkdir -p .tmp
-GO=<LOCAL_HOME>/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go
+GO=<LOCAL_HOME>/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.11.darwin-arm64/bin/go
 "$GO" test ./internal/appleversion ./release/applemanifest ./core ./cmd/bimeron -skip TestMASQUE
 BIMERON_APPLE_INTEGRATION=1 "$GO" test -v ./research/apple-core-provenance -run TestProductionIntegration -count=1
 ```
@@ -125,7 +125,7 @@ availability. Cache and temporary outputs stay under each checkout's `.tmp`.
 
 `-go` defaults to the running builder's `runtime.GOROOT()/bin/go`; `-git` defaults
 to installed Git resolution. Explicit paths are supported. The compiler must
-report exactly `go1.26.9` on Darwin arm64 or amd64. Go VCS stamping resolves a local
+report exactly `go1.26.11` on Darwin arm64 or amd64. Go VCS stamping resolves a local
 Git link to the same selected executable. These installed tools and their truthful
 version reports remain trusted inputs. Local checks explicitly select the scoped
 `<LOCAL_HOME>/.local/bin/git`; no unscoped Git is executed here.
@@ -149,8 +149,9 @@ Independent rereview of these fixes is still required.
 
 The clean committed implementation `e8de4354e2dc5d0364a2fb93119c50971cdf8a5c`
 passed the complete real integration matrix in 88.80 seconds (Go package elapsed
-89.069 seconds). The reproduction command above was used with the pinned local
-Go 1.26.9 compiler, offline dependencies and explicitly scoped Git. The tracked
+89.069 seconds). The reproduction command above was used with the then-pinned
+local Go 1.26.9 compiler, offline dependencies and explicitly scoped Git. The
+builder now requires Go 1.26.11; this evidence predates that change. The tracked
 tree was clean before execution. Logs are local and ignored at
 `.tmp/preparer-handoff-integration.log`.
 

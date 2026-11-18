@@ -41,8 +41,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-google.golang.org/grpc v1.79.3
-google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
+google.golang.org/grpc v1.83.2
+google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
 ================================================================================
 
 Licensed under the Apache License, Version 2.0. The full license terms are
@@ -83,7 +83,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-google.golang.org/protobuf v1.36.10
+google.golang.org/protobuf v1.36.11
 ================================================================================
 
 [LICENSE]
@@ -1835,7 +1835,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ================================================================================
-github.com/andybalholm/brotli v1.1.0
+github.com/andybalholm/brotli v1.2.8
 ================================================================================
 
 [LICENSE]
@@ -1862,7 +1862,7 @@ THE SOFTWARE.
 
 
 ================================================================================
-github.com/klauspost/compress v1.17.9
+github.com/klauspost/compress v1.20.4
 ================================================================================
 
 [LICENSE]

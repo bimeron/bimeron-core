@@ -102,8 +102,8 @@ func TestProductionIntegration(t *testing.T) {
 			}
 			for _, control := range []struct{ path, output, want string }{
 				{filepath.Join(dir, ".tmp/missing-go"), "", "resolve Go"},
-				{filepath.Join(dir, ".tmp/wrong-go"), "go version go1.26.8 darwin/arm64", "unsupported compiler"},
-				{filepath.Join(dir, ".tmp/wrong-host"), "go version go1.26.9 linux/amd64", "unsupported compiler"},
+				{filepath.Join(dir, ".tmp/wrong-go"), "go version go1.26.10 darwin/arm64", "unsupported compiler"},
+				{filepath.Join(dir, ".tmp/wrong-host"), "go version go1.26.11 linux/amd64", "unsupported compiler"},
 			} {
 				if control.output != "" {
 					os.WriteFile(control.path, []byte("#!/bin/sh\necho '"+control.output+"'\n"), 0755)
