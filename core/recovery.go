@@ -41,6 +41,9 @@ const (
 // with a session that does not keep it. Stop releases the protection first.
 var ErrKillSwitchHeld = errors.New("kill_switch_held")
 
+// errEngineExiting rejects a Start after the owner abandoned the engine.
+var errEngineExiting = errors.New("daemon_shutting_down")
+
 // ErrReconnectNotPending rejects ReconnectNow when no recovery wait is pending.
 var ErrReconnectNotPending = errors.New("reconnect_not_pending")
 
