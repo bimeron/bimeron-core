@@ -14,7 +14,8 @@ boundaries do not delimit Trojan requests or UDP datagrams.
 WebSocket uses verified TLS, HTTP/1.1 Upgrade, and binary frames containing
 Trojan bytes. `path` defaults to `/`; `host` defaults to SNI. SNI defaults to
 the server address. Host and SNI may differ. Early data (`ed`, including in
-the path), custom headers, and additional encryption are unsupported.
+the path), custom headers, and additional encryption are unsupported. The
+upgrade response, including bytes read ahead with it, is limited to 64 KiB.
 
 Xray gRPC uses verified TLS with HTTP/2 and a bidirectional stream at
 `/<serviceName>/Tun`, or `/<serviceName>/TunMulti` for `mode=multi`.

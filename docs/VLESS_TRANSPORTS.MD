@@ -65,6 +65,8 @@ cannot be combined. `N` must be from 1 through 8192. The core sends the first
 VLESS write in the `Sec-WebSocket-Protocol` header when it fits the limit;
 otherwise it sends normal WebSocket data. The early data value is removed from
 the actual WebSocket path. Custom early data header names are not supported.
+The WebSocket upgrade response, including bytes read ahead with it, is limited
+to 64 KiB.
 
 For gRPC, `serviceName=proxy` calls `/proxy/Tun` by default or
 `/proxy/TunMulti` with `mode=multi`. A leading slash selects an explicit method
