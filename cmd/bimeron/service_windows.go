@@ -52,7 +52,7 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	server := control.NewServer(core.New(core.Options{}))
+	server := control.NewServer(core.New(core.Options{ResidualProtection: true}))
 	if h.listen == nil {
 		readiness, err := control.ListenServiceReadiness()
 		if err != nil {

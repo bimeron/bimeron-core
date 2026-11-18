@@ -104,9 +104,9 @@ not require internet access.
 Protection is installed at the start of a session, so a crash, forced
 termination or power loss while connecting, reconnecting or in `failed` also
 leaves the filters installed. After a reboot the service starts without a
-session and reports `disconnected` without a `KillSwitch` marker, while the
-filters keep blocking. Connect a profile with `KillSwitch = true` or run
-`recover` to leave this state.
+session and reports `failed` with `kill_switch_pending_run_recover` and
+`KillSwitch: "residual"` while the filters keep blocking. Connect a profile
+with `KillSwitch = true` or run `recover` to leave this state.
 
 Restarting with `KillSwitch = true` atomically replaces old filters at the
 start of the new session. With `KillSwitch = false`, protection left after a

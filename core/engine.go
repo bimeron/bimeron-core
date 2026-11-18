@@ -78,7 +78,13 @@ type StatsSnapshot struct {
 // Options tune retry timing. RetryMin and RetryMax bound the initial-connection
 // backoff; RetryMin and CycleRetryMax bound the backoff inside a recovery
 // cycle; CyclePause separates recovery cycles. Zero values select defaults.
-type Options struct{ RetryMin, RetryMax, CycleRetryMax, CyclePause time.Duration }
+//
+// ResidualProtection makes an idle engine report kill switch protection that
+// no run owns (Status.KillSwitch "residual"); daemons and services enable it.
+type Options struct {
+	RetryMin, RetryMax, CycleRetryMax, CyclePause time.Duration
+	ResidualProtection                            bool
+}
 
 type session interface {
 	Wait(context.Context) error
@@ -133,27 +139,31 @@ func lastErrorCode(err error) string {
 type Engine struct {
 	// lifecycle serializes Start and the cancellation step of Stop, so a
 	// kill switch handover cannot interleave with another session change.
-	lifecycle   sync.Mutex
-	mu          sync.Mutex
-	recovery    recovery
-	wake        chan struct{}
-	holding     bool // a failed run keeps kill switch protection until Stop
-	protected   bool // the run owns kill switch protection
-	handover    bool // the held run exits for a new Start and keeps protection
-	pollEvery   time.Duration
-	observe     func(tunnel string) string
-	network     func() string
-	maintenance *maintenanceCoordinator
-	opts        Options
-	status      Status
-	events      chan Event
-	eventDrops  uint64
-	runResult   *runResult
-	cancel      context.CancelFunc
-	active      bool
-	factory     func(SessionConfig) backend
-	lastReport  map[string]time.Time
-	stats       *telemetry.Counters
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	recovery  recovery
+	wake      chan struct{}
+	holding   bool // a failed run keeps kill switch protection until Stop
+	protected bool // the run owns kill switch protection
+	handover  bool // the held run exits for a new Start and keeps protection
+	pollEvery time.Duration
+	observe   func(tunnel string) string
+	network   func() string
+	// residual caches idle kill switch protection found by residualProbe.
+	residual        bool
+	residualChecked time.Time
+	residualProbe   func() (bool, error)
+	maintenance     *maintenanceCoordinator
+	opts            Options
+	status          Status
+	events          chan Event
+	eventDrops      uint64
+	runResult       *runResult
+	cancel          context.CancelFunc
+	active          bool
+	factory         func(SessionConfig) backend
+	lastReport      map[string]time.Time
+	stats           *telemetry.Counters
 }
 
 // Stats returns counters for the most recent Start. Counters reset on every
@@ -195,7 +205,7 @@ func New(options Options) *Engine {
 	if options.CyclePause <= 0 {
 		options.CyclePause = time.Minute
 	}
-	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity}
+	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection}
 }
 
 // StatsSnapshot returns detached session metadata and counters under one lock.
@@ -214,6 +224,7 @@ func (e *Engine) StatsSnapshot() StatsSnapshot {
 }
 
 func (e *Engine) Status() Status {
+	e.refreshResidual()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.statusLocked()
@@ -227,6 +238,7 @@ func (e *Engine) statusLocked() Status {
 			status.KillSwitch = KillSwitchActive
 		}
 	}
+	e.residualStatusLocked(&status)
 	if status.Native != nil {
 		snapshot := *status.Native
 		status.Native = &snapshot
@@ -359,6 +371,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.runResult = &runResult{done: make(chan struct{}), acquired: make(chan struct{})}
 	e.active = true
 	e.holding, e.handover, e.protected = false, false, false
+	e.residual = false // the run owns or replaces any earlier protection
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
 	observe, tunnel := e.observe, cfg.Name
@@ -474,6 +487,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		e.protected, e.holding = false, false
+		e.residualChecked = time.Time{} // inspect again once idle
 		if handover {
 			// The next Start publishes its own status.
 		} else if result != nil {

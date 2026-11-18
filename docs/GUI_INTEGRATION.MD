@@ -823,7 +823,7 @@ Status and every Event carry optional fields; zero values are omitted:
 | `ReconnectCycle` | Current or most recent cycle (1-based) after loss; omitted during initial attempts. During `waiting`, the cycle that just failed. |
 | `ReconnectPhase` | `attempting` (an attempt is scheduled, with `NextAttemptAt`, or running, without it) or `waiting` (pause between cycles); omitted outside `reconnecting`. |
 | `NextAttemptAt` | RFC 3339 UTC, whole seconds: start of the next scheduled attempt or cycle; omitted when nothing is scheduled. Core host clock. |
-| `KillSwitch` | `active` (protection installed, `connected`) or `holding` (protection installed, the tunnel carries no traffic: `connecting`, `reconnecting`, held `failed`, `stopping`); omitted when the run owns no protection (kill switch disabled, proxy mode, IKEv2) and after the run ends. |
+| `KillSwitch` | `active` (protection installed, `connected`) or `holding` (protection installed, the tunnel carries no traffic: `connecting`, `reconnecting`, held `failed`, `stopping`); `residual` while idle with protection that no run owns (after a crash, power loss or failed cleanup), together with `failed` and `kill_switch_pending_run_recover` unless a more specific failure is shown; otherwise omitted (kill switch disabled, proxy mode, IKEv2). Offer recovery for `residual`. |
 | `LastErrorPermanent` | `true` when `LastError` is not fixed by retrying alone (for example `access_key_unavailable`, TLS rejection); Core still retries it after loss of an established session. Omitted for transient failures. |
 
 New progress events: `reconnect_wait`, `reconnect_attempt` (also at the start of

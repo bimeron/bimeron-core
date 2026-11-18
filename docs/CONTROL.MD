@@ -376,7 +376,9 @@ its protection or failed to, so an accepted `start` never precedes protection.
 A maintenance seal ends the run like a service stop and releases protection.
 The filters are persistent: after a crash, a forced process termination or a
 power loss during any phase they stay installed until a session with the kill
-switch replaces them or `bimeron recover` removes them. A new run that fails in
+switch replaces them or `bimeron recover` removes them. An idle daemon or
+service reports them as `failed` with `kill_switch_pending_run_recover` and
+`KillSwitch: "residual"`. A new run that fails in
 setup before it installs protection (for example `session_lock_failed`) after
 a handover leaves the earlier filters in place; use `recover`.
 
@@ -441,8 +443,14 @@ omitted.
   that the routing policy does not send `direct` is blocked until the VPN
   connects or the session is stopped. Omitted when the run owns no protection
   (kill switch disabled, proxy mode, native IKEv2, which reports its own
-  protection under `native`) and after the run ends, including when filters
-  remain for `recover` after a cleanup failure.
+  protection under `native`). `residual` while no run is active but Bimeron
+  kill switch protection is still installed, for example after a crash, a
+  power loss during a held session, or a failed cleanup: the daemon or service
+  then reports `failed` with `kill_switch_pending_run_recover` (unless a more
+  specific failure such as `cleanup_failed_run_recover` is already shown) and
+  `Session.active` is not `true`. Connecting a profile with the kill switch
+  replaces the filters; `recover` removes them. Inspected at most every 5
+  seconds while idle.
 - `LastErrorPermanent` (boolean): `LastError` is a failure that retrying alone
   does not fix, for example `access_key_unavailable` (a rejected or removed
   key) or a TLS rejection. It ends an initial connection at once; after loss of
