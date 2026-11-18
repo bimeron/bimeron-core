@@ -568,7 +568,7 @@ func (e *Engine) connect(ctx context.Context, cfg SessionConfig, b backend) (err
 				e.transition(Reconnecting, err)
 			}
 			if closeErr := s.Close(); closeErr != nil {
-				return closeErr, false
+				return closeFailure{closeErr}, false
 			}
 		}
 		// Open owns rollback on failure. A cleanup failure must stay visible even

@@ -90,11 +90,18 @@ func (e *Engine) recoverable(err error) bool {
 	return cycling && !requiresRecovery(err)
 }
 
+// closeFailure marks an error returned by a session's Close. Close owns
+// network cleanup, so any such error, coded or not, ends the run.
+type closeFailure struct{ error }
+
+func (c closeFailure) Unwrap() error { return c.error }
+
 // requiresRecovery marks faults after which the run must not continue on its
-// own: failed cleanup or protection changes (codes ending in _run_recover) and
-// a maintenance seal.
+// own: failed cleanup or protection changes (codes ending in _run_recover),
+// a failed session Close and a maintenance seal.
 func requiresRecovery(err error) bool {
-	if errors.Is(err, errMaintenanceSealed) {
+	var closed closeFailure
+	if errors.Is(err, errMaintenanceSealed) || errors.As(err, &closed) {
 		return true
 	}
 	var staged *stageError

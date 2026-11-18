@@ -135,6 +135,22 @@ func waitingEngine(t *testing.T, opens *atomic.Int32, succeedAfter int32) *Engin
 	return e
 }
 
+// awaitStatus polls Status, which unlike the event stream holds no history.
+func awaitStatus(t *testing.T, e *Engine, match func(Status) bool) Status {
+	t.Helper()
+	ctx := testDeadline(t)
+	for {
+		if s := e.Status(); match(s) {
+			return s
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("status not reached", e.Status())
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func awaitWaiting(t *testing.T, e *Engine) Status {
 	t.Helper()
 	ctx := testDeadline(t)
@@ -191,7 +207,7 @@ func TestWaitingPhaseStatusAndReconnectNow(t *testing.T) {
 	if err := e.ReconnectNow(); err != nil {
 		t.Fatal(err)
 	}
-	awaitState(t, e, Connected)
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
 	if opens.Load() != 2+cycleAttemptLimit {
 		t.Fatal(opens.Load())
 	}
@@ -216,7 +232,10 @@ func TestNetworkChangeEndsRecoveryWait(t *testing.T) {
 	}
 	awaitWaiting(t, e)
 	network.Store("wifi-b")
-	awaitState(t, e, Connected)
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if opens.Load() != 2+cycleAttemptLimit {
+		t.Fatal(opens.Load())
+	}
 	if err := e.Stop(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -450,8 +469,8 @@ func TestKillSwitchReconnectNowRetriesHeldSession(t *testing.T) {
 	if err := e.ReconnectNow(); err != nil {
 		t.Fatal(err)
 	}
-	awaitState(t, e, Connected)
-	if s := e.Status(); s.KillSwitch != KillSwitchActive || s.ReconnectAttempt != 0 {
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	if s := e.Status(); s.KillSwitch != KillSwitchActive || s.ReconnectAttempt != 0 || opens.Load() != 5 {
 		t.Fatal(s)
 	}
 	if acquires, releases, _, _ := b.snapshot(); acquires != 1 || releases != 0 {
@@ -488,7 +507,7 @@ func TestKillSwitchHandover(t *testing.T) {
 	if err := e.Start(ctx, killSwitchConfig()); err != nil {
 		t.Fatal(err)
 	}
-	awaitState(t, e, Connected)
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
 	if acquires, releases, retains, installed := b.snapshot(); acquires != 2 || releases != 1 || retains != 1 || !installed {
 		t.Fatal("handover released protection", acquires, releases, retains, installed)
 	}
@@ -524,7 +543,7 @@ func TestKillSwitchReleaseFailureIsVisible(t *testing.T) {
 	if err := e.Start(ctx, killSwitchConfig()); err != nil {
 		t.Fatal(err)
 	}
-	awaitState(t, e, Connected)
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
 	if err := e.Stop(ctx); err == nil || err.Error() != "cleanup_failed_run_recover" {
 		t.Fatal(err)
 	}
