@@ -15,11 +15,12 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/safefile"
+	"bimeron/internal/sshtunnel/knownhosts"
 	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Challenge is shown only to a local authenticated client, never in status or logs.
@@ -77,9 +78,26 @@ func userHomeDir() (string, error) {
 	return os.UserHomeDir()
 }
 
-func readFile(path string) ([]byte, error) {
+// File size limits for IdentityFile and KnownHostsFile.
+const (
+	maxIdentityFile   = 64 << 10
+	maxKnownHostsFile = 1 << 20
+)
+
+func readFile(path string, limit int64) ([]byte, error) {
 	trace("read", path)
-	return os.ReadFile(path)
+	return safefile.Read(path, limit)
+}
+
+// knownHosts reads the known_hosts file at path once and returns its contents
+// with the callback parsed from them.
+func knownHosts(path string) (ssh.HostKeyCallback, []byte, error) {
+	data, err := readFile(path, maxKnownHostsFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	callback, err := knownhosts.Parse(data, "known_hosts")
+	return callback, data, err
 }
 
 func homeRelative(path string) bool {
@@ -107,7 +125,7 @@ func expand(path string, profileOnly bool) (string, error) {
 }
 
 func signer(path string, ctx context.Context, prompt Prompt) (ssh.Signer, error) {
-	b, err := readFile(path)
+	b, err := readFile(path, maxIdentityFile)
 	if err != nil {
 		return nil, fmt.Errorf("SSH identity file unavailable")
 	}
@@ -174,11 +192,8 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	if o.HostKeys != nil {
 		policy = &verifier{keys: o.HostKeys}
 		if hostFile != "" {
-			data, err := readFile(hostFile)
-			if err != nil {
-				return nil, fmt.Errorf("SSH known_hosts unavailable")
-			}
-			if policy.file, err = knownhosts.New(hostFile); err != nil {
+			var data []byte
+			if policy.file, data, err = knownHosts(hostFile); err != nil {
 				return nil, fmt.Errorf("SSH known_hosts unavailable")
 			}
 			policy.ca, policy.folds = inspectHosts(data)
@@ -202,11 +217,8 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	// algorithms: verification stays with verify.
 	order := policy
 	if policy == nil {
-		data, err := readFile(hostFile)
-		if err != nil {
-			return nil, fmt.Errorf("SSH known_hosts unavailable")
-		}
-		if verify, err = knownhosts.New(hostFile); err != nil {
+		var data []byte
+		if verify, data, err = knownHosts(hostFile); err != nil {
 			return nil, fmt.Errorf("SSH known_hosts unavailable")
 		}
 		order = &verifier{keys: &HostKeys{}, file: verify}

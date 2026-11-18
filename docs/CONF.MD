@@ -67,7 +67,8 @@ File = test.key
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
-allowed. The maximum key-file size is 64 KiB.
+allowed. The maximum key-file size is 64 KiB. See [Referenced files](#referenced-files)
+for the rules that apply to every path in a profile.
 
 ### Inline static key
 
@@ -784,6 +785,34 @@ format, limits, and host APIs.
 - Leading/trailing value whitespace is trimmed; double quotes preserve it.
 - Quoted values support escapes `\r`, `\n`, `\t`, `\\`, `\"`.
 - Windows paths are easiest to write unquoted: `File = C:\VPN\test.key`.
+
+## Referenced files
+
+The `.conf` file and every file it names must be regular files on the local
+file system. This covers `File`, `CAFile` and the `ca` URI option,
+`IdentityFile`, `KnownHostsFile`, the `identity` and `known_hosts` URI options,
+`GeoIPFile`, and `GeoSiteFile`. Bimeron rejects directories, devices, FIFOs,
+sockets, and named pipes before opening them. Symbolic links to regular files
+are followed. On Windows, Bimeron also rejects these paths:
+
+- network shares (`\\server\share`, `//server/share`);
+- device-namespace paths (`\\?\`, `\\.\`, `\??\`);
+- reserved device names such as `NUL`, `CON`, or `COM1.txt` in any path element;
+- alternate data streams (`file.txt:stream`).
+
+| File | Size limit |
+|---|---|
+| `.conf`, `File` | 64 KiB |
+| `IdentityFile`, `identity` | 64 KiB |
+| `KnownHostsFile`, `known_hosts` | 1 MiB |
+| `CAFile`, `ca` | 1 MiB |
+| `GeoIPFile`, `GeoSiteFile` | 64 MiB each |
+
+A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
+`file_not_regular`, `file_too_large`, or `file_unreadable`. A dataset problem
+has the code `geodata_unreadable` or `geodata_limit`. SSH and MASQUE files are
+read when a connection starts. A failure there is reported as an unavailable
+identity, `known_hosts`, or CA file.
 
 ## Commands
 
