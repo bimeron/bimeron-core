@@ -823,3 +823,23 @@ func TestNetworkFlapsWakeOncePerCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A whole-second NextAttemptAt is never earlier than the attempt it announces.
+func TestNextAttemptAtIsNotEarly(t *testing.T) {
+	var opens atomic.Int32
+	e := waitingEngine(t, &opens, 0)
+	e.opts.RetryMin = time.Second
+	e.opts.CycleRetryMax = time.Second
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, testConfig()); err != nil {
+		t.Fatal(err)
+	}
+	s := awaitStatus(t, e, func(s Status) bool { return s.ReconnectAttempt == 1 && !s.NextAttemptAt.IsZero() })
+	awaitStatus(t, e, func(Status) bool { return opens.Load() == 2 })
+	if now := time.Now(); now.Before(s.NextAttemptAt) {
+		t.Fatal("attempt started before NextAttemptAt", now, s.NextAttemptAt)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

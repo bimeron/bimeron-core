@@ -194,14 +194,17 @@ func (e *Engine) scheduleLocked(err error) (delay time.Duration, pause, ok bool)
 		e.status.ReconnectAttempt, e.status.ReconnectLimit = r.attempt, initialRetryLimit
 		e.status.ReconnectPhase = PhaseAttempting
 	}
-	// Whole seconds, rounded up, and the delay is extended to match, so the
-	// attempt starts at NextAttemptAt and never before it.
+	// Whole seconds, rounded up. Delays of a second or more (all production
+	// delays) are extended to match, so the attempt starts at NextAttemptAt and
+	// never before it; shorter test delays are not stretched.
 	now := time.Now()
 	next := now.Add(delay).UTC()
 	if rounded := next.Truncate(time.Second); rounded.Before(next) {
 		next = rounded.Add(time.Second)
 	}
-	delay = next.Sub(now)
+	if delay >= time.Second {
+		delay = next.Sub(now)
+	}
 	e.status.NextAttemptAt = next
 	e.transitionLocked(Reconnecting, err)
 	// The state/error can be unchanged between retries; still publish progress.
