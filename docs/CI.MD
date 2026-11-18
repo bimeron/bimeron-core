@@ -6,8 +6,11 @@ are `lint`, `test` (Linux), `test-windows`, `test-apple-unsigned`,
 `test-fingerprint-dependencies`, `cli-dist`, and `android-dist`.
 
 The `lint` job checks `gofmt`, runs `go mod tidy -diff`, `go vet ./...`, and a
-pinned `staticcheck`, and reports `govulncheck` findings without failing the
-build while known dependency and toolchain findings await updates.
+pinned `staticcheck`. It then runs a pinned `govulncheck` for Linux, Windows,
+Android, and Darwin targets. The step fails when code reachable from `./...`
+calls a known vulnerable symbol in a dependency or the Go standard library.
+Vulnerabilities in required modules that the code does not call are reported
+without failing.
 
 The Linux `test` job also builds pinned Xray-core `v1.260327.0` outside Bimeron's module
 graph and checks VMess TCP, UDP, reconnect, and cleanup over every documented
@@ -214,7 +217,6 @@ server interoperability, certificate rejection, leak protection or performance.
 
 - `go test ./...` on macOS, and a full `go test -race ./...` with CGO. Windows
   race testing requires a separately configured compatible C compiler.
-- A failing `govulncheck` gate; findings are currently reported only.
 - Android `VpnService` execution on a device.
 
 The Linux `test` job already runs TUN, HTTP, MASQUE, route, nftables, and daemon

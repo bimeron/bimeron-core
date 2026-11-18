@@ -39,11 +39,13 @@ jobs:
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
       - name: govulncheck
-        # Known findings in grpc, brotli, klauspost/compress, and crypto/x509
-        # (Go 1.26.9) await dependency and toolchain updates; report without
-        # failing until they are resolved.
-        continue-on-error: true
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        # Scan each shipped target: reachability depends on GOOS-specific files.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for target in linux/amd64 windows/amd64 android/arm64 darwin/arm64; do
+            echo "govulncheck $target"
+            CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" "$(go env GOPATH)/bin/govulncheck" ./...
+          done
 
   test:
     # Original simple-obfs requires PCRE1, removed from Ubuntu 26.04.
