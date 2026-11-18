@@ -16,8 +16,10 @@ import (
 )
 
 // Decoder limits bound allocations and work on untrusted local dataset bytes.
-// Regex limits bound estimated compiled program size per pattern and dataset;
-// real-world datasets use about 10,000 instructions in total.
+// Regex limits bound the estimated compiled program and its retained rune
+// sets per pattern and per dataset; real-world datasets use about 10,000
+// instructions and 125,000 rune-range endpoints in total, at most 1,500 per
+// pattern.
 const (
 	maxGeoBytes      = 64 << 20
 	maxGeoEntries    = 2_000_000
@@ -26,8 +28,9 @@ const (
 	maxGeoRegexBytes = 1 << 20
 	maxGeoRegexLen   = 1024
 	maxGeoRegexInst  = 4096
-	maxGeoRegexInsts = 1 << 17
-	maxGeoRegexRunes = 1 << 18
+	maxGeoRegexInsts = 1 << 16
+	maxGeoRegexRune  = 1 << 15
+	maxGeoRegexRunes = 1 << 19
 	maxGeoString     = 4096
 )
 
@@ -160,37 +163,80 @@ func geoError(kind, group string, rule int, err error) *GeoDataError {
 
 type regexBudget struct{ count, bytes, insts, runes int }
 
-// regexSize estimates compiled instructions as regexp/syntax does, without
-// building the program. Counted repetition expands instructions but shares
-// rune slices, so runes are counted once per parse node. Sizes saturate above
-// maxGeoRegexInst.
-func regexSize(re *syntax.Regexp, runes *int) int {
-	*runes += len(re.Rune)
-	sub := 0
-	for _, s := range re.Sub {
-		sub = min(sub+regexSize(s, runes), maxGeoRegexInst+1)
+// geoLimit names an exceeded decoder limit and matches errGeoLimit.
+type geoLimit string
+
+func (l geoLimit) Error() string     { return errGeoLimit.Error() + ": " + string(l) }
+func (l geoLimit) Is(err error) bool { return err == errGeoLimit }
+
+// regexCost is a saturating estimate for a parse node: compiled instructions,
+// rune-matching instructions and rune-range endpoints of those instructions,
+// with counted repetition expanded.
+type regexCost struct{ insts, runeInsts, runes int }
+
+// regexWeight estimates compiled instructions and retained rune-range
+// endpoints for a pattern. Each rune instruction may keep its own endpoints,
+// and the one-pass matcher may give every other instruction a copy of a
+// rune set whose size is at most the endpoints of all parse nodes. Results
+// saturate above the per-pattern limits.
+func regexWeight(re *syntax.Regexp) (insts, runes int) {
+	set := 0
+	c := regexSize(re, &set)
+	if set > maxGeoRegexRune {
+		return c.insts, maxGeoRegexRune + 1
 	}
-	n := sub
+	return c.insts, min(c.runes+(c.insts-c.runeInsts)*set, maxGeoRegexRune+1)
+}
+
+// regexSize mirrors regexp/syntax compilation without building the program
+// and adds the endpoints of every parse node to set.
+func regexSize(re *syntax.Regexp, set *int) regexCost {
+	var c regexCost
+	for _, s := range re.Sub {
+		n := regexSize(s, set)
+		c = regexCost{c.insts + n.insts, c.runeInsts + n.runeInsts, c.runes + n.runes}.capped()
+	}
+	sub := c
 	switch re.Op {
 	case syntax.OpLiteral:
-		n = len(re.Rune)
+		// Case folding may expand a literal rune to its whole fold orbit.
+		n := 2
+		if re.Flags&syntax.FoldCase != 0 {
+			n = 8
+		}
+		c = regexCost{len(re.Rune), len(re.Rune), n * len(re.Rune)}
+	case syntax.OpCharClass:
+		c = regexCost{1, 1, len(re.Rune)}
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		c = regexCost{1, 1, 4}
 	case syntax.OpCapture, syntax.OpStar:
-		n = 2 + sub
+		c.insts += 2
 	case syntax.OpPlus, syntax.OpQuest:
-		n = 1 + sub
+		c.insts++
 	case syntax.OpAlternate:
-		n = sub + len(re.Sub) - 1
+		c.insts += len(re.Sub) - 1
 	case syntax.OpRepeat:
+		copies := re.Max
 		switch {
 		case re.Max == -1 && re.Min == 0:
-			n = 2 + sub
+			copies, c.insts = 1, 2+sub.insts
 		case re.Max == -1:
-			n = 1 + re.Min*sub
+			copies, c.insts = re.Min, 1+re.Min*sub.insts
 		default:
-			n = re.Max*sub + re.Max - re.Min
+			c.insts = re.Max*sub.insts + re.Max - re.Min
 		}
+		c.runeInsts, c.runes = copies*sub.runeInsts, copies*sub.runes
 	}
-	return min(max(n, 1), maxGeoRegexInst+1)
+	if re.Op != syntax.OpRepeat {
+		*set += c.runes - sub.runes
+	}
+	c.insts = max(c.insts, 1)
+	return c.capped()
+}
+
+func (c regexCost) capped() regexCost {
+	insts := min(c.insts, maxGeoRegexInst+1)
+	return regexCost{insts, min(c.runeInsts, insts), min(c.runes, maxGeoRegexRune+1)}
 }
 
 // Groups returns sorted lowercase identifiers. kind is GeoIP or GeoSite
@@ -462,17 +508,30 @@ func decodeDomain(b []byte, g *domainGroup, budget *regexBudget) error {
 	case 1:
 		budget.count++
 		budget.bytes += len(value)
-		if budget.count > maxGeoRegex || budget.bytes > maxGeoRegexBytes || len(value) > maxGeoRegexLen {
-			return errGeoLimit
+		switch {
+		case budget.count > maxGeoRegex:
+			return geoLimit("regex count")
+		case budget.bytes > maxGeoRegexBytes:
+			return geoLimit("regex bytes")
+		case len(value) > maxGeoRegexLen:
+			return geoLimit("regex length")
 		}
 		tree, err := syntax.Parse(value, syntax.Perl)
 		if err != nil {
 			return fmt.Errorf("invalid geosite regex")
 		}
-		n := regexSize(tree, &budget.runes)
-		budget.insts += n
-		if n > maxGeoRegexInst || budget.insts > maxGeoRegexInsts || budget.runes > maxGeoRegexRunes {
-			return errGeoLimit
+		insts, runes := regexWeight(tree)
+		budget.insts += insts
+		budget.runes += runes
+		switch {
+		case insts > maxGeoRegexInst:
+			return geoLimit("regex instructions")
+		case runes > maxGeoRegexRune:
+			return geoLimit("regex runes")
+		case budget.insts > maxGeoRegexInsts:
+			return geoLimit("total regex instructions")
+		case budget.runes > maxGeoRegexRunes:
+			return geoLimit("total regex runes")
 		}
 		r, err := regexp.Compile(value)
 		if err != nil {
