@@ -1,7 +1,7 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 7, November 18, 2026. Two follow-up questions
-(Q10, Q11) await the user; the rest is decided. Not accepted. This
+Status: proposed draft, revision 8, November 18, 2026. Follow-up questions
+Q10, Q11 and Q12 await the owner; the rest is decided. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
 replacement policy of #140 in [REPAIR_SESSION.md](../REPAIR_SESSION.md).
@@ -169,10 +169,11 @@ risk.
   contents, never on `staging/`, `trash/` or `state/`. The inheritable
   read-and-execute ACE for `Users` on `versions/` must not flow into the other
   directories.
-- **Service directory files.** In store-capable builds, the service-directory
-  files (`bimeron.exe`, `wintun.dll`) also get a DACL for `SYSTEM` and
-  `Administrators` only. An ordinary user then cannot open them at all, so a
-  sharing-mode handle cannot block a switch.
+- **Service directory files.** In store-capable builds, the service
+  directory grants `Users` no inheritable file access. Every member, including
+  `WINTUN-LICENSE.txt`, and every temporary and backup name carries a DACL for
+  `SYSTEM` and `Administrators` only. An ordinary user then cannot open them,
+  so a sharing-mode handle cannot block a switch (see the `copy` step).
 - **Directory protection** must reapply the store root's protected DACL by
   handle, never reapply a parent descriptor by path.
 - **Linux.** Everything is owned by root. `versions/` is 0755 (members 0755
@@ -626,8 +627,11 @@ evaluate:
 
 When a privileged process finds such evidence, it does not ignore it. It
 treats the store as read-only, refuses every elevated role except `status`,
-and reports `newer-component-required`. "Ignored and reported" applies only to
-records whose signatures fail under keys the verifier knows. An older package
+and reports `newer-component-required`. The only exception is finishing the
+promotion of, or republishing, the active version itself (see Finishing a
+promotion with an older broker; pending owner decision Q12). "Ignored and
+reported" applies only to records whose signatures fail under keys the verifier
+knows. An older package
 copy elevated after a rotation therefore cannot evade a newer elevation floor
 or the active version.
 
@@ -759,120 +763,210 @@ under the lock, so no other session's cleanup can touch it.
 - The installer action does not wait. On `store-busy` it leaves the work to
   the Desktop fallback.
 
-**Locks the store lock does not replace.** The session still holds the
-existing installation transaction, which excludes the foreground daemon.
-Pre-store writers never take the store lock, so every mutation starts with a
-compare step: re-read the registration and member identities, and abort with
-`concurrent-change` on any deviation from the journal's expectation. An
-abandoned pre-store mutex combined with a pending journal goes to
-reconciliation, not to manual review.
+**Other locks.** The session still holds the existing installation
+transaction, which excludes the foreground daemon. An abandoned pre-store
+mutex combined with a pending journal goes to reconciliation, not to manual
+review.
 
-**Refusals before the switch.** A disabled start type is refused before
-`begin` with `service-disabled`.
+**Compare before every mutation.** Pre-store writers never take the store lock,
+so every mutation first re-reads the registration and member identities.
+
+- In a live session, the compare expects exactly the state the session itself
+  produced.
+- In reconciliation, it accepts every state reachable from the journal:
+  - each member at its target, backup, temporary or trash name;
+  - the old or the new registration;
+  - any run state;
+  - recovery suspended or canonical.
+- Any other state is a deviation. In a live session, a deviation aborts with
+  `concurrent-change`. In reconciliation, it means `journal-unrecoverable`,
+  which has the `abandon-switch` exit.
+
+**Refusals before `begin`.**
+
+- A disabled Windows start type or a masked Linux unit is refused with
+  `service-disabled`.
+- Any blocking handle on a service-directory member is refused with
+  `service-file-busy` (see the `copy` step).
 
 **Journal rules**
 
 - **R1 Write-ahead.** `state/switch.json` holds a journal ID, the operation, the
-  store contract and `next: <step>`. It is replaced atomically (Windows
-  `MoveFileEx(REPLACE_EXISTING | WRITE_THROUGH)` or POSIX-semantics
-  `FileRenameInfoEx`, never `ReplaceFile`; Linux `rename` plus a directory
-  fsync).
-  - Before each step's effect, the broker durably writes `next` together with
-    every name that step will use. After a crash, the step named in `next` may
-    or may not have happened.
-  - Nothing changes before `begin` is durable.
-  - Readers other than the lock holder open the journal sharing read, write
-    and delete, and close it at once.
-- **R2 Observation-guarded and idempotent.** Every forward action and every undo
-  first observes the actual state: member digests at the target, backup and
-  temporary names; the loaded registration (`QueryServiceConfig`,
-  `systemctl show`); the recovery configuration. It acts only if needed.
-  - Every rename into a live name uses no-replace semantics: `MoveFileEx`
-    without `REPLACE_EXISTING` and with `WRITE_THROUGH`, or
-    `renameat2(RENAME_NOREPLACE)` plus a directory fsync.
+  store contract and `next: <step>`.
+  - **Atomic replacement.** Windows uses `SetFileInformationByHandle` with
+    `FileRenameInfoEx`, `FILE_RENAME_FLAG_POSIX_SEMANTICS` and
+    `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, which can replace a file that
+    readers hold open; this is verified on the VM. Linux uses `rename` plus a
+    directory fsync.
+  - **Write order.** Before each step's effect, the broker durably writes
+    `next` together with every name that step will use. After a crash, the
+    step named in `next` may or may not have happened. Nothing changes before
+    `begin` is durable.
+  - **Readers.** Only lock holders read the journal. The service, the
+    foreground daemon and Desktop read only the `switch_pending` marker in the
+    HKLM or `/etc` copy.
+- **R2 Observation-guarded and idempotent.**
+  - Every forward action and every undo first observes the actual state: the
+    identity of the objects at the target, backup, temporary and trash names;
+    the loaded registration (`QueryServiceConfig`, `systemctl show`); and the
+    recovery configuration. It acts only if needed.
+  - Renames of service-directory members use no-replace semantics:
+    `MoveFileEx` without `REPLACE_EXISTING` and with `WRITE_THROUGH`, or
+    `renameat2(RENAME_NOREPLACE)` plus a directory fsync. Journal and unit
+    replacement follow R1 and R5.
   - "Remove" always means a rename into `trash/` on the same volume, never a
     delete that could leave a delete-pending name.
-- **R3 Old-image safety.** No action deletes, overwrites or moves a file whose
-  digest equals a journaled old digest, except renaming it between its target
-  name and its journaled backup name.
-- **R4 Commit point.** `ready` is written only after readiness has passed and
-  the recorded run state has been restored.
-  - Before `ready`, reconciliation goes backward.
-  - It may go forward before `ready` only when the journal recorded the old
-    member as absent at `begin`, which is repair of a missing image. The
-    source is then only the journaled source with the journaled new digest,
-    re-verified under the reconciler's trust, floors and never-below-active.
-    The package bootstrap is never substituted.
-  - From `ready` on, reconciliation goes forward only.
+- **R3 Old-image safety.** Before `ready`, no action deletes, overwrites or
+  moves an object whose file ID was journaled at `begin` as an old member. The
+  only exception is renaming it between its target name and its journaled
+  backup name. From `ready` on, `finish` may move it to `trash/`.
+- **R4 Commit point and direction.** `ready` is a record with no effect. It is
+  written only after the `start` step has passed readiness and restored the
+  recorded run state.
+  - **Per-journal direction.** Direction is decided for the whole journal,
+    never per member. Before `ready`, reconciliation goes backward.
+  - **The one forward exception** applies only when some old member was
+    journaled absent at `begin` (repair of a missing image) and the operation
+    is not `install`. Then all members move forward together. The source is
+    only the journaled source with the journaled new digest, re-verified
+    under the reconciler's trust, floors and never-below-active. The package
+    bootstrap is never substituted.
+  - **A failed forward attempt** goes backward to the journaled pre-switch
+    state and closes the journal as a failed repair.
+  - **From `ready` on,** reconciliation goes forward only.
 - **R5 Configuration durability.**
-  - Windows: after every SCM change (`ChangeServiceConfig`,
-    `ChangeServiceConfig2`, `CreateService`, `DeleteService`), call
-    `RegFlushKey` on the service key before the next journal write or the
-    journal's deletion.
-  - Linux: after every unit change, fsync the file and its directory, run
+  - **Windows.** After every SCM change (`ChangeServiceConfig`,
+    `ChangeServiceConfig2`, `CreateService`), call `RegFlushKey` on the
+    service key. After `DeleteService`, flush the parent `Services` key. Both
+    happen before the next journal write or the journal's deletion.
+  - **Linux.** After every unit change, fsync the file and its directory, run
     `daemon-reload`, and verify `FragmentPath`, `ExecStart` and
     `DropInPaths`.
-  - Reconciliation reads the actual configuration and never assumes it from
-    the journal.
+  - **Reconciliation** reads the actual configuration and never assumes it
+    from the journal.
 - **R6 Once per journal.** Each step runs at most once per journal ID in a
   session.
+- **Undo-side stop.** Every undo that stops the service treats "stopped, with
+  no process left" (`ProcessId 0`, `MainPID 0`) as stopped, whatever the exit
+  code. An unclean exit is not an undo failure. Before the old image starts,
+  the undo runs the existing consent-gated network recovery, the repair
+  `Recover` path, if the owned cleanup markers require it. That decision rests
+  on the markers, never on the stale exit status.
 
-**Member set.** The journal covers every member of the service directory,
-not only the executable. On Windows those are `bimeron.exe`, `wintun.dll` and
-`WINTUN-LICENSE.txt`. For each member it records the old digest (or "absent"),
-the new digest, and the target, backup and temporary names. A backward run
-therefore never leaves the old executable with the new DLL.
+**Member set.** The journal covers every member of the service directory:
+`bimeron.exe`, `wintun.dll` and `WINTUN-LICENSE.txt` on Windows, and the
+executable on Linux. For each member it records:
 
-**Steps.** Each row is preceded by its durable `next` record.
+- the old file ID and digest, or "absent";
+- the new digest;
+- the target, backup and temporary names.
 
-| `next` | Forward effect | Backward undo (guarded, applied in reverse order) |
+A member whose old and new digests are equal is journaled `unchanged`. It is
+neither copied nor swapped, but its ACL is still reset (see `copy`). A backward
+run therefore never leaves the old executable with the new DLL.
+
+**Service-directory protection.** In store-capable builds, the service
+directory's DACL grants `Users` no inheritable file access. Every member,
+temporary name and backup name has a DACL that grants access only to `SYSTEM`
+and `Administrators`. Temporary names get that DACL atomically at creation.
+
+**Steps.** Each row is preceded by its durable `next` record. Backward undos are
+applied in reverse order.
+
+| `next` | Forward effect | Backward undo (guarded) |
 | --- | --- | --- |
-| `begin` | Journal created. Records the operation, the ID, the contract, per-member names and digests, the full old and new registration, the run state, and the source (`staging/<r>` or `versions/<v>`). The HKLM or `/etc` copy gains a display-only `switch_pending` marker (journal ID, operation, step, time), flushed | Remove staging (unless the source is in `versions/`), clear the marker, delete the journal |
-| `copy` | Copy each new member from the held staging handle to its temporary name in the service directory (create-new, flush). This happens before any disruption, so a full disk fails harmlessly | Remove the temporary names |
-| `suspend` | Turn recovery off. Windows: no SCM failure actions. Linux: a runtime drop-in, `/run/systemd/system/bimeron-core.service.d/50-bimeron-switch.conf`, containing `Restart=no`; a reboot clears it | Set the canonical recovery settings |
-| `stop` | Stop with the existing stop and cleanup proof | The run state is restored at the end of the undo |
-| `register` | Windows: `ChangeServiceConfig` with only `BinaryPathName` changed (`SERVICE_NO_CHANGE` for the rest), or `CreateService` for `install`. Linux: write the new unit atomically, then `daemon-reload`. In both cases, apply R5 and verify the loaded configuration | Restore the old registration only after every old member is back. For `install`, delete the registration only if it equals the journaled new one |
-| `swap-out` | For each member, rename target → backup (no-replace) | For each member: if the target is absent and the backup holds the old digest, rename backup → target |
-| `swap-in` | For each member, rename temporary → target (no-replace). On Linux the target is the new executable path | For each member: if the target holds the new digest, move it to `trash/`. On Linux this includes the new-path executable |
-| `start` | If the service is already running (a boot start), stop it first. Then start it with a fresh readiness nonce | Stop with proof |
-| `ready` | Written after readiness passes and the recorded run state is restored. A stopped service is stopped again | (commit point) |
+| `begin` | Create the journal: operation, ID, contract, per-member records, the full old and new registration, the run state, and the source (`staging/<r>` or `versions/<v>`). Write and flush the display-only `switch_pending` marker (journal ID, operation, time) in the HKLM or `/etc` copy | Remove staging (unless the source is in `versions/`), clear the marker, delete the journal |
+| `copy` | 1. Open each existing old member with `DELETE \| WRITE_DAC` and share mode `FILE_SHARE_READ \| FILE_SHARE_DELETE`, which is compatible with the running image's mapping. A sharing violation means a handle that would block a rename: refuse with `service-file-busy`, naming the process through Restart Manager. Otherwise apply the admin-only DACL through the handle. 2. Copy each changed new member from the held staging handle to its temporary name (create-new, flush). This happens before any disruption, so a full disk fails harmlessly | Remove the temporary names |
+| `suspend` | Turn recovery off. Windows: no SCM failure actions. Linux: a runtime drop-in, `/run/systemd/system/bimeron-core.service.d/50-bimeron-switch.conf`, with `Restart=no`, which a reboot clears | Set the canonical recovery settings |
+| `stop` | Stop the service, with the existing stop and cleanup proof | Restore the recorded run state last |
+| `register` | Windows: `ChangeServiceConfig` with only `BinaryPathName` changed (`SERVICE_NO_CHANGE` for the rest), or `CreateService` for `install`. Linux: write the new unit atomically, then `daemon-reload`. Then apply R5 and verify the loaded configuration | Restore the old registration only after every old member is back. For `install`, delete the registration only if it equals the journaled new one. If `DeleteService` leaves the service marked for deletion, report `install-cleanup-pending`, never retry `CreateService`, and let the next session finish the deletion. The install undo also removes, by guarded rename, the event-log source and the service directories that the journal records as created |
+| `swap-out` | For each changed member: rename target → backup (no-replace) | For each changed member: if the target is absent and the backup holds the journaled old file ID, rename backup → target |
+| `swap-in` | For each changed member: rename temporary → target (no-replace). On Linux the target is the new executable path | For each changed member: if the target holds the new digest, move it to `trash/`. On Linux this includes the new-path executable |
+| `start` | If the service is running (for example a boot start), stop it. Start it with a fresh readiness nonce and wait for readiness. Then restore the recorded run state, stopping the service again if it was stopped | Undo-side stop |
+| `ready` | No effect: the commit record | (commit point) |
 | `resume` | Canonical recovery settings | — |
 | `record` | Active and floor records; the HKLM or `/etc` copy without the marker; flush | — |
-| `promote` | See Promotion below; never blocks | — |
+| `promote` | See Promotion | — |
 | `finish` | Move the backups to `trash/`, then delete the journal | — |
 
-The canonical recovery settings are constants: today, restarts after 5 s and
-15 s, then none, with a reset after 86400 s on Windows; `Restart=on-failure`
-with `RestartSec=5s` on Linux. They are not journaled originals, so a lost
-journal cannot lose them. Store-era inspection treats non-canonical recovery
-settings, or a leftover switch drop-in without a journal, as a repairable
-defect. While recovery is suspended, the service reports `recovery-suspended`,
-and Desktop prompts the user to reconcile.
+**Readiness nonce.**
 
-**Promotion never blocks**
+- Windows: the nonce is passed in the `StartService` arguments, and the
+  service names its readiness pipe after it.
+- Linux: `systemctl start` takes no arguments. Before the start, the broker
+  writes the nonce to a 0600 root-owned file in `/run/bimeron/`. The service
+  reads and deletes it, then binds the readiness socket under that name. The
+  broker also checks that the socket's peer PID equals `MainPID`.
+- A start without a nonce (boot or recovery) opens no readiness channel.
 
-- If `versions/<v>` is absent, the broker renames staging into place.
-- If `versions/<v>` exists and its manifest digest equals the journaled one,
-  the broker keeps it and moves the staging entry to trash.
-- If `versions/<v>` exists but is damaged, the broker replaces its damaged
-  members one by one, by handle.
-- Before promotion, staging handles are reopened with `FILE_SHARE_DELETE`,
-  still denying write, so the broker does not block its own rename.
-- If promotion is blocked (for example by a foreign handle, or by the broker's
-  own image in the target directory) or the staging entry is missing, the
-  broker leaves the staging entry for cleanup, reports `store-copy-pending`
-  and finishes. A later repair streams the bundle again. Floor records carry
-  the exact manifest bytes, so they do not depend on `versions/`.
-- If re-verification fails after `ready` (for example, the reconciler is a
-  newer package with a higher compiled floor), the broker closes the journal
-  without promotion. The installed image is then handled by the Repair rules.
+**Recovery settings.** The canonical recovery settings are constants: today,
+restarts after 5 s and 15 s, then none, with a reset after 86400 s on Windows;
+`Restart=on-failure` with `RestartSec=5s` on Linux. They are not journaled
+originals, so a lost journal cannot lose them. Store-era inspection treats
+non-canonical recovery settings, or a leftover switch drop-in without a
+journal, as a repairable defect. While recovery is suspended, the service
+reports `recovery-suspended`, and Desktop prompts the user to reconcile.
+
+**Promotion**
+
+- **Absent.** If `versions/<v>` is absent, the broker renames staging into
+  place. Before the rename, it reopens the staging handles with
+  `FILE_SHARE_DELETE` (still denying write), so it does not block its own
+  rename.
+- **Final permissions.** Promotion ends by applying the `versions/`
+  descriptor (Linux: modes) by handle to the directory and every member.
+- **Exists.** `versions/<v>` counts as existing and intact only if its
+  manifest digest equals the journaled one, every member verifies, and its
+  owner, DACL and mode are those of `versions/`. Otherwise the broker repairs
+  it in place: it replaces damaged members one by one, by handle, and resets
+  the permissions.
+- **Blocked or missing.** If promotion is blocked (for example by a foreign
+  handle, or by the broker's own image in the target directory), or if the
+  staging entry is missing, the broker reports `store-copy-pending`.
+  - The journal stays at `next: promote`, together with its staging entry.
+    Recovery has already resumed, and the records are written.
+  - Every later mutating session retries the promotion first, before anything
+    else, under the rule "Finishing a promotion" below.
+  - Floor records carry the exact manifest bytes, so they do not depend on
+    `versions/`.
+- **Re-verification failure.** If re-verification fails after `ready` (for
+  example, the reconciler is a newer package with a higher compiled floor),
+  the broker closes the journal without promotion. The installed image is
+  then handled by the Repair rules.
+
+**Finishing a promotion with an older broker (pending owner decision Q12).**
+After a commit, the only binary for the active version may sit in staging, or
+it may have been quarantined from `versions/<active>`. In that case, every
+remaining broker may be below the active version. Under Effective floor, such
+a broker makes the store read-only. As an exception, it may run exactly one
+operation, and only if all of these hold:
+
+- it is at or above the committed elevation floor;
+- its trust set verifies the manifest;
+- its store contract covers the journal and the store.
+
+The operation is either to finish a pending promotion from the journaled
+staging entry, or to republish `versions/<active>` from a streamed bundle whose
+manifest digest equals the active record's. It never changes the service, the
+registration, or the floor or active evidence. If the active release raised
+the elevation floor above every remaining broker, the result is "package
+upgrade required".
+
+The alternative under Q12 is to have no exception: losing the active store
+copy then always requires a Desktop package release. That would tie Core
+recovery to Desktop releases again.
 
 **"Installed"** always means the image at the path the current registration
 names.
 
 **Failure before `ready` within the session** runs the backward procedure
-immediately. If any undo fails, the journal is kept, the service is stopped
-where possible, and the result is `rollback-failed`.
+immediately. The journal closes as soon as every old member and the old
+registration are restored.
+
+- A failure to restore the run state or the recovery settings is reported as
+  `rollback-incomplete`, and it does not keep the journal.
+- If restoring a member or the registration fails, the journal is kept, the
+  service is stopped where possible, and the result is `rollback-failed`.
 
 **Crash points**
 
@@ -895,17 +989,21 @@ so under the store lock and after reading the request:
 
 From the observed state and `next`:
 
-- **Before `ready`:** go backward through the table, guarded by observation,
-  whatever image is present or missing. If the journal recorded the old member
-  as absent, R4 allows going forward instead.
-  - `install` journals always go backward, guarded.
+- **Before `ready`:** every backward run, whatever `next` is, first applies
+  the undo-side stop if the service is running or start-pending. It then goes
+  backward through the table, guarded by observation, whatever image is
+  present or missing.
+  - R4's single forward exception still applies.
+  - `install` journals always go backward.
   - Restoring the journaled pre-switch image is not an installation. It is
     allowed below the committed security floor (Q4), and it reports
     `below_security_floor`.
-- **From `ready` on:** go forward through `resume`, `record`, `promote` and
-  `finish`.
-- **An old member that is neither at the target nor at the backup,** although
-  the journal says it existed: `journal-unrecoverable`.
+- **From `ready` on:** the broker goes forward through `resume`, `record`,
+  `promote` and `finish`.
+- **`journal-unrecoverable`.** An old member whose journaled file ID is found
+  under none of its journaled names means `journal-unrecoverable`. So does an
+  undo that fails the same way in two reconciliations, and so does a state that
+  no journaled step can reach.
 
 **Unreadable or unrecoverable journals**
 
@@ -913,25 +1011,27 @@ From the observed state and `next`:
   `journal-corrupt`. It is never deleted automatically.
 - A journal from a higher store contract makes the store read-only.
 - The only exit for `journal-corrupt` and `journal-unrecoverable` is an explicit
-  repair with an additional consent, `abandon-switch`. That repair runs at most
-  once per session:
-  1. It renames the journal to `state/switch-abandoned-<seq>.json`, kept for
-     diagnostics and never read by reconcilers.
-  2. It restores the canonical recovery settings.
-  3. It runs an ordinary repair transaction under a new journal: to the
-     committed target, or along the `install` path from the verified package
-     bootstrap when nothing is committed. Floors and never-below-active
-     apply in both cases.
-  4. Leftover random-suffix files in the service directory are moved to
-     `trash/` only after the new switch commits.
+  repair with an additional consent, `abandon-switch`. It runs at most once per
+  session:
+  1. Verify that a source exists for step 4: the committed target, or the
+     verified package bootstrap if nothing is committed. Otherwise refuse with
+     `store-unavailable`, and change nothing.
+  2. Rename the journal to `state/switch-abandoned-<seq>.json` (kept for
+     diagnostics, never read by reconcilers), and clear the `switch_pending`
+     marker.
+  3. Restore the canonical recovery settings.
+  4. Run an ordinary repair transaction under a new journal. It keeps the
+     owner read from the actual registration, and uses `install` only when
+     nothing is registered. Floors and never-below-active apply.
+  5. Only after the new switch commits, move leftover random-suffix files in
+     the service directory to `trash/`.
 
 **Boot during a pending journal.** A boot or recovery start of a
-not-yet-committed image is acceptable. That image is verified and is at or
+not-yet-committed image is acceptable. That image is verified, it is at or
 above both the floors and the active version, and the floors have not
-changed. Such a start carries no readiness nonce, so it opens no readiness
-channel. The next reconciliation reverts it with one disruption. While a
-journal is pending, every service-side persistent format must stay readable by
-the old image.
+changed. Such a start opens no readiness channel. The next reconciliation stops
+it first and reverts it, with one disruption. While a journal is pending, every
+service-side persistent format must stay readable by the old image.
 
 **Registration order.** The registration changes before the image moves, and it
 is restored only after the old image is back. An intermediate state, an old
@@ -1586,7 +1686,22 @@ and store state before and after.
       `journal-unrecoverable`;
     - a disabled service, which must be refused before `begin`;
     - a crash after `ready` in a stopped-service switch, which must leave the
-      service stopped.
+      service stopped;
+    - a release that crashes at start (non-zero exit): the old image is
+      restored, network recovery runs if markers require it, and the journal
+      closes;
+    - a boot start of the new image after a crash at `swap-in`: reconciliation
+      stops it before reverting;
+    - an unchanged Wintun member during an update;
+    - a standard user holding `WINTUN-LICENSE.txt` or a backup name open, which
+      must yield `service-file-busy` before `begin`;
+    - promotion blocked after `record`, then finished by an older broker
+      (Q12), and a quarantined `versions/<active>/bimeron.exe` republished
+      from a stream;
+    - a pre-store uninstall and reinstall while a journal is pending, which
+      must yield `journal-unrecoverable` and then `abandon-switch`;
+    - a masked Linux unit, and `install` undo with the service marked for
+      deletion.
 13. **Keys.**
     - A release signed only by `R`, or only by YubiKeys, is refused.
     - `R` plus either YubiKey is accepted.
@@ -1710,6 +1825,14 @@ recommended defaults already written into this draft:
   model without the check. If the check is adopted, it is based on the
   publisher's own record of signed releases, not on the tags in the remote
   repository; otherwise anyone who can push a tag could block publication.
+
+- **Q12. Finishing the active version's store copy with an older broker.**
+  Recommended: a broker below the active version may only finish a pending
+  promotion, or republish `versions/<active>` from a stream whose manifest
+  digest equals the active record's. It must be at or above the committed
+  elevation floor. It never changes the service, the registration, or floor or
+  active evidence. The alternative is that losing the active store copy always
+  requires a Desktop package release.
 
 The remaining hardware detail is settled during the key ceremony. Each
 YubiKey uses PIV Ed25519 (firmware 5.7+) or OpenPGP Ed25519 (firmware
