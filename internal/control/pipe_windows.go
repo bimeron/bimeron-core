@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
@@ -32,38 +33,56 @@ const (
 	serviceName        = "BimeronCore"
 )
 
+// pipeClientRights is FILE_GENERIC_READ|FILE_GENERIC_WRITE without
+// FILE_CREATE_PIPE_INSTANCE (0x4). A client can connect, read, write and read
+// the owner, but cannot create pipe instances or change the DACL or owner.
+// pipeInstanceRight is FILE_CREATE_PIPE_INSTANCE alone. Every server instance
+// after the first one needs it, together with read and write access.
+const (
+	pipeClientRights  = "0x12019b"
+	pipeInstanceRight = "0x4"
+)
+
 func Listen() (net.Listener, error) {
 	path, sid, err := pipeIdentity()
 	if err != nil {
 		return nil, err
 	}
-	return listenConsolePipe(path, "BA", sid)
+	return listenPipe(path, consolePipeSDDL("BA", sid))
 }
-func listenConsolePipe(path, objectOwner, sid string) (net.Listener, error) {
-	// Protected DACL, only this Windows user and SYSTEM. go-winio rejects remote
-	// clients and creates the first pipe instance exclusively (no second daemon).
-	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;GA;;;" + sid + ")", InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
+
+// consolePipeSDDL allows only this Windows user and SYSTEM to connect. Pipe
+// instances also require Administrators, so only an elevated process of the
+// user can serve the pipe.
+func consolePipeSDDL(objectOwner, sid string) string {
+	return "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;" + pipeClientRights + ";;;" + sid + ")(A;;" + pipeInstanceRight + ";;;BA)"
+}
+
+// listenPipe rejects remote clients and creates the first pipe instance
+// exclusively, so a second server cannot take over an existing name.
+func listenPipe(path, sddl string) (net.Listener, error) {
+	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: sddl, InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
 }
 
 const ServicePipe = `\\.\pipe\Bimeron.Core.Service`
 
 func ListenService(ownerSID string) (net.Listener, error) {
-	return listenServicePipe(ServicePipe, "SY", ownerSID)
-}
-func listenServicePipe(path, objectOwner, ownerSID string) (net.Listener, error) {
-	dacl, err := servicePipeDACL(ownerSID)
+	sddl, err := servicePipeSDDL("SY", ownerSID)
 	if err != nil {
 		return nil, err
 	}
-	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: "O:" + objectOwner + dacl, InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
+	return listenPipe(ServicePipe, sddl)
 }
-func servicePipeDACL(ownerSID string) (string, error) {
+
+// servicePipeSDDL lets only SYSTEM create pipe instances. The control owner
+// can connect but cannot serve the pipe.
+func servicePipeSDDL(objectOwner, ownerSID string) (string, error) {
 	sid, err := windows.StringToSid(ownerSID)
 	if err != nil {
 		return "", err
 	}
 	// Use canonical SID rather than interpolating unchecked caller text into SDDL.
-	return "D:P(A;;GA;;;SY)(A;;GA;;;" + sid.String() + ")", nil
+	return "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;" + pipeClientRights + ";;;" + sid.String() + ")", nil
 }
 
 // pipeTrust is the server identity a client requires before writing.
@@ -90,20 +109,43 @@ func dialPipes(ctx context.Context, service, console string, want pipeTrust) (ne
 	if err != nil {
 		return nil, err
 	}
-	owner, ownerErr := pipeOwner(conn)
-	sid, elevated, userErr := pipeServerUser(conn)
-	if ownerErr != nil || userErr != nil || owner != want.consoleOwner || !elevated || sid != want.user {
+	if owner, err := pipeOwner(conn); err != nil || owner != want.consoleOwner {
 		conn.Close()
 		return nil, ErrServerUntrusted
 	}
-	return conn, nil
+	process, sid, elevated, err := pipeServerProcess(conn)
+	if err != nil {
+		conn.Close()
+		return nil, ErrServerUntrusted
+	}
+	if !elevated || sid != want.user {
+		windows.CloseHandle(process)
+		conn.Close()
+		return nil, ErrServerUntrusted
+	}
+	return &processConn{Conn: conn, process: process}, nil
 }
+
+// processConn retains the verified server process handle until the connection
+// is closed, so the inspected process ID cannot be reused during the exchange.
+type processConn struct {
+	net.Conn
+	process windows.Handle
+	once    sync.Once
+}
+
+func (c *processConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { windows.CloseHandle(c.process) })
+	return err
+}
+
 func DialService(ctx context.Context) (net.Conn, error) {
 	return dialServicePipe(ctx, ServicePipe, pipeTrust{serviceOwner: serviceObjectOwner, service: serviceName})
 }
 
 // Standard users cannot open a LocalSystem token, so the service is identified
-// by the pipe owner and, when SCM reports one, the service process ID.
+// by the pipe owner and the SCM-reported service process ID.
 func dialServicePipe(ctx context.Context, path string, want pipeTrust) (net.Conn, error) {
 	conn, err := winio.DialPipeContext(ctx, path)
 	if err != nil {
@@ -140,49 +182,72 @@ func pipeServerPID(c net.Conn) (uint32, error) {
 	return pid, nil
 }
 
-// An empty name, a missing service or no reported process skips the binding.
+// queryServiceProcessID reports the SCM process ID of a service. Tests
+// replace it.
+var queryServiceProcessID = scmServiceProcessID
+
+// A service that serves its pipe always has a nonzero SCM process ID. A
+// missing or stopped service, a failed SCM query or another process ID rejects
+// the endpoint.
 func serviceProcessMatches(c net.Conn, name string) bool {
-	if name == "" {
-		return true
-	}
 	pid, err := pipeServerPID(c)
-	expected := serviceProcessID(name)
-	return err == nil && (expected == 0 || pid == expected)
+	if err != nil {
+		return false
+	}
+	expected, err := queryServiceProcessID(name)
+	return err == nil && expected != 0 && pid == expected
 }
-func serviceProcessID(name string) uint32 {
+func scmServiceProcessID(name string) (uint32, error) {
 	ptr, err := windows.UTF16PtrFromString(name)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	defer windows.CloseServiceHandle(m)
 	s, err := windows.OpenService(m, ptr, windows.SERVICE_QUERY_STATUS)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	defer windows.CloseServiceHandle(s)
 	var status windows.SERVICE_STATUS_PROCESS
 	var size uint32
-	if windows.QueryServiceStatusEx(s, windows.SC_STATUS_PROCESS_INFO, (*byte)(unsafe.Pointer(&status)), uint32(unsafe.Sizeof(status)), &size) != nil {
-		return 0
+	if err = windows.QueryServiceStatusEx(s, windows.SC_STATUS_PROCESS_INFO, (*byte)(unsafe.Pointer(&status)), uint32(unsafe.Sizeof(status)), &size); err != nil {
+		return 0, err
 	}
-	return status.ProcessId
+	return status.ProcessId, nil
 }
-func pipeServerUser(c net.Conn) (string, bool, error) {
+
+// pipeServerProcess opens the pipe server process once and inspects its token
+// through that handle. The process must still run after the inspection. The
+// caller closes the returned handle after the last use of the connection.
+func pipeServerProcess(c net.Conn) (windows.Handle, string, bool, error) {
 	pid, err := pipeServerPID(c)
 	if err != nil {
-		return "", false, err
+		return 0, "", false, err
 	}
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, pid)
 	if err != nil {
-		return "", false, err
+		return 0, "", false, err
 	}
-	defer windows.CloseHandle(h)
+	sid, elevated, err := processUser(h)
+	if err == nil {
+		state, waitErr := windows.WaitForSingleObject(h, 0)
+		if waitErr != nil || state != uint32(windows.WAIT_TIMEOUT) {
+			err = ErrServerUntrusted
+		}
+	}
+	if err != nil {
+		windows.CloseHandle(h)
+		return 0, "", false, err
+	}
+	return h, sid, elevated, nil
+}
+func processUser(h windows.Handle) (string, bool, error) {
 	var token windows.Token
-	if err = windows.OpenProcessToken(h, windows.TOKEN_QUERY, &token); err != nil {
+	if err := windows.OpenProcessToken(h, windows.TOKEN_QUERY, &token); err != nil {
 		return "", false, err
 	}
 	defer token.Close()
