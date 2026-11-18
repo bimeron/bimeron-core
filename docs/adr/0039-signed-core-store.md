@@ -1,6 +1,6 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 8, November 18, 2026. Follow-up questions
+Status: proposed draft, revision 9, November 18, 2026. Follow-up questions
 Q10, Q11 and Q12 await the owner; the rest is decided. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
@@ -157,6 +157,7 @@ risk.
     floor-<seq>.json           append-only floor evidence
     active-<seq>.json          append-only active records
     switch.json                write-ahead switch journal
+    promote-pending.json       open promotion debt, if any
     switch-abandoned-<seq>.json  abandoned journals, kept for diagnostics
     lock                       store lock
 ```
@@ -628,8 +629,10 @@ evaluate:
 When a privileged process finds such evidence, it does not ignore it. It
 treats the store as read-only, refuses every elevated role except `status`,
 and reports `newer-component-required`. The only exception is finishing the
-promotion of, or republishing, the active version itself (see Finishing a
-promotion with an older broker; pending owner decision Q12). "Ignored and
+post-`ready` steps of, paying the promotion debt of, or republishing, the
+active version itself, which lifts only the "version above own" trigger (see
+Finishing the active version with an older broker; pending owner decision
+Q12). "Ignored and
 reported" applies only to records whose signatures fail under keys the verifier
 knows. An older package
 copy elevated after a rotation therefore cannot evade a newer elevation floor
@@ -848,10 +851,33 @@ so every mutation first re-reads the registration and member identities.
   session.
 - **Undo-side stop.** Every undo that stops the service treats "stopped, with
   no process left" (`ProcessId 0`, `MainPID 0`) as stopped, whatever the exit
-  code. An unclean exit is not an undo failure. Before the old image starts,
-  the undo runs the existing consent-gated network recovery, the repair
-  `Recover` path, if the owned cleanup markers require it. That decision rests
-  on the markers, never on the stale exit status.
+  code. An unclean exit is not an undo failure.
+  - **Hung service.** If the service does not stop within the stop budget (for
+    example, it hangs in start-pending without accepting a stop), Windows
+    terminates the identity-checked service process through a retained
+    `PROCESS_TERMINATE` handle and waits for `ProcessId 0`. Linux relies on
+    `TimeoutStopSec` and the systemd kill. Either way, the result counts as an
+    unclean exit.
+- **Network cleanup before starting the old image.** Cleanup is required when
+  owned markers are pending (Windows: the WFP and NRPT markers; Linux: the
+  write-ahead cleanup journal) or when the last exit was unclean. Marker
+  absence after an unclean exit is not cleanup proof.
+  - With network-recovery consent, the undo runs the existing `Recover` path.
+    A successful `Recover` in the same session is the cleanup proof.
+  - Without that consent, the undo never starts the old image. It restores
+    the members and the registration, leaves the service stopped, and closes
+    with `rollback-incomplete`. A later repair runs `Recover`.
+  - The installer action's package-operation consent covers disruption only,
+    never network recovery.
+- **Undo failure accounting.**
+  - Before reporting `rollback-failed`, the broker durably records the failing
+    step in the journal (under R1). The in-session failure counts as the
+    first.
+  - Any failure of the same step in a later session, whatever the error,
+    means `journal-unrecoverable`.
+  - Failures to restore the run state or the recovery settings never count.
+    They yield `rollback-incomplete`, in the session and in reconciliation
+    alike.
 
 **Member set.** The journal covers every member of the service directory:
 `bimeron.exe`, `wintun.dll` and `WINTUN-LICENSE.txt` on Windows, and the
@@ -878,7 +904,7 @@ applied in reverse order.
 | `begin` | Create the journal: operation, ID, contract, per-member records, the full old and new registration, the run state, and the source (`staging/<r>` or `versions/<v>`). Write and flush the display-only `switch_pending` marker (journal ID, operation, time) in the HKLM or `/etc` copy | Remove staging (unless the source is in `versions/`), clear the marker, delete the journal |
 | `copy` | 1. Open each existing old member with `DELETE \| WRITE_DAC` and share mode `FILE_SHARE_READ \| FILE_SHARE_DELETE`, which is compatible with the running image's mapping. A sharing violation means a handle that would block a rename: refuse with `service-file-busy`, naming the process through Restart Manager. Otherwise apply the admin-only DACL through the handle. 2. Copy each changed new member from the held staging handle to its temporary name (create-new, flush). This happens before any disruption, so a full disk fails harmlessly | Remove the temporary names |
 | `suspend` | Turn recovery off. Windows: no SCM failure actions. Linux: a runtime drop-in, `/run/systemd/system/bimeron-core.service.d/50-bimeron-switch.conf`, with `Restart=no`, which a reboot clears | Set the canonical recovery settings |
-| `stop` | Stop the service, with the existing stop and cleanup proof | Restore the recorded run state last |
+| `stop` | Stop the service, with the existing stop and cleanup proof | Restore the recorded run state, after the old members and registration are back and after network cleanup (above) |
 | `register` | Windows: `ChangeServiceConfig` with only `BinaryPathName` changed (`SERVICE_NO_CHANGE` for the rest), or `CreateService` for `install`. Linux: write the new unit atomically, then `daemon-reload`. Then apply R5 and verify the loaded configuration | Restore the old registration only after every old member is back. For `install`, delete the registration only if it equals the journaled new one. If `DeleteService` leaves the service marked for deletion, report `install-cleanup-pending`, never retry `CreateService`, and let the next session finish the deletion. The install undo also removes, by guarded rename, the event-log source and the service directories that the journal records as created |
 | `swap-out` | For each changed member: rename target → backup (no-replace) | For each changed member: if the target is absent and the backup holds the journaled old file ID, rename backup → target |
 | `swap-in` | For each changed member: rename temporary → target (no-replace). On Linux the target is the new executable path | For each changed member: if the target holds the new digest, move it to `trash/`. On Linux this includes the new-path executable |
@@ -922,11 +948,17 @@ reports `recovery-suspended`, and Desktop prompts the user to reconcile.
   the permissions.
 - **Blocked or missing.** If promotion is blocked (for example by a foreign
   handle, or by the broker's own image in the target directory), or if the
-  staging entry is missing, the broker reports `store-copy-pending`.
-  - The journal stays at `next: promote`, together with its staging entry.
-    Recovery has already resumed, and the records are written.
-  - Every later mutating session retries the promotion first, before anything
-    else, under the rule "Finishing a promotion" below.
+  staging entry is missing, the broker reports `store-copy-pending`. It then
+  runs `finish` and closes the switch journal.
+  - **Promotion debt.** The open promotion is recorded separately in
+    `state/promote-pending.json`, with the manifest digest and the staging
+    name. Cleanup never removes the staging entry it names.
+  - **Paying the debt.** Every mutating session tries to pay the debt first,
+    by promoting from the verified staging entry. A failure never blocks the
+    requested operation when the broker is at or above the active version.
+  - **Missing store copy.** If the staging entry is missing or does not
+    verify, the debt becomes "store copy missing". Repair resolves it by
+    asking Desktop to stream the active bundle (the republish branch below).
   - Floor records carry the exact manifest bytes, so they do not depend on
     `versions/`.
 - **Re-verification failure.** If re-verification fails after `ready` (for
@@ -934,23 +966,44 @@ reports `recovery-suspended`, and Desktop prompts the user to reconcile.
   the broker closes the journal without promotion. The installed image is
   then handled by the Repair rules.
 
-**Finishing a promotion with an older broker (pending owner decision Q12).**
-After a commit, the only binary for the active version may sit in staging, or
-it may have been quarantined from `versions/<active>`. In that case, every
-remaining broker may be below the active version. Under Effective floor, such
-a broker makes the store read-only. As an exception, it may run exactly one
-operation, and only if all of these hold:
+**Finishing the active version with an older broker (pending owner decision
+Q12).** After a commit, the only binary for the active version may sit in
+staging, or it may have been quarantined from `versions/<active>`. In that
+case, every remaining broker may be below the active version. Under Effective
+floor, such a broker makes the store read-only.
 
-- it is at or above the committed elevation floor;
-- its trust set verifies the manifest;
-- its store contract covers the journal and the store.
+As an exception, that broker may run exactly one operation per session:
 
-The operation is either to finish a pending promotion from the journaled
-staging entry, or to republish `versions/<active>` from a streamed bundle whose
-manifest digest equals the active record's. It never changes the service, the
-registration, or the floor or active evidence. If the active release raised
-the elevation floor above every remaining broker, the result is "package
-upgrade required".
+1. finish the post-`ready` forward steps (`record`, `promote`, `finish`) of a
+   pending switch journal;
+2. pay a promotion debt;
+3. republish `versions/<active>` from a streamed bundle.
+
+Each operation is allowed only if all of these hold:
+
+- **Floor.** The broker is at or above the committed elevation floor. All
+  floor evidence, including the active manifest's epoch, must verify under the
+  broker's own trust set and epoch rules. The exception lifts only the
+  "names a version above its own" trigger, and none of the others.
+- **Manifest.** The journaled or streamed manifest decodes under the broker's
+  own schema, its digest equals the one in the journal and the active record,
+  and the broker's trust set verifies it.
+- **Staging.** Staging members are re-verified by handle before any rename.
+- **Store contract.** The broker's store contract covers the journal and the
+  store.
+
+The exception has strict limits:
+
+- **Evidence.** The broker never writes evidence other than the pending
+  journal's own `record` set, taken from the journaled manifest. It never
+  changes the service or the registration.
+- **Journals before `ready`.** The broker never reconciles a journal that has
+  not reached `ready`. Its only possible operation there is a republish.
+- **Session end.** The session ends with `broker-changed`, and Desktop re-runs
+  broker selection, which now finds the active version in `versions/`.
+- **Package upgrade.** If any condition fails (for example, the active release
+  raised the elevation floor above every remaining broker, or added keys or a
+  schema the broker cannot verify), the result is "package upgrade required".
 
 The alternative under Q12 is to have no exception: losing the active store
 copy then always requires a Desktop package release. That would tie Core
@@ -960,8 +1013,10 @@ recovery to Desktop releases again.
 names.
 
 **Failure before `ready` within the session** runs the backward procedure
-immediately. The journal closes as soon as every old member and the old
-registration are restored.
+immediately. Once every old member and the old registration are restored, the
+journal closes in a fixed order: remove the temporary names and staging,
+clear the `switch_pending` marker, then delete the journal. The run state and
+recovery settings are restored before closing where possible.
 
 - A failure to restore the run state or the recovery settings is reported as
   `rollback-incomplete`, and it does not keep the journal.
@@ -989,10 +1044,12 @@ so under the store lock and after reading the request:
 
 From the observed state and `next`:
 
-- **Before `ready`:** every backward run, whatever `next` is, first applies
-  the undo-side stop if the service is running or start-pending. It then goes
-  backward through the table, guarded by observation, whatever image is
-  present or missing.
+- **Before `ready`:** a backward run first applies the undo-side stop when
+  `next` is after `stop`, or when the running image's file ID is not the
+  journaled old member, if the service is running or start-pending. A crash
+  at `copy` or `suspend` therefore does not interrupt a healthy old image. The
+  run then goes backward through the table, guarded by observation, whatever
+  image is present or missing.
   - R4's single forward exception still applies.
   - `install` journals always go backward.
   - Restoring the journaled pre-switch image is not an installation. It is
@@ -1092,7 +1149,7 @@ heals it.
 
 | Entry point | Binary | Verification | Inputs |
 | --- | --- | --- | --- |
-| Maintenance session (`update`, `repair`, `install`, `status`) | The highest-version verified binary among the newest committed store version and the bundled package copy that meets the committed elevation floor. A newer package copy therefore steps in after a package upgrade, even when commit actions did not run | Desktop: handle-bound digest. Broker: self-check | Nonce, PID, streamed bytes |
+| Maintenance session (`update`, `repair`, `install`, `status`) | The highest-version verified binary among all committed versions present in `versions/` and the bundled package copy, at or above the committed elevation floor. If the newest candidate does not verify (missing, damaged, quarantined), Desktop falls back to the next one. A newer package copy therefore steps in after a package upgrade, even when commit actions did not run | Desktop: handle-bound digest. Broker: self-check | Nonce, PID, streamed bytes |
 | Installer action (MSI, DEB) | `bimeron-core` in the package directory, run directly as SYSTEM or root | Self-check against the package-shipped signed manifest | None; fixed package-relative paths |
 | Foreground IKEv2 daemon | Same as the maintenance session | Self-check | Existing foreground contract; policy file at a fixed location (below) |
 | Service | Service directory copy | No self-check (see below); Wintun pin at load | SCM or systemd only |
@@ -1318,7 +1375,8 @@ After a commit, the privileged process keeps the active version and the
 previous committed version.
 
 - It moves to `trash/` and deletes versions below the floor, versions nothing
-  references, and leftover staging directories. All of this happens by handle,
+  references, and leftover staging directories, except a staging entry named by
+  `state/promote-pending.json`. All of this happens by handle,
   inside the store only.
 - A sharing violation (a running CLI or a foreign handle) leaves the entry in
   `trash/` for the next privileged run. The update still succeeds, and the
@@ -1695,9 +1753,17 @@ and store state before and after.
     - an unchanged Wintun member during an update;
     - a standard user holding `WINTUN-LICENSE.txt` or a backup name open, which
       must yield `service-file-busy` before `begin`;
-    - promotion blocked after `record`, then finished by an older broker
-      (Q12), and a quarantined `versions/<active>/bimeron.exe` republished
-      from a stream;
+    - promotion blocked after `record`, recorded as a promotion debt and
+      paid later; a crash inside `record` finished by an older broker (Q12);
+      a quarantined `versions/<active>/bimeron.exe` republished from a stream;
+      an older broker refusing when an epoch raise added keys it does not
+      know;
+    - an unclean old-service crash without markers: `Recover` runs with
+      consent, and without consent the service stays stopped with
+      `rollback-incomplete`;
+    - a release hung in start-pending: terminated and reverted;
+    - a second-session undo failure of the same step, which must yield
+      `journal-unrecoverable`;
     - a pre-store uninstall and reinstall while a journal is pending, which
       must yield `journal-unrecoverable` and then `abandon-switch`;
     - a masked Linux unit, and `install` undo with the service marked for
@@ -1827,9 +1893,11 @@ recommended defaults already written into this draft:
   repository; otherwise anyone who can push a tag could block publication.
 
 - **Q12. Finishing the active version's store copy with an older broker.**
-  Recommended: a broker below the active version may only finish a pending
-  promotion, or republish `versions/<active>` from a stream whose manifest
-  digest equals the active record's. It must be at or above the committed
+  Recommended: a broker below the active version may only finish the
+  post-`ready` steps of a pending switch journal, pay a promotion debt, or
+  republish `versions/<active>` from a stream whose manifest digest equals the
+  active record's. All floor evidence must still verify under its own trust and
+  epoch rules. It must be at or above the committed
   elevation floor. It never changes the service, the registration, or floor or
   active evidence. The alternative is that losing the active store copy always
   requires a Desktop package release.
