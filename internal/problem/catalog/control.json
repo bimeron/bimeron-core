@@ -17,8 +17,8 @@
     },
     "control_server_untrusted": {
       "kind": "control",
-      "en": "Could not verify the background VPN service. Restart the Bimeron service or reinstall the application.",
-      "ru": "Не удалось проверить фоновую службу VPN. Перезапустите службу Bimeron или переустановите приложение."
+      "en": "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.",
+      "ru": "Не удалось проверить фоновую службу VPN. Обновите Bimeron Core до версии этого приложения и повторите попытку."
     },
     "core_identity_mismatch": {
       "kind": "control",
