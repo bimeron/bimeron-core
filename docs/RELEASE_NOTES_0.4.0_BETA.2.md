@@ -4,7 +4,7 @@
 of v0.4.0-beta.1. Publication is pending candidate freeze, VM acceptance of the
 Desktop 0.3.1 candidate with this Core candidate, and explicit approval.
 
-The reviewed source range is `5fcadd71..371b7af6` on master. `5fcadd71` is the
+The reviewed source range is `5fcadd71..1c9f30b3` on master. `5fcadd71` is the
 v0.4.0-beta.1 tag commit. The final candidate commit is recorded at freeze.
 
 For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.2/README.md).
@@ -186,6 +186,10 @@ All fields are omitted when zero.
   restoration are unchanged
   ([#156](https://github.com/bimeron/bimeron-core/pull/156),
   [#165](https://github.com/bimeron/bimeron-core/pull/165)).
+- Updated `github.com/Microsoft/go-winio` to v0.6.4, fixing a rare hang when a
+  named-pipe listener is closed while a client connects and disconnects
+  (service stop or update) on Windows
+  ([#168](https://github.com/bimeron/bimeron-core/pull/168)).
 
 ### Profile and referenced files
 
