@@ -107,6 +107,18 @@ Protection covers local outgoing traffic. Forwarded container/router traffic is
 not tunneled; with the kill switch it is blocked in FORWARD, and without it,
 normal routing applies. This is not a VPN gateway for other machines.
 
+The table is installed when a run starts, before access key resolution,
+bootstrap DNS and the upstream connection; until the TUN exists, only loopback,
+marked core sockets, DHCP, IPv6 ND and `direct` CIDRs leave the host, and DNS
+ports (53 and 853) are dropped for unmarked sockets even to `direct` CIDRs. A
+start is refused with `adapter_name_in_use` when another interface already uses
+the tunnel name, before any protection is installed. It stays
+installed across every reconnect attempt, recovery wait, closed session and
+`failed`, and is removed only when the session is stopped (`stop`, `shutdown`,
+Ctrl+C, SIGTERM or SIGHUP of the daemon, or a service stop); see
+[CONTROL.MD](CONTROL.MD#kill-switch-hold). Without the kill switch, traffic can
+leave outside the tunnel while connecting, reconnecting or after a failure.
+
 nftables rules survive SIGKILL. Restarting with the kill switch enabled retains
 protection during preparation and replaces it atomically. Starting with the kill
 switch disabled while protection remains requires explicit `recover`.

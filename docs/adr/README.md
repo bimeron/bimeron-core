@@ -56,3 +56,4 @@ number.
 | 0036 | [Android SSH uses only profile-selected files](0036-android-ssh-profile-files-only.md) |
 | 0037 | [Opt-in accept-new SSH host keys](0037-ssh-accept-new-host-keys.md) |
 | 0038 | [Core icon and Windows resources](0038-core-icon-and-windows-resources.md) |
+| 0039 | [Reconnect cycles and a held kill switch](0039-reconnect-cycles-and-held-kill-switch.md) |

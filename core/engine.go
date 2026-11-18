@@ -23,31 +23,48 @@ const (
 	Failed       State = "failed"
 )
 
-const reconnectLimit = 3
-
 // Event contains only bounded diagnostic codes and messages, never destinations
 // or credentials. Events may be dropped if the consumer is slow; Status is authoritative.
 
 type Event struct {
-	ReconnectAttempt int `json:",omitempty"`
-	ReconnectLimit   int `json:",omitempty"`
-	Time             time.Time
-	State            State
-	Code, Message    string
-	Attempt          int
-	LastError        string
-	ErrorStage       string `json:",omitempty"`
+	ReconnectAttempt   int       `json:",omitempty"`
+	ReconnectLimit     int       `json:",omitempty"`
+	ReconnectCycle     int       `json:",omitempty"`
+	ReconnectPhase     string    `json:",omitempty"`
+	NextAttemptAt      time.Time `json:",omitzero"`
+	KillSwitch         string    `json:",omitempty"`
+	Time               time.Time
+	State              State
+	Code, Message      string
+	Attempt            int
+	LastError          string
+	ErrorStage         string `json:",omitempty"`
+	LastErrorPermanent bool   `json:",omitempty"`
 }
 type Status struct {
-	ReconnectAttempt int           `json:",omitempty"`
-	ReconnectLimit   int           `json:",omitempty"`
-	Native           *NativeStatus `json:"native,omitempty"`
-	Session          *SessionInfo  `json:"Session,omitempty"`
-	State            State
-	Attempt          int
-	Since            time.Time
-	LastError        string
-	ErrorStage       string `json:",omitempty"`
+	ReconnectAttempt int `json:",omitempty"`
+	ReconnectLimit   int `json:",omitempty"`
+	// ReconnectCycle is the current or most recent recovery cycle after loss
+	// of an established session; omitted during initial connection attempts.
+	ReconnectCycle int `json:",omitempty"`
+	// ReconnectPhase is PhaseAttempting or PhaseWaiting while reconnecting.
+	ReconnectPhase string `json:",omitempty"`
+	// NextAttemptAt is the UTC time of the next scheduled attempt or cycle.
+	NextAttemptAt time.Time `json:",omitzero"`
+	// KillSwitch is KillSwitchActive or KillSwitchHolding while the run owns
+	// kill switch protection; omitted otherwise.
+	KillSwitch string        `json:",omitempty"`
+	Native     *NativeStatus `json:"native,omitempty"`
+	Session    *SessionInfo  `json:"Session,omitempty"`
+	State      State
+	Attempt    int
+	Since      time.Time
+	LastError  string
+	ErrorStage string `json:",omitempty"`
+	// LastErrorPermanent marks a LastError that retrying alone does not fix,
+	// for example a rejected access key. It ends an initial connection at
+	// once; after loss of an established session Core still retries it.
+	LastErrorPermanent bool `json:",omitempty"`
 }
 
 // StatsSnapshot binds cumulative counters to a per-Start session.
@@ -58,7 +75,16 @@ type StatsSnapshot struct {
 	Counters *telemetry.Snapshot `json:"counters,omitempty"`
 }
 
-type Options struct{ RetryMin, RetryMax time.Duration }
+// Options tune retry timing. RetryMin and RetryMax bound the initial-connection
+// backoff; RetryMin and CycleRetryMax bound the backoff inside a recovery
+// cycle; CyclePause separates recovery cycles. Zero values select defaults.
+//
+// ResidualProtection makes an idle engine report kill switch protection that
+// no run owns (Status.KillSwitch "residual"); daemons and services enable it.
+type Options struct {
+	RetryMin, RetryMax, CycleRetryMax, CyclePause time.Duration
+	ResidualProtection                            bool
+}
 
 type session interface {
 	Wait(context.Context) error
@@ -111,7 +137,25 @@ func lastErrorCode(err error) string {
 }
 
 type Engine struct {
-	mu          sync.Mutex
+	// lifecycle serializes Start and the cancellation step of Stop, so a
+	// kill switch handover cannot interleave with another session change.
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	recovery  recovery
+	wake      chan struct{}
+	holding   bool // a failed run keeps kill switch protection until Stop
+	protected bool // the run owns kill switch protection
+	handover  bool // the held run exits for a new Start and keeps protection
+	abandon   bool // the run exits without a user stop and keeps protection
+	pollEvery time.Duration
+	observe   func(tunnel string) string
+	network   func() string
+	// residual caches idle kill switch protection found by residualProbe.
+	residual        bool
+	residualChecked time.Time
+	residualProbe   func() (bool, error)
+	// repanic rethrows a run panic after protection is retained; tests stub it.
+	repanic     func(any)
 	maintenance *maintenanceCoordinator
 	opts        Options
 	status      Status
@@ -139,7 +183,9 @@ func (e *Engine) Stats() telemetry.Snapshot {
 
 type runResult struct {
 	done chan struct{}
-	err  error
+	// acquired is closed once Acquire has returned or the run ended earlier.
+	acquired chan struct{}
+	err      error
 	// settled marks a terminal session failure whose teardown already
 	// completed. Wait still reports err; a later Stop has nothing left to clean.
 	settled bool
@@ -155,7 +201,14 @@ func New(options Options) *Engine {
 			options.RetryMax = options.RetryMin
 		}
 	}
-	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}}
+	if options.CycleRetryMax <= 0 {
+		options.CycleRetryMax = 15 * time.Second
+	}
+	options.CycleRetryMax = max(options.CycleRetryMax, options.RetryMin)
+	if options.CyclePause <= 0 {
+		options.CyclePause = time.Minute
+	}
+	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, repanic: func(p any) { panic(p) }}
 }
 
 // StatsSnapshot returns detached session metadata and counters under one lock.
@@ -174,6 +227,7 @@ func (e *Engine) StatsSnapshot() StatsSnapshot {
 }
 
 func (e *Engine) Status() Status {
+	e.refreshResidual()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.statusLocked()
@@ -181,6 +235,13 @@ func (e *Engine) Status() Status {
 
 func (e *Engine) statusLocked() Status {
 	status := e.status
+	if e.protected {
+		status.KillSwitch = KillSwitchHolding
+		if status.State == Connected {
+			status.KillSwitch = KillSwitchActive
+		}
+	}
+	e.residualStatusLocked(&status)
 	if status.Native != nil {
 		snapshot := *status.Native
 		status.Native = &snapshot
@@ -200,10 +261,15 @@ func (e *Engine) Events() <-chan Event { return e.events }
 func (e *Engine) EventDrops() uint64 { e.mu.Lock(); defer e.mu.Unlock(); return e.eventDrops }
 func (e *Engine) emitLocked(code, message string) {
 	select {
-	case e.events <- Event{Time: time.Now(), State: e.status.State, Code: code, Message: message, Attempt: e.status.Attempt, LastError: e.status.LastError, ErrorStage: e.status.ErrorStage, ReconnectAttempt: e.status.ReconnectAttempt, ReconnectLimit: e.status.ReconnectLimit}:
+	case e.events <- e.eventLocked(code, message):
 	default:
 		e.eventDrops++
 	}
+}
+func (e *Engine) eventLocked(code, message string) Event {
+	s := e.statusLocked()
+	return Event{Time: time.Now(), State: s.State, Code: code, Message: message, Attempt: s.Attempt, LastError: s.LastError, ErrorStage: s.ErrorStage, LastErrorPermanent: s.LastErrorPermanent,
+		ReconnectAttempt: s.ReconnectAttempt, ReconnectLimit: s.ReconnectLimit, ReconnectCycle: s.ReconnectCycle, ReconnectPhase: s.ReconnectPhase, NextAttemptAt: s.NextAttemptAt, KillSwitch: s.KillSwitch}
 }
 func (e *Engine) transition(state State, err error) {
 	e.mu.Lock()
@@ -228,29 +294,23 @@ func (e *Engine) transitionLocked(state State, err error) {
 		} else {
 			e.status.ErrorStage = ""
 		}
+		e.status.LastErrorPermanent = staged != nil && !staged.retry
 	} else if state == Connected || state == Disconnected {
 		e.status.LastError = ""
+		e.status.LastErrorPermanent = false
 		e.status.ReconnectAttempt = 0
 		e.status.ReconnectLimit = 0
+		e.status.ReconnectCycle = 0
 		e.status.ErrorStage = ""
 	}
-	e.emitLocked("state", string(state))
-}
-
-// prepareReconnect publishes the upcoming attempt before its backoff. Status is
-// authoritative even if events are dropped. A successful connection resets it.
-func (e *Engine) prepareReconnect(err error) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.status.State == Stopping || e.status.ReconnectAttempt >= reconnectLimit {
-		return false
+	if state != Reconnecting {
+		e.status.ReconnectPhase = ""
+		e.status.NextAttemptAt = time.Time{}
 	}
-	e.status.ReconnectAttempt++
-	e.status.ReconnectLimit = reconnectLimit
-	e.transitionLocked(Reconnecting, err)
-	// The state/error can be unchanged between retries; still publish progress.
-	e.emitLocked("reconnect_attempt", "Reconnect attempt scheduled")
-	return true
+	if state == Connected {
+		e.connectedLocked()
+	}
+	e.emitLocked("state", string(state))
 }
 
 func (e *Engine) report(code, message string) {
@@ -265,6 +325,10 @@ func (e *Engine) report(code, message string) {
 
 // Start validates synchronously and schedules connection. Connected is reported
 // only after setup completes. The supplied context owns the entire session.
+//
+// A failed run that still holds kill switch protection is replaced without
+// releasing it when cfg keeps a kill switch; otherwise Start returns
+// ErrKillSwitchHeld and an explicit Stop must release the protection first.
 func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
@@ -281,10 +345,36 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		return err
 	}
 	cfg.DNS = append([]string(nil), cfg.DNS...)
+	e.lifecycle.Lock()
+	defer e.lifecycle.Unlock()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.maintenance != nil {
 		return errMaintenanceSealed
+	}
+	keepsProtection := cfg.KillSwitch && cfg.Mode == "vpn" && cfg.IKEv2 == nil
+	if e.active && e.holding && !keepsProtection {
+		return ErrKillSwitchHeld
+	}
+	// A repeated start of the running profile (for example a double click)
+	// never interrupts a live session; a held failure may always be retried.
+	switching := e.holding || !sameProfile(e.status.Session, info)
+	if e.active && (e.holding || e.protected) && keepsProtection && switching {
+		// Hand the installed protection over: the previous run closes its
+		// session and releases its lock but keeps the persistent filters for
+		// the next Acquire to replace, so switching profiles leaves no gap.
+		e.handover = true
+		e.cancel()
+		previous := e.runResult
+		e.mu.Unlock()
+		<-previous.done // bounded by the previous session's cleanup
+		e.mu.Lock()
+		if previous.err != nil && cleanupFailed(previous.err) {
+			// The previous teardown left state behind; report it, never mask it.
+			e.status.Session = nil
+			e.transitionLocked(Failed, previous.err)
+			return previous.err
+		}
 	}
 	if e.active {
 		return ErrSessionRunning
@@ -292,8 +382,14 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.stats = &telemetry.Counters{}
 	cfg.stats = e.stats
 	ctx, e.cancel = context.WithCancel(ctx)
-	e.runResult = &runResult{done: make(chan struct{})}
+	e.runResult = &runResult{done: make(chan struct{}), acquired: make(chan struct{})}
 	e.active = true
+	e.holding, e.handover, e.protected, e.abandon = false, false, false, false
+	e.residual = false // the run owns or replaces any earlier protection
+	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
+	e.wake = make(chan struct{}, 1)
+	observe, tunnel := e.observe, cfg.Name
+	e.network = func() string { return observe(tunnel) }
 	e.status = Status{Session: info, State: Connecting, Since: time.Now()}
 	if cfg.IKEv2 != nil {
 		e.status.Native = &NativeStatus{ProfileReadiness: "not_checked", CredentialReadiness: "not_checked", CertificateReadiness: "not_checked", Requested: cfg.IKEv2.KillSwitch, WFP: "inactive", DNS: "inactive", RASCleanup: "not_started", DNSCleanup: "not_started", WFPCleanup: "not_started"}
@@ -305,13 +401,42 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	}
 	e.lastReport = map[string]time.Time{}
 	e.emitLocked("state", string(Connecting))
-	go e.run(ctx, cfg, e.runResult)
+	r := e.runResult
+	go e.run(ctx, cfg, r)
+	if cfg.KillSwitch {
+		// Return only once the run has installed its protection (or failed
+		// to), so an accepted Start never precedes the kill switch.
+		e.mu.Unlock()
+		<-r.acquired
+		e.mu.Lock()
+	}
 	return nil
 }
 
+// Abandon ends the session like Stop but keeps kill switch protection
+// installed, for exits that are not a user's stop, such as a failed control
+// listener. The protection is then reported as residual until recover.
+func (e *Engine) Abandon(ctx context.Context) error {
+	e.MarkAbandon()
+	return e.Stop(ctx)
+}
+
+// MarkAbandon makes the current run keep its protection however it ends. Call
+// it before cancelling the context the session was started with.
+func (e *Engine) MarkAbandon() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active {
+		e.abandon = true
+	}
+}
+func (e *Engine) abandoned() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.abandon }
+
 // Stop is idempotent. A caller timeout ends only its wait: cleanup continues in
 // the background, and another Start remains forbidden until it has finished.
+// Stop is the only path that releases kill switch protection held by a run.
 func (e *Engine) Stop(ctx context.Context) error {
+	e.lifecycle.Lock()
 	e.mu.Lock()
 	if e.active {
 		e.cancel()
@@ -323,6 +448,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	r := e.runResult
 	e.mu.Unlock()
+	e.lifecycle.Unlock()
 	if r == nil {
 		return nil
 	}
@@ -353,6 +479,13 @@ func (e *Engine) Wait(ctx context.Context) error {
 	}
 }
 
+// protectionOwner is a backend that can own run-scoped kill switch protection.
+type protectionOwner interface {
+	Protected() bool
+	RetainProtection()
+	ReleaseError() error
+}
+
 func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	cfg.endpointChanged = func(endpoints sessionEndpoints) {
 		e.mu.Lock()
@@ -365,10 +498,41 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		}
 	}
 	var result error
+	release := func() {}
+	var owner protectionOwner
+	acquired := sync.OnceFunc(func() { close(r.acquired) })
 	defer func() {
+		acquired()
+		if p := recover(); p != nil {
+			// A crash keeps persistent protection, as after process termination.
+			if owner != nil {
+				owner.RetainProtection()
+			}
+			release()
+			e.repanic(p)
+			return
+		}
+		e.mu.Lock()
+		handover := e.handover
+		e.mu.Unlock()
+		// Protection outlives the run only for a handover or a failed cleanup,
+		// which needs explicit recovery; every other exit is an explicit stop.
+		retained := owner != nil && (handover || e.abandoned() || cleanupFailed(result))
+		if retained {
+			owner.RetainProtection()
+		}
+		release() // includes OS-thread-owned session lock; runs on this goroutine.
+		if owner != nil && !retained && owner.ReleaseError() != nil && result == nil {
+			// Protection is still installed: the stop did not clean up.
+			result = fault("cleanup_failed_run_recover", false)
+		}
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		if result != nil {
+		e.protected, e.holding = false, false
+		e.residualChecked = time.Time{} // inspect again once idle
+		if handover {
+			// The next Start publishes its own status.
+		} else if result != nil {
 			e.transitionLocked(Failed, result)
 		} else {
 			e.transitionLocked(Disconnected, nil)
@@ -387,7 +551,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		result = err
 		return
 	}
-	release, err := b.Acquire(ctx)
+	releaseRun, err := b.Acquire(ctx)
 	if err != nil {
 		if cfg.IKEv2 != nil && err.Error() == "ikev2_existing_kill_switch_requires_recovery" {
 			cfg.updateNative(func(n *NativeStatus) { n.WFP = "unknown"; n.DNS = "unknown"; n.RecoveryRequired = true })
@@ -397,74 +561,116 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		}
 		return
 	}
-	defer release() // includes OS-thread-owned session lock; runs on this goroutine.
-	delay := e.opts.RetryMin
+	release = releaseRun
+	if o, ok := b.(protectionOwner); ok && o.Protected() {
+		owner = o
+		e.mu.Lock()
+		e.protected = true
+		e.emitLocked("kill_switch_holding", "Kill switch active; traffic outside the tunnel is blocked until connection or stop")
+		e.mu.Unlock()
+	}
+	acquired()
+	for {
+		err, settled := e.connect(ctx, cfg, b)
+		// A cleanup failure stays visible even when Stop arrived at the same time.
+		if err == nil || ctx.Err() != nil && !requiresRecovery(err) {
+			return
+		}
+		// Without held protection, or when cleanup needs recovery, the failure
+		// ends the run. Otherwise protection stays until Stop or a retry.
+		if owner == nil || requiresRecovery(err) {
+			result, r.settled = err, settled
+			return
+		}
+		if !e.hold(ctx, err) {
+			return
+		}
+	}
+}
+
+// hold keeps a failed run, and its kill switch protection, alive until Stop,
+// a handover to a new Start, or ReconnectNow. It reports whether to retry.
+func (e *Engine) hold(ctx context.Context, err error) bool {
+	e.mu.Lock()
+	e.transitionLocked(Failed, err)
+	drain(e.wake)
+	e.holding = true
+	e.emitLocked("kill_switch_held", "Connection failed; kill switch keeps traffic blocked until stop")
+	wake := e.wake
+	e.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-wake:
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if ctx.Err() != nil {
+		return false
+	}
+	e.holding = false
+	e.recovery = recovery{cycles: e.recovery.cycles}
+	e.status.ReconnectAttempt, e.status.ReconnectLimit, e.status.ReconnectCycle = 0, 0, 0
+	e.transitionLocked(Connecting, nil)
+	e.emitLocked("reconnect_requested", "Reconnect requested; restarting connection attempts")
+	return true
+}
+
+// connect runs attempts until Stop or a terminal failure. It returns nil after
+// Stop, otherwise the failure; settled marks a failure whose teardown already
+// completed.
+func (e *Engine) connect(ctx context.Context, cfg SessionConfig, b backend) (error, bool) {
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil, false
 		}
 		e.mu.Lock()
 		e.status.Attempt++
 		e.mu.Unlock()
 		if err := e.maintenanceBarrier(); err != nil {
-			result = err
-			return
+			return err, false
 		}
 		s, err := b.Open(ctx, cfg, e.report)
+		if err != nil && ctx.Err() == nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			// The setup deadline expired while the run continues: retry.
+			err = fault("network_setup_failed", true)
+		}
 		if err == nil {
 			if ctx.Err() == nil {
 				e.transition(Connected, nil)
 			}
-			connectedAt := time.Now()
 			err = e.serve(ctx, s)
+			if err == nil && ctx.Err() == nil {
+				err = fault("session_stopped_unexpectedly", false)
+			}
 			if ctx.Err() != nil {
 				e.transition(Stopping, nil)
-			} else if retryable(err) {
+			} else if e.recoverable(err) {
 				e.transition(Reconnecting, err)
 			}
 			if closeErr := s.Close(); closeErr != nil {
-				result = closeErr
-				return
-			}
-			if time.Since(connectedAt) >= time.Minute {
-				delay = e.opts.RetryMin
+				return closeFailure{closeErr}, false
 			}
 		}
 		// Open owns rollback on failure. A cleanup failure must stay visible even
 		// when cancellation arrived at the same time.
-		if err != nil && !retryable(err) && !errors.Is(err, context.Canceled) {
-			result = err
-			return
+		if requiresRecovery(err) {
+			return err, false
 		}
 		if ctx.Err() != nil {
-			return
+			return nil, false
 		}
-		// Both terminal failures below follow a successful Close or Open rollback.
-		if err == nil {
-			result = fault("session_stopped_unexpectedly", false)
-			r.settled = true
-			return
-		}
-		if !e.prepareReconnect(err) {
-			if ctx.Err() != nil {
-				return
-			}
-			result = err
-			r.settled = true
-			return
+		if !e.recoverable(err) {
+			// Teardown of an unexpectedly stopped session has already completed.
+			return err, err != nil && err.Error() == "session_stopped_unexpectedly"
 		}
 		e.report("retry", "Connection interrupted; retrying after cleanup")
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		if delay < e.opts.RetryMax/2 {
-			delay *= 2
-		} else {
-			delay = e.opts.RetryMax
+		if waitErr := e.awaitAttempt(ctx, err); waitErr != nil {
+			if ctx.Err() != nil {
+				return nil, false
+			}
+			// Exhaustion follows a successful Close or Open rollback.
+			return err, true
 		}
 	}
 }
@@ -476,9 +682,7 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 	if !ok {
 		return s.Wait(ctx)
 	}
-	delay := e.opts.RetryMin
 	for {
-		connectedAt := time.Now()
 		err := s.Wait(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -486,21 +690,11 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 		if !retryable(err) {
 			return err
 		}
-		if time.Since(connectedAt) >= time.Minute {
-			delay = e.opts.RetryMin
-		}
 		p.Suspend()
 		e.report("transport_suspend", "Tunnel retained; proxy traffic blocked during recovery")
 		for {
-			if !e.prepareReconnect(err) {
-				return err
-			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
+			if waitErr := e.awaitAttempt(ctx, err); waitErr != nil {
+				return waitErr
 			}
 			e.mu.Lock()
 			e.status.Attempt++
@@ -512,20 +706,20 @@ func (e *Engine) serve(ctx context.Context, s session) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// The attempt deadline expired while the run continues: retry.
+				err = fault("transport_unavailable", true)
+			}
 			if err == nil {
 				e.transition(Connected, nil)
 				break
 			}
-			if !retryable(err) {
+			// Failures of the tunnel itself are recovered by close and reopen.
+			if !e.recoverable(err) || linkFault(err) {
 				return err
 			}
 			e.transition(Reconnecting, err)
 			e.report("transport_retry", "Transport unavailable; tunnel remains installed")
-			if delay < e.opts.RetryMax/2 {
-				delay *= 2
-			} else {
-				delay = e.opts.RetryMax
-			}
 		}
 	}
 }

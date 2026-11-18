@@ -227,6 +227,36 @@ func (m *Manager) guardPresent(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
+// Guard installs the kill switch table, or atomically replaces an owned one,
+// before the tunnel exists. The tunnel name comes from the configuration;
+// nftables matches oifname by name, so the TUN exception applies once it is
+// created. The journal records the guard before nft runs, so a crash leaves
+// recoverable state. Guard refuses to run over an unrecovered session.
+func (m *Manager) Guard(ctx context.Context, name string, p *routing.Policy, disableIPv6 bool) error {
+	old, err := m.Load()
+	if err != nil {
+		return err
+	}
+	if old != nil && (old.Routing || old.DNSMethod != "") {
+		return fmt.Errorf("Bimeron network recovery is pending")
+	}
+	present, err := m.guardPresent(ctx)
+	if err != nil {
+		return err
+	}
+	script, err := Firewall(name, p, disableIPv6, present)
+	if err != nil {
+		return err
+	}
+	if err = m.save(&State{Version: 1, Name: name, Guard: true}); err != nil {
+		return err
+	}
+	if _, err = m.Run(ctx, "nft", script, "-f", "-"); err != nil {
+		return fmt.Errorf("cannot install nftables kill switch")
+	}
+	return nil
+}
+
 func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routing.Policy, disableIPv6, guard bool) (err error) {
 	old, err := m.Load()
 	if err != nil {

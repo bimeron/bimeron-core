@@ -217,7 +217,9 @@ Example `hello` response from Windows (capability values vary by platform;
     "daemon": true,
     "ikev2": {"supported": true, "foreground_only": true, "kill_switch": true, "dns_protection": true, "stats": false},
     "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"],
-    "access_conversion": true
+    "access_conversion": true,
+    "reconnect_now": true,
+    "kill_switch_hold": true
   }
 }
 ```
@@ -226,6 +228,10 @@ Example `hello` response from Windows (capability values vary by platform;
 `Type = ...` parameters (see [CONF.MD](CONF.MD)); `naive_quic` is `Type = naive`
 with `Network = quic`. Offer a parameter form only for listed protocols. An older
 core omits the field and supports only the first nine entries.
+
+`reconnect_now` and `kill_switch_hold` describe the recovery contract (see
+[Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold));
+older cores omit them.
 
 `access_conversion` reports the `bimeron document` operations `access_to_fields`
 and `access_to_uri`, which convert `[AccessKey]` between a share URI and explicit
@@ -239,13 +245,17 @@ backend independently of the top-level packet capabilities (see
 [Native IKEv2 boundary](#native-ikev2-boundary)).
 
 Field casing: `status` contains `State`, `Attempt`, `Since`, `LastError`, and the
-optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`, `Session`, and
-`native`; each event contains `Time`, `State`, `Code`, `Message`, `Attempt`,
-`LastError`, and the optional `ErrorStage`, `ReconnectAttempt`, and
-`ReconnectLimit` (see [Bounded reconnect recovery](#bounded-reconnect-recovery-desktop-030)).
-All other RPC fields use snake_case. Do not normalize names. `Time` and `Since`
-are RFC 3339 timestamps that may include fractional seconds and a time zone;
-display them in local time. `instance` identifies the daemon process and changes
+optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`, `ReconnectCycle`,
+`ReconnectPhase`, `NextAttemptAt`, `KillSwitch`, `LastErrorPermanent`,
+`Session`, and `native`; each
+event contains `Time`, `State`, `Code`, `Message`, `Attempt`, `LastError`, and
+the optional `ErrorStage`, `ReconnectAttempt`, `ReconnectLimit`,
+`ReconnectCycle`, `ReconnectPhase`, `NextAttemptAt`, `KillSwitch`, and
+`LastErrorPermanent` (see
+[Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold)).
+All other RPC fields use snake_case. Do not normalize names. `Time`, `Since`,
+and `NextAttemptAt` are RFC 3339 timestamps that may include fractional seconds
+and a time zone; display them in local time. `instance` identifies the daemon process and changes
 after a restart. Check `version`, `id` (if sent), and `error`, and ignore unknown
 response fields. A response without `error` means the command was accepted; it
 does not mean the VPN is connected.
@@ -263,7 +273,8 @@ does not mean the VPN is connected.
 | stats | none | Statistics of the last session |
 | stats_snapshot | none | Statistics bound to a session; see [CONTROL.MD](CONTROL.MD#optional-session-bound-statistics) |
 | auth_pending / auth_reply | `challenge_id`, `answers` for reply | Interactive SSH authentication; see [below](#ssh-profile-editor-and-interactive-authentication) |
-| stop | optional `instance` and `session` | Disconnects the session and waits for cleanup; the daemon keeps running |
+| reconnect_now | optional `instance` and `session` | Ends a pending recovery wait or retries a failed session with a held kill switch; see [below](#reconnect-recovery-and-kill-switch-hold) |
+| stop | optional `instance` and `session` | Disconnects the session, releases a held kill switch, and waits for cleanup; the daemon keeps running |
 | shutdown | none | Disconnects the session and exits the daemon or service |
 
 Start example:
@@ -273,11 +284,14 @@ Start example:
 ```
 
 States: `disconnected`, `connecting`, `connected`, `reconnecting`, `stopping`,
-`failed`. `Attempt` is an attempt number, not a progress percentage. A connection
-may stay in `connecting` for a long time and keep retrying while the network is
-unavailable, so do not treat a successful `start` response as an enabled VPN.
-Access during reconnection is not guaranteed: the core keeps the tunnel and tries
-to restore the upstream transport.
+`failed`. `Attempt` is an attempt number, not a progress percentage. Setup can
+take a long time, so do not treat a successful `start` response as an enabled
+VPN. An initial connection fails after a bounded number of retries; an
+established session that loses its server stays in `reconnecting` until it
+recovers or is stopped. Access during reconnection is not guaranteed: the core
+keeps the tunnel and tries to restore the upstream transport. With the kill
+switch enabled, a failed session keeps protection until `stop`; see
+[Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold).
 
 A typical GUI flow:
 
@@ -291,15 +305,23 @@ A typical GUI flow:
 6. Closing the GUI window does not stop the service or the VPN. Implement
    "disconnect on exit" only as an explicit user setting.
 
-Run IPC off the UI thread. Practical client timeouts are 5 seconds for `status`
-and up to 2 minutes for `stop` and `shutdown`. A disconnected client does not stop
+Run IPC off the UI thread. Practical client timeouts are 5 seconds for `status`,
+up to 2 minutes for `stop` and `shutdown`, and 2 minutes for `start`: with the
+kill switch enabled, `start` returns only after protection is installed, and a
+handover first waits for the previous session's cleanup (up to about 45 seconds
+on Windows). Other commands on the same daemon wait while a `start` runs. A disconnected client does not stop
 an accepted session or cancel server cleanup. After a `start` timeout, check
 `status` instead of repeating `start` blindly; `stop` is safe to repeat. To switch
 profiles, send `stop`, wait for cleanup, then `start` with the new absolute path.
-Hot reload, pause, and single-command profile switching are not implemented.
+The exception is a session that owns kill switch protection (`KillSwitch`
+`active` or `holding`): `start` with a different kill switch VPN profile
+replaces it directly without releasing protection, which avoids an unprotected
+gap. A repeated start of the same profile keeps the live session. Hot reload, pause, and
+general single-command profile switching are not implemented.
 
 To avoid acting on stale state, a daemon that reports `daemon_session_guards: true`
-accepts `instance` on `start` and `instance` plus `session` on `stop`; see
+accepts `instance` on `start` and `instance` plus `session` on `stop` and
+`reconnect_now`; see
 [Daemon session guards](CONTROL.MD#daemon-session-guards).
 
 ## Events and reconnecting the GUI
@@ -325,6 +347,8 @@ disconnected": kill switch filters may remain after a process crash.
 | `absolute_config_path_required` | Pass the absolute profile path |
 | `invalid_configuration` | Offer to review or edit the profile; `problems` explains why |
 | `session_already_running` | Reread `status`; do not start a second process |
+| `kill_switch_held` | A failed session holds the kill switch and the new profile does not keep it; offer `stop` first |
+| `reconnect_not_pending` | No recovery wait is pending and no failed session is held; reread `status` |
 | `session_start_failed` | Reread `status` and `LastError` |
 | `session_stop_failed` | Show a cleanup problem; do not report a successful disconnect |
 | `daemon_shutting_down` | Wait for exit and reconnect to IPC later |
@@ -731,7 +755,8 @@ network changes, and macOS requires utun, route, and DNS checks on a Mac. Run
 tests, vet, cross-builds, and Apple shell checks before a release.
 
 Each GUI should test: `hello` and version incompatibility; start to `connected`;
-stop and start again; profile switching; IPC or permission denial; `dropped` and
+stop and start again; profile switching; recovery waits, Retry now, and a failed
+session with a held kill switch; IPC or permission denial; `dropped` and
 a changed `instance`; restarting the GUI while the VPN is connected; regular
 control without administrator rights; saving diagnostics; and no secrets in logs.
 Do not kill the core process when closing the GUI window, and do not run
@@ -762,33 +787,86 @@ retained recovery behavior before enabling it. Native statistics are explicitly
 unavailable. See [IKEV2.MD](IKEV2.MD) for configuration, profile requirements, and
 unverified live behavior.
 
-## Bounded reconnect recovery (Desktop 0.3.0)
+## Reconnect recovery and kill switch hold
 
-Core allows three reconnect attempts after a failed initial Open or a later
-interruption. The initial Open is excluded. Both ordinary close/open recovery
-and persistent tunnel transport recovery use this policy. Successful connection
-resets the recovery budget for the next interruption. Nonretryable failures stop
-immediately. Stop cancels pending backoff and recovery. After the third failure,
-Core cleans up and enters `failed` with the final `LastError` and `ErrorStage`;
-a cleanup failure takes precedence. No fourth attempt is scheduled.
+<a id="bounded-reconnect-recovery-desktop-030"></a>
 
-Status and every Event add optional capitalized integer fields:
+The full contract is in
+[CONTROL.MD](CONTROL.MD#reconnect-recovery-and-kill-switch-hold). In short:
 
-- `ReconnectAttempt`: upcoming/current recovery attempt, 1 through 3. Published
-  before its backoff, retained after exhaustion, reset on success/disconnection
-  and a new Start. A cleanup transition can precede scheduling the first retry.
-- `ReconnectLimit`: 3 while recovery progress is present; omitted when reset.
+- **Initial connection** (before the first `connected` of a run, including
+  auto-connect): the first attempt plus up to 3 retries (1, 2, 4 second
+  backoff), then `failed`. A nonretryable failure is `failed` at once.
+- **Loss of an established session**: recovery continues until success or an
+  explicit stop, in cycles of up to 10 attempts (1, 2, 4, 8, then 15 second
+  backoff) separated by a 60 second `waiting` phase. A connection that drops
+  again within 1 minute continues the previous cycle position. After loss,
+  failures such as an unavailable `ssconf` key, a TLS rejection or SSH
+  authentication are retried too; `LastError` keeps the specific code. Codes
+  ending in `_run_recover`, a failed session close and a maintenance seal still
+  end in `failed`.
+- A backoff or `waiting` ends early on `reconnect_now`, a change of local
+  network interfaces or a resume from sleep. An attempt in progress is never
+  interrupted.
+- Native IKEv2 keeps the bounded policy (3 retries) without cycles.
 
-Zero values are omitted. `Attempt` retains its cumulative per-Start semantics,
-including initial Open and transport generations; it is not a recovery counter.
-`reconnect_attempt` events publish progress even when state/error did not change.
-Status remains authoritative if events are dropped. `LastError` carries the last
-catalog code, not the generic retry log message. Localize it through the error
-catalog and retain its textual code in the tooltip, including terminal failure.
+With `KillSwitch = true` (VPN mode, Windows and Linux), protection is installed
+before the first network activity of a run and held through every attempt,
+wait and `failed`, until `stop` or `shutdown`. A run that fails keeps
+`Session.active: true` with `KillSwitch: "holding"`; `reconnect_now` restarts
+its initial attempts, and `start` with another kill switch profile in VPN mode
+replaces it without releasing protection. Any other `start` returns
+`kill_switch_held`. With the kill switch disabled, there is no guarantee that
+traffic does not leave outside the tunnel while connecting, reconnecting or
+after `failed`.
 
-These fields are additive: IPC remains version 1, profile format remains 1 and
-`release/compatibility.json` is unchanged (GUI `[0.3.0, 0.3.1)`, IPC 1/1).
-Older services can omit both fields; GUIs must not infer a `/3` limit from
-`Attempt`, count log messages, or terminate a service-owned connection locally.
-The frozen e1cada7d candidate is unchanged; Desktop 0.3.0 requires a new reviewed
-Core master candidate containing this change before release acceptance.
+Status and every Event carry optional fields; zero values are omitted:
+
+| Field | Values |
+|---|---|
+| `ReconnectAttempt`, `ReconnectLimit` | 1–3 of 3 during initial retries, 1–10 of 10 within a cycle; omitted during `waiting`. `ReconnectAttempt` stays in `failed` after the initial attempts. |
+| `ReconnectCycle` | Current or most recent cycle (1-based) after loss; omitted during initial attempts. During `waiting`, the cycle that just failed. |
+| `ReconnectPhase` | `attempting` (an attempt is scheduled, with `NextAttemptAt`, or running, without it) or `waiting` (pause between cycles); omitted outside `reconnecting`. |
+| `NextAttemptAt` | RFC 3339 UTC, whole seconds: start of the next scheduled attempt or cycle; omitted when nothing is scheduled. Core host clock. |
+| `KillSwitch` | `active` (protection installed, `connected`) or `holding` (protection installed, the tunnel carries no traffic: `connecting`, `reconnecting`, held `failed`, `stopping`); `residual` while idle with protection that no run owns (after a crash, power loss or failed cleanup), together with `failed` and `cleanup_failed_run_recover` (the code Desktop 0.3.0 already routes to emergency network recovery) unless another failure is shown; otherwise omitted (kill switch disabled, proxy mode, IKEv2). Offer recovery for `residual`. |
+| `LastErrorPermanent` | `true` when `LastError` is not fixed by retrying alone (for example `access_key_unavailable`, TLS rejection); Core still retries it after loss of an established session. Omitted for transient failures. |
+
+New progress events: `reconnect_wait`, `reconnect_attempt` (also at the start of
+a cycle), `reconnect_requested`, `kill_switch_holding` and `kill_switch_held`;
+`network_changed` and `resume_detected` also report an early end of a wait.
+Status stays authoritative. `Attempt` is cumulative per Start, not a recovery
+counter; do not infer a limit from it or count log messages.
+
+### Desktop 0.3.0 compatibility
+
+Desktop 0.3.0 shows a counter only when the state is `reconnecting` and
+`1 ≤ ReconnectAttempt ≤ ReconnectLimit`. It ignores the new fields, events,
+capabilities and command. With this Core it shows:
+
+| Core phase | Status fields 0.3.0 reads | Desktop 0.3.0 shows |
+|---|---|---|
+| Initial retries | `reconnecting`, `ReconnectAttempt` 1–3, `ReconnectLimit` 3 | "Reconnecting… (n/3)", unchanged |
+| Attempt in a cycle after loss | `reconnecting`, `ReconnectAttempt` 1–10, `ReconnectLimit` 10 | "Reconnecting… (n/10)" |
+| `waiting` between cycles | `reconnecting`, no `ReconnectAttempt` | "Reconnecting…" without a counter |
+| Failed, kill switch held | `failed`, `LastError` | The failure and `LastError`, as before. Connect sends `start`: a profile with the kill switch takes over without releasing protection; another profile gets `kill_switch_held`, shown as an unknown error code. Disconnect sends `stop`, which releases protection. |
+| Failed, kill switch disabled | `failed`, `LastError` | Unchanged |
+
+IPC remains version 1 and profile format remains 1.
+The GUI range in `release/compatibility.json` is widened to include Desktop
+0.3.1 by the release that ships it.
+
+### Guidance for Desktop 0.3.1
+
+- `ReconnectPhase: "waiting"`: show "Server unavailable · retry in m:ss",
+  counting down to `NextAttemptAt`.
+- `attempting`: show "Reconnecting… (n/N)" from `ReconnectAttempt` and
+  `ReconnectLimit`.
+- `KillSwitch: "holding"`: show "Internet paused until VPN connects", including
+  in `failed`. `active` needs no extra notice.
+- While `reconnecting` with `NextAttemptAt` set, or in `failed` with
+  `KillSwitch: "holding"`, offer **Retry now** (`reconnect_now`, only when
+  `capabilities.reconnect_now` is `true`) and **Disconnect** (`stop`). Send
+  `instance` and `session` as for `stop`. On `reconnect_not_pending`, reread
+  `status`: an attempt has already started or the session changed.
+- On `start` with `kill_switch_held`, explain that protection is held by the
+  failed session and offer Disconnect before connecting with that profile.

@@ -31,7 +31,7 @@ func daemon(args []string) error {
 	defer stop()
 	fmt.Println("Bimeron daemon ready. Use start, status, stop, shutdown or watch in another CMD.")
 	fmt.Println("Ctrl+C stops the daemon and its VPN session.")
-	err = control.NewServer(core.New(core.Options{})).Serve(ctx, l)
+	err = control.NewServer(core.New(core.Options{ResidualProtection: true})).Serve(ctx, l)
 	if recordErr := finishRecord(err == nil); recordErr != nil {
 		fmt.Fprintf(os.Stderr, "Developer cleanup record unavailable: %v\n", recordErr)
 	}

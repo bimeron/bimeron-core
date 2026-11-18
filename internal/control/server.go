@@ -12,6 +12,7 @@ import (
 	"net"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -82,6 +83,18 @@ type Engine interface {
 	Events() <-chan core.Event
 	Stats() telemetry.Snapshot
 }
+
+// abandoner is implemented by engines that can end a session without a user
+// stop while keeping kill switch protection. MarkAbandon must run before the
+// session's context is cancelled.
+type abandoner interface {
+	MarkAbandon()
+}
+
+// reconnector is implemented by engines that support reconnect_now.
+type reconnector interface {
+	ReconnectNow() error
+}
 type statsSnapshotProvider interface {
 	StatsSnapshot() core.StatsSnapshot
 }
@@ -109,6 +122,7 @@ type Server struct {
 	load                  func(string) (core.SessionConfig, error)
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
+	abandonOnExit         atomic.Bool
 	authMu                sync.Mutex
 	pending               *pendingAuth
 }
@@ -176,6 +190,12 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	defer stop()
 	defer func() {
 		stopEngine := !s.foreground || ctx.Err() != nil
+		// A broken listener is not a user's stop: keep kill switch protection.
+		// Sessions run under contexts derived from ctx, so mark the session
+		// before anything is cancelled.
+		if a, ok := s.engine.(abandoner); ok && stopEngine && (result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
+			a.MarkAbandon()
+		}
 		cancel()
 		_ = l.Close()
 		workers.Wait()
@@ -234,7 +254,7 @@ func (s *Server) record(e core.Event) {
 }
 func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer := Response{Version: Version, ID: r.ID, Instance: s.instance}
-	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 		s.command.Lock()
 		defer s.command.Unlock()
 	}
@@ -253,14 +273,17 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
 	} else {
-		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" {
+		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 			// Guard validation and mutation share admission with legacy commands.
 			if !s.foreground && r.Instance != "" {
 				answer.Status = s.engine.Status()
 				if r.Instance != s.instance {
 					answer.Error = "stale_instance"
 				} else if r.Command == "start" {
-					if answer.Status.Session != nil && answer.Status.Session.Active {
+					// A session that owns kill switch protection may be handed
+					// over; the engine decides whether the new profile keeps it.
+					protected := answer.Status.KillSwitch == core.KillSwitchHolding || answer.Status.KillSwitch == core.KillSwitchActive
+					if answer.Status.Session != nil && answer.Status.Session.Active && !protected {
 						answer.Error = "session_already_running"
 					}
 				} else if answer.Status.Session == nil || !answer.Status.Session.Active || answer.Status.Session.ID != r.Session {
@@ -393,6 +416,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 					answer.Error = "session_start_failed"
 					if errors.Is(err, core.ErrSessionRunning) {
 						answer.Error = "session_already_running"
+					} else if errors.Is(err, core.ErrKillSwitchHeld) {
+						answer.Error = "kill_switch_held"
 					}
 				}
 			}
@@ -406,6 +431,17 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			} else if r.Command == "shutdown" {
 				s.closing = true
 			}
+		case "reconnect_now":
+			if r.Config != "" || r.After != 0 {
+				answer.Error = "invalid_request"
+				break
+			}
+			engine, ok := s.engine.(reconnector)
+			if !ok {
+				answer.Error = "unknown_command"
+			} else if engine.ReconnectNow() != nil {
+				answer.Error = "reconnect_not_pending"
+			}
 		default:
 			answer.Error = "unknown_command"
 		}
@@ -413,6 +449,18 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer.Status = s.engine.Status()
 	return answer
 }
+
+// AbandonOnExit makes the current session keep kill switch protection when
+// Serve exits, for owner failures that are not a user's stop (for example a
+// failed readiness listener). It marks the engine at once; cancel the Serve
+// context only afterwards.
+func (s *Server) AbandonOnExit() {
+	s.abandonOnExit.Store(true)
+	if a, ok := s.engine.(abandoner); ok {
+		a.MarkAbandon()
+	}
+}
+
 func (s *Server) handle(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	if s.authorize != nil {
