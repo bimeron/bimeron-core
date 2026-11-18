@@ -6,12 +6,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/safefile"
 	"github.com/dunglas/httpsfv"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -53,6 +54,9 @@ type Client struct {
 var _ transport.StreamDialer = (*Client)(nil)
 var _ transport.PacketListener = (*Client)(nil)
 
+// maxCAFile bounds the CAFile PEM bundle.
+const maxCAFile = 1 << 20
+
 func New(p accesskey.Profile, d net.Dialer) (*Client, error) {
 	if p.Type != "masque" {
 		return nil, fmt.Errorf("expected MASQUE profile")
@@ -62,7 +66,10 @@ func New(p accesskey.Profile, d net.Dialer) (*Client, error) {
 	}
 	var roots *x509.CertPool
 	if p.MASQUE.CAFile != "" {
-		pem, err := os.ReadFile(p.MASQUE.CAFile)
+		pem, err := safefile.Read(p.MASQUE.CAFile, maxCAFile)
+		if errors.Is(err, safefile.ErrTooLarge) {
+			return nil, errors.New("MASQUE CA file exceeds the 1 MiB size limit")
+		}
 		if err != nil {
 			return nil, fmt.Errorf("could not read MASQUE CA file")
 		}

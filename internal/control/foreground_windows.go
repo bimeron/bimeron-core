@@ -140,6 +140,12 @@ func (client *ForegroundClient) Call(ctx context.Context, r Request) (Response, 
 	return a, callErr
 }
 
+// foregroundPipeSDDL lets the user's processes connect. Pipe instances also
+// require Administrators, so only the elevated owner can serve the pipe.
+func foregroundPipeSDDL(sid string) string {
+	return "O:BAD:P(A;;GA;;;SY)(A;;" + pipeClientRights + ";;;" + sid + ")(A;;" + pipeInstanceRight + ";;;BA)S:(ML;;NW;;;ME)"
+}
+
 func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), error) {
 	if !windowsnet.Elevated() {
 		return nil, nil, nil, errors.New("administrator_required")
@@ -182,7 +188,7 @@ func newForegroundOwner(opts ForegroundOptions) (*Server, net.Listener, func(), 
 		releaseSelf()
 		return nil, nil, nil, errForegroundIdentity
 	}
-	l, err := winio.ListenPipe(foregroundPipe(self.SID, self.Session), &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;" + self.SID + ")S:(ML;;NW;;;ME)", InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
+	l, err := winio.ListenPipe(foregroundPipe(self.SID, self.Session), &winio.PipeConfig{SecurityDescriptor: foregroundPipeSDDL(self.SID), InputBufferSize: 16 * 1024, OutputBufferSize: 16 * 1024})
 	if err != nil {
 		releaseRequester()
 		releaseSelf()

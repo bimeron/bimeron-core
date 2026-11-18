@@ -322,6 +322,9 @@ func TestProblemLocations(t *testing.T) {
 func TestGeoDataFileProblems(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "profile.conf")
+	if err := os.Mkdir(filepath.Join(dir, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	base := "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n"
 	for _, tc := range []struct {
 		name, profile, code, field string
@@ -329,6 +332,7 @@ func TestGeoDataFileProblems(t *testing.T) {
 	}{
 		{"missing file option", base + "[Rule]\nGeoSite = ru\nAction = direct\n", "geodata_required", "GeoSiteFile", 0},
 		{"unreadable file", base + "[GeoData]\nGeoIPFile = missing.dat\n\n[Rule]\nGeoIP = ru\nAction = direct\n", "geodata_unreadable", "GeoIPFile", 8},
+		{"directory", base + "[GeoData]\nGeoSiteFile = data\n\n[Rule]\nGeoSite = ru\nAction = direct\n", "geodata_unreadable", "GeoSiteFile", 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.profile), 0o600); err != nil {

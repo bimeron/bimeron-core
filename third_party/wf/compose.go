@@ -381,7 +381,7 @@ func toValue0(a *arena, v interface{}, ftype reflect.Type) (typ dataType, val ui
 		// https://docs.microsoft.com/en-us/windows/win32/api/fwptypes/ns-fwptypes-fwp_condition_value0
 		p := a.Alloc(unsafe.Sizeof(fwpByteBlob{}))
 		*(*fwpByteBlob)(p) = fwpByteBlob{
-			Size: uint32(sd.Length()),
+			Size: uint32(csd.Length()),
 			Data: (*uint8)(unsafe.Pointer(csd)),
 		}
 		typ = dataTypeSecurityDescriptor
@@ -528,9 +528,16 @@ func toFwpV6AddrAndMask(a *arena, pfx netip.Prefix) *fwpV6AddrAndMask {
 
 // toSecurityDescriptor returns an arena-allocated copy of s.
 func toSecurityDescriptor(a *arena, s *windows.SECURITY_DESCRIPTOR) (*windows.SECURITY_DESCRIPTOR, error) {
-	s, err := s.ToSelfRelative()
+	// Bimeron: ToSelfRelative rejects descriptors that are already
+	// self-relative, such as those returned by SecurityDescriptorFromString.
+	control, _, err := s.Control()
 	if err != nil {
 		return nil, err
+	}
+	if control&windows.SE_SELF_RELATIVE == 0 {
+		if s, err = s.ToSelfRelative(); err != nil {
+			return nil, err
+		}
 	}
 
 	sl := s.Length()

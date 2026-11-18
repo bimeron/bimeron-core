@@ -3,8 +3,8 @@ package main
 import (
 	"bimeron/core"
 	"bimeron/internal/config"
-	"bimeron/internal/geofile"
 	"bimeron/internal/problem"
+	"bimeron/internal/safefile"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -159,18 +159,11 @@ func geoDataBridge(args []string, out io.Writer) error {
 	if len(args) != 3 || args[0] != "groups" || (args[1] != "geoip" && args[1] != "geosite") || !filepath.IsAbs(args[2]) {
 		return writeBridge(out, r, fmt.Errorf("invalid arguments"))
 	}
-	f, err := geofile.Open(args[2])
-	if err != nil {
-		return writeBridge(out, r, &core.GeoDataError{Code: "geodata_unreadable", Kind: args[1]})
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return writeBridge(out, r, fmt.Errorf("not a regular file"))
-	}
-	data, err := io.ReadAll(io.LimitReader(f, (64<<20)+1))
-	if err == nil && len(data) > 64<<20 {
+	data, err := safefile.Read(args[2], 64<<20)
+	if errors.Is(err, safefile.ErrTooLarge) {
 		err = &core.GeoDataError{Code: "geodata_limit", Kind: args[1]}
+	} else if err != nil {
+		err = &core.GeoDataError{Code: "geodata_unreadable", Kind: args[1]}
 	}
 	if err == nil {
 		groups, err = core.GeoDataGroups(args[1], data)

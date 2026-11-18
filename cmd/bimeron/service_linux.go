@@ -6,9 +6,11 @@ import (
 	"context"
 	"debug/buildinfo"
 	"debug/elf"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -215,6 +217,34 @@ func copyLinuxServiceFile(source, destination string) error {
 	return os.Rename(name, destination)
 }
 
+// copyLinuxUpdateSource stages the untrusted update source as a private file.
+// The source must be a regular file; a final symlink is not followed.
+func copyLinuxUpdateSource(source, staged string) error {
+	in, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return errUpdateSourceLink
+	}
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return errUpdateSourceNotRegular
+	}
+	// A staged file left by an interrupted update would block O_EXCL. The
+	// staging name is fixed inside the root-owned service directory, so
+	// removing it only discards our own unverified copy.
+	if err = os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove stale staged update: %w", err)
+	}
+	out, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	return copyUpdateData(out, in)
+}
+
 func writeLinuxServiceUnit(owner uint32) error {
 	temp, err := os.CreateTemp(filepath.Dir(linuxServiceUnit), ".bimeron-core-*.service")
 	if err != nil {
@@ -282,7 +312,7 @@ func updateLinuxService(expect updateExpectation) error {
 func updateLinuxServiceContext(ctx context.Context, expect updateExpectation) error {
 	return updateLinuxServiceMode(ctx, expect, false)
 }
-func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, forceActivate bool) error {
+func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, forceActivate bool) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -328,8 +358,8 @@ func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, force
 	if _, err = os.Lstat(backup); !os.IsNotExist(err) {
 		return fmt.Errorf("previous update backup present; resolve it before retrying")
 	}
-	defer os.Remove(staged)
-	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyLinuxServiceFile); err != nil {
+	defer removeStagedUpdate(staged, &err)
+	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyLinuxUpdateSource); err != nil {
 		return err
 	}
 	info, err := buildinfo.ReadFile(staged)
@@ -344,6 +374,9 @@ func updateLinuxServiceMode(ctx context.Context, expect updateExpectation, force
 	newELF.Close()
 	if machine != newMachine {
 		return fmt.Errorf("update architecture differs from installed service")
+	}
+	if err = os.Chmod(staged, 0755); err != nil {
+		return err
 	}
 	wasRunning := state == "active"
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)

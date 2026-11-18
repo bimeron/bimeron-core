@@ -3,6 +3,7 @@ package main
 import (
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
+	"bimeron/internal/safefile"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,7 +97,7 @@ func run(args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: bimeron inspect <key-file>")
 		}
-		b, err := os.ReadFile(args[1])
+		b, err := safefile.Read(args[1], 64<<10)
 		if err != nil {
 			return fmt.Errorf("could not read key file")
 		}

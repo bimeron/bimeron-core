@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
+	"bimeron/internal/sshtunnel/knownhosts"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Host-key failure codes. Callers that opted in with HostKeys may expose them

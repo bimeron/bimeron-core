@@ -108,12 +108,24 @@ administrator-owned GUI package, and pass it the downloaded file as data:
 <trusted-bundled-core> service update -source <absolute-downloaded-executable-path> -version <core_version> -sha256 <executable-sha256>
 ```
 
+Pass the extracted file itself. The updater refuses a file larger than 256 MiB
+and a symbolic link or junction as the final path component. On Windows the
+source must be a plain drive-letter path (`C:\...`) on a fixed local drive:
+UNC, device and `\\?\` paths are refused, and so is an opened file that
+resolves to a network share or another drive type, for example through a linked
+directory. Other reparse points, such as cloud-file placeholders, are read as
+data. Extract to a local directory: content that is not available locally may
+fail to read or be fetched on access, and the staged digest check rejects any
+mismatch.
+
 The bundled updater must be in a directory ordinary users cannot write. A
 portable GUI or a custom installation in a user-writable directory cannot safely
 elevate its adjacent core executable for this operation. The elevated updater
 opens the downloaded file only as data, copies it into the protected service
-directory, then checks the staged digest, Go identity, and architecture before
-stopping the old service. It never executes downloaded bytes before those checks.
+directory as a file only administrators or root can read, then checks the
+staged digest, Go identity, and architecture before stopping the old service.
+A staged copy left by an interrupted update is replaced. The updater never
+executes downloaded bytes before those checks.
 A running replacement must answer
 IPC `hello` with the expected core version and protocol. Failure triggers rollback
 and restoration of the prior running state. A stopped service stays stopped.
