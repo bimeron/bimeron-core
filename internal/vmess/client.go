@@ -20,7 +20,6 @@ import (
 	"bimeron/internal/streamtransport"
 	"bimeron/internal/vless"
 	"golang.getoutline.org/sdk/transport"
-	"golang.org/x/net/websocket"
 )
 
 type Client struct {
@@ -194,16 +193,10 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		if host == "" {
 			host = c.settings.ServerName
 		}
-		config, configErr := websocket.NewConfig("wss://"+host+c.settings.WSPath, "https://"+host)
-		if configErr != nil {
-			return nil, fmt.Errorf("invalid VMess WebSocket settings")
+		conn, err = streamtransport.WebSocket(conn, "wss", host, c.settings.WSPath, nil)
+		if err != nil {
+			return nil, fmt.Errorf("VMess %w", err)
 		}
-		ws, wsErr := websocket.NewClient(config, conn)
-		if wsErr != nil {
-			return nil, fmt.Errorf("VMess WebSocket handshake failed")
-		}
-		ws.PayloadType = websocket.BinaryFrame
-		conn = ws
 	} else if c.settings.Network == "httpupgrade" {
 		conn, err = c.httpUpgrade(conn)
 		if err != nil {
@@ -224,7 +217,8 @@ func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
 	if err := request.Write(conn); err != nil {
 		return nil, fmt.Errorf("VMess HTTPUpgrade request failed: %w", err)
 	}
-	reader := bufio.NewReader(conn)
+	limited := streamtransport.NewUpgradeConn(conn)
+	reader := bufio.NewReader(limited)
 	response, err := http.ReadResponse(reader, request)
 	if err != nil {
 		return nil, fmt.Errorf("VMess HTTPUpgrade response failed: %w", err)
@@ -233,6 +227,7 @@ func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
 		_ = response.Body.Close()
 		return nil, fmt.Errorf("VMess HTTPUpgrade rejected")
 	}
+	limited.Release()
 	return &upgradeConn{Conn: conn, reader: reader}, nil
 }
 

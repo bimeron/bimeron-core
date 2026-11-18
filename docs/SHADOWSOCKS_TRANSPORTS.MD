@@ -214,7 +214,8 @@ queue exceeds 256 KiB is closed so it cannot stall other sessions. Closing
 either stream direction closes that logical session; true TCP half-close is
 not provided. Failure of a shared connection, including an interrupted frame
 write, ends its active sessions. New streams reconnect; application data is
-not automatically replayed.
+not automatically replayed. The WebSocket upgrade response, including bytes
+read ahead with it, is limited to 64 KiB.
 
 Interoperability tests use the original `v2ray-plugin` v1.5.0 and Xray
 v1.260327.0 as an independent Shadowsocks server. The matrix covers six
