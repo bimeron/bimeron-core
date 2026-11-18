@@ -17,7 +17,7 @@ Backfill downloads and verifies existing archives, generates only metadata asset
 ## Alternatives and tradeoffs
 
 - GitHub asset digests alone depend on GitHub as the sole trust root and do not authenticate the compatibility policy outside its API. Ed25519 lets the GUI verify downloaded metadata independently.
-- An embedded signing key in the core would make rotation depend on core updates and would put the trust decision inside a privileged executable. The GUI owns update selection and a pinned public key; the private key stays in GitHub Actions secrets.
+- An embedded signing key in the core would make rotation depend on core updates and would put the trust decision inside a privileged executable. The GUI owns update selection and a pinned public key; the private key is kept outside the repository and CI; signing happens locally on prepared bytes (ADR 0003, RELEASE_UPDATES.md). Proposed ADR 0039 would reverse this alternative by embedding verification keys in Core.
 - Automatically reconnecting VPN after update would need persistent secrets and recovery of session intent. Explicit reconnection preserves current service behavior.
 - A stopped service cannot answer IPC without changing its prior state. It stays stopped; executable identity and staged digest are checked before replacement, and the first later start is user initiated.
 - Elevating the downloaded executable would allow a same-user file swap between the GUI's verification and process launch. Elevating the bundled updater avoids this race, but requires the GUI package directory to be protected against ordinary-user writes. Portable or user-writable GUI installations must disable this update route.
