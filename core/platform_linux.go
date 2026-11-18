@@ -125,6 +125,13 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 		}
 	}()
 	report("adapter_create", "Creating Linux TUN adapter")
+	// The guard exempts the tunnel by name: never create the TUN when another
+	// interface took that name after Acquire.
+	if p.killSwitch {
+		if _, err := net.InterfaceByName(c.Name); err == nil {
+			return nil, fault("adapter_name_in_use", false)
+		}
+	}
 	d, err := linuxnet.OpenTUN(c.Name, uint32(c.MTU))
 	if err != nil {
 		return nil, fault("adapter_create_failed", false)

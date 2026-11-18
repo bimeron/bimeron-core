@@ -5,6 +5,7 @@ package killswitch
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"reflect"
 	"testing"
@@ -352,6 +353,21 @@ func TestDNSPortsBlockedAboveDirectRules(t *testing.T) {
 	}
 	if blocks != 2*len(DNSPorts) {
 		t.Fatal("DNS blocks", blocks)
+	}
+	// DNS through the core, the tunnel and loopback must keep outweighing it;
+	// these permits are the only ones matching the app, interface or loopback.
+	for _, r := range f.rules {
+		if r.Action != wf.ActionPermit || r.Weight > ^uint64(0)-5 {
+			continue
+		}
+		for _, c := range r.Conditions {
+			if c.Field == wf.FieldALEAppID || c.Field == wf.FieldIPLocalInterface {
+				t.Fatal("core or tunnel permit does not outweigh the DNS block", r.Weight)
+			}
+			if prefix, ok := c.Value.(netip.Prefix); ok && prefix.Addr().IsLoopback() {
+				t.Fatal("loopback permit does not outweigh the DNS block", r.Weight)
+			}
+		}
 	}
 	for _, r := range f.rules {
 		if r.Action == wf.ActionPermit && r.Weight < ^uint64(0)-5 {

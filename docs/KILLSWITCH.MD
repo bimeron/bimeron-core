@@ -43,7 +43,13 @@ and removal use atomic WFP transactions.
   of policy. There is no general exemption for physical-interface DNS servers:
   DNS ports (53 and 853, TCP and UDP) are blocked outside the tunnel for every
   process except the core, even to a resolver inside a `direct` CIDR, so names
-  are not resolved outside the tunnel while protection holds.
+  are not resolved outside the tunnel while protection holds. A `direct` rule
+  for a LAN or corporate DNS server therefore does not make that server usable
+  while the kill switch is enabled; names resolve through the tunnel DNS. DNS
+  over HTTPS on port 443 to a resolver inside a `direct` CIDR is not covered,
+  and link-local name protocols (mDNS on UDP 5353, LLMNR on UDP 5355,
+  NetBIOS name service on UDP 137) remain permitted where a `direct` rule
+  covers their destinations.
 - Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
   guests) does not pass the application layers these filters use and is not
   covered by the kill switch.
