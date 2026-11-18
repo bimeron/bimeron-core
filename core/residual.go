@@ -31,8 +31,8 @@ func (e *Engine) refreshResidual() {
 }
 
 // residualStatusLocked reports idle residual protection as failed with
-// kill_switch_pending_run_recover, which guides the user to recover, unless
-// a more specific terminal failure is already reported.
+// cleanup_failed_run_recover, the code existing GUIs already route to network
+// recovery, unless another terminal failure is already reported.
 func (e *Engine) residualStatusLocked(status *Status) {
 	if e.active || !e.residual {
 		return
@@ -42,6 +42,6 @@ func (e *Engine) residualStatusLocked(status *Status) {
 		return
 	}
 	status.State = Failed
-	status.LastError = "kill_switch_pending_run_recover"
+	status.LastError = "cleanup_failed_run_recover"
 	status.LastErrorPermanent = true
 }

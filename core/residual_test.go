@@ -22,7 +22,7 @@ func TestIdleEngineReportsResidualProtection(t *testing.T) {
 	found.Store(true)
 	e.residualChecked = e.residualChecked.AddDate(-1, 0, 0)
 	s := e.Status()
-	if s.State != Failed || s.LastError != "kill_switch_pending_run_recover" || !s.LastErrorPermanent || s.KillSwitch != KillSwitchResidual || s.Session != nil {
+	if s.State != Failed || s.LastError != "cleanup_failed_run_recover" || !s.LastErrorPermanent || s.KillSwitch != KillSwitchResidual || s.Session != nil {
 		t.Fatal(s)
 	}
 	before := probes.Load()
