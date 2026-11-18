@@ -570,3 +570,107 @@ func TestRecoveryCyclesExcludeIKEv2(t *testing.T) {
 		t.Fatal("IKEv2 entered recovery cycles")
 	}
 }
+
+// cyclingPersistent fails transport recovery for a number of attempts, then
+// either recovers in place or reports a lost tunnel adapter.
+type cyclingPersistent struct {
+	fakeSession
+	failures int32
+	lost     bool
+	waits    atomic.Int32
+	retries  atomic.Int32
+	suspends atomic.Int32
+}
+
+func (s *cyclingPersistent) Wait(ctx context.Context) error {
+	if s.waits.Add(1) == 1 {
+		return fault("transport_unavailable", true)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (s *cyclingPersistent) Suspend() { s.suspends.Add(1) }
+func (s *cyclingPersistent) Reconnect(context.Context) error {
+	n := s.retries.Add(1)
+	switch {
+	case n <= s.failures/2:
+		return fault("transport_check_failed", true)
+	case n <= s.failures:
+		// A failure a retry alone does not fix keeps the tunnel too.
+		return fault("access_key_unavailable", false)
+	case s.lost:
+		return fault("tunnel_adapter_lost", false)
+	}
+	return nil
+}
+
+// An ordinary outage keeps the adapter, routes and DNS: transport recovery
+// across several cycles and pauses never closes or reopens the session link.
+func TestOrdinaryOutageKeepsAdapterAcrossCycles(t *testing.T) {
+	var opens, closes atomic.Int32
+	s := &cyclingPersistent{fakeSession: fakeSession{close: func() error { closes.Add(1); return nil }}, failures: 2*cycleAttemptLimit + 4}
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { opens.Add(1); return s, nil }}}
+	e := testEngine(b)
+	e.opts.CycleRetryMax = time.Millisecond
+	e.opts.CyclePause = 2 * time.Millisecond
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(Status) bool { return s.retries.Load() > s.failures })
+	awaitStatus(t, e, func(st Status) bool { return st.State == Connected })
+	if opens.Load() != 1 || closes.Load() != 0 || s.suspends.Load() != 1 {
+		t.Fatal("ordinary outage recreated the link", opens.Load(), closes.Load(), s.suspends.Load())
+	}
+	if _, releases, _, installed := b.snapshot(); releases != 0 || !installed {
+		t.Fatal("protection released during recovery")
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, _, installed := b.snapshot(); closes.Load() != 1 || releases != 1 || installed {
+		t.Fatal("stop did not remove the link and protection", closes.Load(), releases, installed)
+	}
+}
+
+// Only a lost adapter recreates the link, and protection stays installed
+// while the old link closes and the new one opens.
+func TestLostAdapterRecreatesLinkUnderProtection(t *testing.T) {
+	var opens, closes atomic.Int32
+	b := &protectedBackend{}
+	first := &cyclingPersistent{failures: 3, lost: true}
+	first.close = func() error {
+		closes.Add(1)
+		if _, releases, _, installed := b.snapshot(); releases != 0 || !installed {
+			t.Error("protection released while closing the lost link")
+		}
+		return nil
+	}
+	b.open = func(context.Context) (session, error) {
+		if _, releases, _, installed := b.snapshot(); releases != 0 || !installed {
+			t.Error("protection absent while opening a link")
+		}
+		if opens.Add(1) == 1 {
+			return first, nil
+		}
+		return fakeSession{close: func() error { closes.Add(1); return nil }}, nil
+	}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(st Status) bool { return st.State == Connected && opens.Load() == 2 })
+	if closes.Load() != 1 || first.retries.Load() != 4 || first.suspends.Load() != 1 {
+		t.Fatal(opens.Load(), closes.Load(), first.retries.Load())
+	}
+	if s := e.Status(); s.KillSwitch != KillSwitchActive {
+		t.Fatal(s)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, retains, installed := b.snapshot(); closes.Load() != 2 || releases != 1 || retains != 0 || installed {
+		t.Fatal(closes.Load(), releases, retains, installed)
+	}
+}

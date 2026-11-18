@@ -497,6 +497,13 @@ func TestLinuxTUNKillSwitchHold(t *testing.T) {
 	open := func() (link, error) {
 		return p.Open(ctx, SessionConfig{Name: "Bimeron", MTU: 1420, KillSwitch: true}, &flowRouter{}, func(string, string) {})
 	}
+	// A closed session removes its TUN; only the run-scoped guard remains.
+	tunGone := func(stage string) {
+		t.Helper()
+		if _, err := net.InterfaceByName("Bimeron"); err == nil {
+			t.Fatal(stage, "TUN interface still exists")
+		}
+	}
 
 	release, err := p.acquire(ctx, func() {})
 	if err != nil {
@@ -515,6 +522,7 @@ func TestLinuxTUNKillSwitchHold(t *testing.T) {
 	}
 	manager.Run = run
 	blocked("after a failed session:")
+	tunGone("after a failed session:")
 	for i := 0; i < 2; i++ {
 		l, err := open()
 		if err != nil {
@@ -524,6 +532,7 @@ func TestLinuxTUNKillSwitchHold(t *testing.T) {
 			t.Fatal(err)
 		}
 		blocked("after a closed session:")
+		tunGone("after a closed session:")
 		if s, err := manager.Load(); err != nil || s == nil || !s.Guard || s.Routing || s.DNSMethod != "" {
 			t.Fatal("journal must keep only the guard", s, err)
 		}
@@ -544,4 +553,5 @@ func TestLinuxTUNKillSwitchHold(t *testing.T) {
 	if err := send(&net.Dialer{}); err != nil {
 		t.Fatal("traffic still blocked after release", err)
 	}
+	tunGone("after stop:")
 }
