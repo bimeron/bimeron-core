@@ -149,8 +149,9 @@ Independent rereview of these fixes is still required.
 
 The clean committed implementation `e8de4354e2dc5d0364a2fb93119c50971cdf8a5c`
 passed the complete real integration matrix in 88.80 seconds (Go package elapsed
-89.069 seconds). The reproduction command above was used with the pinned local
-Go 1.26.9 compiler, offline dependencies and explicitly scoped Git. The tracked
+89.069 seconds). The reproduction command above was used with the then-pinned
+local Go 1.26.9 compiler, offline dependencies and explicitly scoped Git. The
+builder now requires Go 1.26.11; this evidence predates that change. The tracked
 tree was clean before execution. Logs are local and ignored at
 `.tmp/preparer-handoff-integration.log`.
 
