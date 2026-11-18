@@ -12,7 +12,7 @@ require (
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	github.com/xjasonlyu/tun2socks/v2 v2.6.0
 	github.com/yosida95/uritemplate/v3 v3.0.2
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/term v0.47.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	google.golang.org/grpc v1.83.2
