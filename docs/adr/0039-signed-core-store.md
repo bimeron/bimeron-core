@@ -1,7 +1,7 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 4, November 18, 2026. All open questions are
-decided; the text awaits user approval. Not accepted. This
+Status: proposed draft, revision 5, November 18, 2026. Two follow-up questions
+(Q10, Q11) await the user; the rest is decided. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
 replacement policy of #140 in [REPAIR_SESSION.md](../REPAIR_SESSION.md).
@@ -105,8 +105,9 @@ Security is the primary goal; implementation complexity is secondary.
   never user input or local inference.
 - **Elevation floor**: the lowest core version allowed to run elevated in any
   role, including as the installer of a newer release (`elevation_floor`,
-  same shape). It is normally at or below the security floor, and is raised
-  when updater or broker code itself is affected.
+  same shape). It must be at or below the security floor. It is raised only
+  when updater or broker code itself is affected. Every raise requires a
+  Desktop package that bundles a Core at or above it (see Effective floor).
 - **Floor epoch**: an integer that is normally 0. Only a release with the
   stronger signature policy (see Trust and keys) can raise it. Floors from a
   lower epoch are ignored, which is the only way floors can go down. Epochs
@@ -117,7 +118,7 @@ Security is the primary goal; implementation complexity is secondary.
 - **Active version**: the version the service was last switched to and
   committed.
 - **Usable version** (Desktop selection): a committed version whose signed
-  manifest and members verify, whose version is at or above the effective
+  manifest and members verify, whose version is at or above the committed
   security floor, and whose signed GUI range includes the running Desktop.
 
 ### Store location and protection
@@ -179,7 +180,7 @@ risk.
   a protected HKLM value under `SOFTWARE\Bimeron\Core` on Windows, and
   `/etc/bimeron/core-state.json` (root-owned, 0644) on Linux. Registry values
   have no sharing modes, so a reader cannot block a writer. This copy is also
-  the second location of the floor evidence, and the effective floor is the
+  the second location of the floor evidence, and the committed floor is the
   maximum of both locations.
 
 **Opening and creating store objects**
@@ -240,24 +241,35 @@ embedded build information matches the tag commit, shows
 from the same prepared-release build. This is the gate the Apple path already
 enforces. An independent reproducible rebuild is planned later.
 
-**Signed statement.** Every signature, from any key, is a raw Ed25519
-signature (PureEdDSA, RFC 8032) over the same short, domain-separated
-statement:
+**Signed message.** Every signature, from any key, is a raw Ed25519
+signature (PureEdDSA, RFC 8032) over a 32-byte message `M`:
 
 ```text
-bimeron-update-manifest-v2\n<lowercase hex SHA-256 of the exact manifest bytes>\n
+S = "bimeron-update-manifest-v2\n" || lowercase-hex(SHA-256(manifest bytes)) || "\n"
+M = SHA-256(S)
 ```
 
-A short statement fits the input limit of hardware tokens. Domain separation
-prevents a signature made for any other purpose from being accepted.
-Verifiers compute the digest of the exact bytes, build the statement, and
-verify before parsing any JSON.
+`M` is digest-sized, so every token signing path accepts it. GnuPG's
+smartcard path, for example, limits raw input to 64 bytes. Domain separation is
+kept inside the hash, so a signature made for any other purpose is not
+accepted. The freshness index uses the same construction with the domain
+`bimeron-freshness-index-v1`. Verifiers compute `M` from the exact bytes and
+verify before parsing any JSON. Ed25519 verification follows RFC 8032 strictly
+(canonical `S`, rejection of small-order public keys) in both Go and C++.
+Shared vectors cover these edge cases.
 
 **Signature file.** `update-manifest.json.sig` holds one line per signature,
-`<key_id> <base64-signature>`. A verifier tries only keys that it trusts and
-that are listed in the file. It evaluates the signature policy over the keys
-that verified, and finally requires the manifest's own `key_id` list to equal
-the verified set.
+`<key_id> <base64-signature>`.
+
+- **Format.** Lines end with LF only. Base64 is canonical standard base64.
+  Each key ID appears at most once, and the file has at most 8 lines and at
+  most 4 KiB.
+- **Verification.** Every listed key that the verifier trusts must verify.
+  Listed keys that the verifier does not trust are ignored, so a dual-signed
+  rotation release stays verifiable by old and new verifiers alike. The policy
+  is evaluated over the trusted keys that verified.
+- **Manifest key list.** The manifest's own `key_id` list must equal the set
+  of listed keys, which binds the signer set into the signed bytes.
 
 **Strict decoding (Go and C++).** A token-level pre-pass runs before struct
 decoding. It requires a byte-exact key allowlist per object and rejects
@@ -269,7 +281,12 @@ matching (Go) and last-key-wins duplicates (Qt) therefore cannot matter.
 existing release from its current assets or with today's
 `compatibility.json`. The publisher never signs a schema 1 manifest for a
 store-era version. Desktop 0.3.x accepts only `schema: 1` and single-line
-signatures, so it fails closed on every store-era release.
+signatures, so it fails closed on every store-era release. The first store-era
+version must be higher than every pre-store release. The publisher also bounds
+version jumps: a new release may raise the major or minor component by at most
+one step above the newest published release. A larger jump is refused, because
+"never below active" makes a mistaken tag such as `v4.0.0` permanent on every
+machine that installs it.
 
 ### Trust and keys inside Core
 
@@ -285,116 +302,145 @@ through the elevated updater.
 | --- | --- | --- | --- |
 | Release | `R` (one active, rotated) | Generated on an offline maintainer machine; encrypted offline backups; never in CI, GitHub secrets or online storage | Every release |
 | Hardware | `H1`, `H2` | Generated on two YubiKeys; not exportable | Every release; `H2` is the spare, stored separately |
-| Freshness index (see Release freshness) | `F` | Scheduled job | Signs only the freshness index; never trusted for code or floors |
+| Freshness | `F` | Scheduled job | Signs only the freshness index; never trusted for code, trust or gating floors |
+| Historical | Retired `R` and hardware keys | Not used for signing | Re-verifying evidence already stored in admin-only `state/` and `versions/`; never accepted for streamed bytes, fetched manifests or elevation |
 
-Core and Desktop embed the same reviewed trust file (`release/trust.json`). It
-lists the public keys with their key IDs, their roles, and the YubiKey
-attestation material described below.
+Core and Desktop embed the same reviewed trust file, `release/trust.json`. It
+lists public keys, key IDs, roles and the YubiKey attestation material.
 
 #### Signature policy
 
-- **Ordinary release**: valid signatures from `R` **and** from at least one of
-  `H1`, `H2`.
-- **Floor-epoch raise** (key-compromise recovery only): `R` **and** both `H1`
-  and `H2`.
+- **Ordinary release**: valid signatures from `R` **and** from at least one
+  hardware key in the current trust set.
+- **Floor-epoch raise** (key-compromise recovery only): `R` **and** every
+  hardware key in the current trust set.
+- **Epoch comparison**: a verifier requires the epoch policy whenever the
+  manifest's floor epoch is higher than its own committed epoch.
 
-Verifiers enforce the policy on the verified key set. Without both a release
-key and a hardware key, nothing can be installed. No single stolen secret or
-lost device can lower a floor.
+Verifiers enforce the policy over the trusted keys that verified. Without both
+a release key and a hardware key, nothing can be installed, and no single
+stolen secret or lost device can lower a floor.
+
+#### Bridge releases and update selection
+
+- **Bridge releases.** Trust-set changes and epoch raises ship only in a
+  bridge release that the previous trust set verifies. Bridge releases are
+  never deleted, and they are marked in the manifest and the freshness index.
+- **Update selection** repeats the following, for a bounded number of hops:
+  pick the newest release that the current broker's trust set and epoch can
+  verify, then install it. A machine that is several releases behind therefore
+  crosses rotations, revocations and epoch raises in order. It is never
+  stranded behind a permanent verification error.
+- **Desktop trust (Q10, recommended).** Desktop accepts a manifest that
+  verifies under its embedded trust set, or under the trust set of the newest
+  committed store Core. That store Core was itself verified through the bridge
+  chain. Desktop is not the security boundary, so this widening is
+  acceptable, and trust changes then need no Desktop package release.
 
 #### YubiKey requirements
 
-- **Supported models.** Use YubiKey 5 Series devices (5 NFC, 5C, 5C NFC,
-  5Ci, 5 Nano, 5C Nano) or the 5 FIPS equivalents. Security Key Series and Bio
-  Series devices have no OpenPGP or PIV application and cannot be used.
-  Firmware cannot be upgraded, so check each device with `ykman info`.
-- **Firmware 5.7.0 or later (preferred).** Use the PIV Ed25519 key in a
-  dedicated slot (for example `9c`), generated on the device. PIV attestation
-  is available. Firmware 5.7+ is also outside the scope of the Infineon ECDSA
+- **Supported models.** YubiKey 5 Series devices (5 NFC, 5C, 5C NFC, 5Ci,
+  5 Nano, 5C Nano), their FIPS equivalents, or the Bio Series Multi-protocol
+  Edition with PIV. Security Key Series and FIDO-only Bio devices cannot be
+  used. Firmware cannot be upgraded, so check each device with `ykman info`.
+- **Firmware 5.7.0 or later (preferred).** Use a PIV Ed25519 key in a
+  dedicated slot (for example `9c`), generated on the device. A PIV
+  attestation certificate exists only for keys generated on the device. The
+  ceremony checks its PIN and touch-policy extension
+  (`1.3.6.1.4.1.41482.3.8`) and the GET METADATA origin. Signing uses
+  `yubico-piv-tool`, `ykcs11` (`CKM_EDDSA`) or yubikit; `ykman` has no raw PIV
+  sign command. Firmware 5.7+ is also outside the scope of the Infineon ECDSA
   side-channel advisory (YSA-2024-03).
-- **Firmware 5.2.3 to 5.6.x.** Use the OpenPGP application's Ed25519
-  signature key, generated on the device (`gpg --card-edit` →
-  `generate`, or `ykman openpgp`). It is attested with
-  `ykman openpgp keys attest sig`. That advisory concerns ECDSA; Ed25519 is
-  Yubico's stated mitigation, and the attack also needs physical possession.
+- **Firmware 5.2.3 to 5.6.x.** Use the OpenPGP application's Ed25519 signing
+  key, generated on the device. Attest it with
+  `ykman openpgp keys attest sig`. Signing uses a direct `PSO:COMPUTE DIGITAL
+  SIGNATURE` over the 32-byte message, sent through yubikit or PC/SC. The
+  advisory concerns ECDSA; Ed25519 is Yubico's stated mitigation, and the
+  attack also needs physical possession.
 - **Firmware below 5.2.3** has no Ed25519 support and cannot be used.
-- **Raw signing.** Both applications must produce a raw PureEdDSA signature
-  over the statement above. Before first production use, the key ceremony
-  checks this with a test vector against `crypto/ed25519.Verify` and the
-  Desktop verifier. If an application can only sign through OpenPGP packet
-  framing, it is not used; signatures must not require OpenPGP parsing in
-  privileged code.
-- **Device policy.** Each YubiKey key is used only for Bimeron release
-  signing, never for git commits, SSH or email. Set touch policy to always,
-  PIN required, non-default PIN, PUK and management key, and PIN retry
-  counters left at their defaults.
+- **Raw signing.** Each applet must produce a raw PureEdDSA signature over the
+  32-byte message. Before the format is frozen in Go, C++ and the publisher,
+  the ceremony checks this on the actual devices against a test vector, using
+  `crypto/ed25519.Verify` and the Desktop verifier. A path that can sign only
+  through OpenPGP packet framing is not used.
+- **Device policy.**
+  - Each key is used only for Bimeron release signing, never for git, SSH or
+    email.
+  - Touch policy is `always` for PIV and `fixed` for OpenPGP.
+  - PIN, PUK and management key are non-default.
+  - The PUK may be deliberately blocked on these signing-only devices, so a
+    thief gets only the PIN attempts.
 
 #### Key ceremony
 
-The ceremony is recorded in `release/trust/CEREMONY.md`, which contains public
-data only.
+The ceremony record, `release/trust/CEREMONY.md`, contains public data only.
 
 1. Record each device's model, firmware and serial number.
-2. Generate the signing key on the device, then export the public key and the
+2. Generate the signing key on the device. Export the public key and the
    attestation certificate, together with the Yubico attestation chain.
-3. Verify the attestation offline: chain to the Yubico root, serial number,
-   and an origin of "generated on device".
-4. Generate the new release key `R2` on an offline machine. Store two
-   encrypted offline backups, in separate places.
-5. Sign a test statement with each key and verify it in Go and C++.
-6. Commit `trust.json` and the attestation files through a reviewed change.
-   Store `H2` in a different physical location from `H1`.
+3. Verify the attestation offline: the chain to the Yubico root, the serial
+   number, and the policy extension or origin for the applet used.
+4. Generate the new release key `R2` on an offline machine. Make two
+   encrypted offline backups, stored in separate places.
+5. Sign the test message with each key and verify it in Go and C++, including
+   strict-verification edge cases.
+6. Commit `trust.json` and the attestation files in a reviewed change. Store
+   `H2` in a different place from `H1`.
 
 #### Planned rotation of the current release key
 
 Treat the current release key `R1` (key ID `7370a2d8cf890e5e`) as possibly
-exposed. Store-era builds do not trust it at all. Their trust set is `{R2, H1,
-H2}` from the first store-era release onward. `R1` stays only in pre-store
+exposed. Store-era builds never trust it. Their trust set is `{R2, H1, H2}`
+from the first store-era release onward. `R1` remains only in pre-store
 clients and is used, if at all, solely for schema 1 releases to pre-store
 Desktops until those leave support.
 
 Exposure of `R1` alone cannot authorize anything for store-era clients. Its
-residual impact on pre-store Desktops is ended by upgrading the package. This
-is a separate incident-response decision, outside this ADR.
+residual impact on pre-store Desktops ends when the package is upgraded; that
+is a separate incident-response decision.
 
-Later rotations of `R` follow the same pattern:
+Later rotations of `R` use bridge releases:
 
-1. A release adds `R(n+1)` to the trust set while it is still signed with
-   `R(n)` and a hardware key.
-2. Once the minimum supported store-era Core and Desktop trust `R(n+1)`,
-   signing switches to it.
-3. `R(n)` is removed from the trust set in the next release.
+1. A bridge release, signed with `R(n)` and a hardware key, adds `R(n+1)`.
+2. Releases are dual-signed by `R(n)` and `R(n+1)`, plus a hardware key,
+   until the minimum supported store-era Core and Desktop trust `R(n+1)`.
+3. A later bridge release moves `R(n)` to the historical role.
 
 #### Lost or compromised YubiKey
 
-- **Losing one YubiKey** does not stop releases. They continue with `R` plus
-  the remaining device. A thief also needs the PIN, which locks after three
-  attempts, and the release key `R`.
+- **Losing one YubiKey** does not stop releases: they continue with `R` and
+  the remaining device. A thief also needs the PIN and the release key `R`.
 - **Revocation:**
-  1. Prepare a replacement device `H3` through the ceremony.
-  2. Publish a release, signed with `R` and the remaining device, whose trust
-     set drops the lost key and adds `H3`.
-  3. Raise `elevation_floor` to that release's version. Every machine then
-     stops elevating builds that still trust the lost key, as soon as it
-     learns of the release.
-- **Until a machine updates**, its current broker still trusts the lost key.
-  This is acceptable, because a forgery also requires `R`.
-- **Losing both YubiKeys** means no new release can be signed until a release
-  with a new trust set is shipped. It must be signed by a policy the old
-  builds accept, which is not possible. In that case, a Desktop package
-  release (installer-delivered trust) is the only recovery. This is why the
-  spare is stored separately.
-- **If `R` and a YubiKey are compromised together**, do the following:
-  1. Release a new trust set signed with `R` and **both** hardware keys,
-     raising the floor epoch and both floors.
-  2. Rotate `R`.
-  3. Accept that machines are protected only after they receive that release.
+  1. Enroll a replacement device `H3` through the ceremony.
+  2. Publish a bridge release, signed with `R` and the remaining device. It
+     moves the lost key to the historical role, adds `H3`, and raises the
+     **security** floor to its own version.
+  3. Machines stop installing builds that trust the lost key as soon as they
+     reach this release.
+  4. The elevation floor is not raised. Raising it would force a package
+     upgrade everywhere, and a forgery with the lost key alone would still need
+     `R`.
+- **Losing both YubiKeys**, or having one physically stolen when a full epoch
+  raise is needed, leaves no signing policy that old builds accept. The only
+  recovery is a Desktop package release whose bundled Core carries the new
+  trust set. The trust root is then the administrator who installs the
+  package. This is why the spare is stored separately.
+- **If `R` and a YubiKey are compromised together**, take these steps:
+  1. Publish a bridge release signed with `R` and every hardware key still
+     held. It raises the floor epoch and both floors, and rotates `R`.
+  2. If a compromised hardware key is not in the maintainer's possession, the
+     epoch policy cannot be met, and only the package-release path remains.
+  3. Machines are protected only after they reach the bridge release or the
+     new package.
+- **Compromised machines.** An administrator can reset the store of a machine
+  by deleting `state/` and `versions/`. That is an administrator action
+  outside the threat model, and it is documented in `SERVICE.MD`.
 
 #### Freeze resistance and Core trust
 
-Core itself never fetches trust updates. Changes to the trust set ship only
-inside new signed binaries, so there is no online key-set document with a
-freshness or rollback problem of its own.
+Core never fetches trust updates. Trust changes ship only inside new signed
+binaries delivered by bridge releases. There is no online key-set document with
+a freshness or rollback problem of its own.
 
 ### Version comparison rules
 
@@ -436,20 +482,35 @@ integers and never compare strings.
 
 **Floors and channels**
 
+- **A release's channel is derived from its version**: `beta` exactly when
+  the version has a `-beta.N` suffix, otherwise `stable`. The manifest's
+  `channel` must equal that. The unsigned GitHub `prerelease` flag is never
+  trusted.
 - A stable-channel manifest's floors must be stable versions. A beta-channel
   manifest's floors may be betas.
-- A floor applies machine-wide once it is committed (sources 1–3). A beta floor
-  can only become committed on a machine that installed a beta, so it never
-  binds a machine that follows only the stable channel.
-- Fresh floor hints (source 4) are taken only from manifests of channels the
-  Desktop follows. The stable channel ignores beta manifests; the beta channel
-  follows both.
+- A floor applies machine-wide once it is committed (sources 1–3). A machine
+  that committed a beta, for example the bundled bootstrap, also committed that
+  beta's floors. A beta floor therefore binds only machines that have run a
+  beta.
+- A machine follows the union of the user's update channel and the channel of
+  its active version. A machine running a beta, including a stable-preference
+  machine whose bundled Core is a beta, therefore keeps receiving beta updates,
+  announced floors and freshness entries until it reaches a stable release.
+- Announced floors come only from manifests of the followed
+  channels.
 - The publisher refuses a floor lower than the previous release's floor in the
   same channel, unless the floor epoch increases. It also refuses a stable
   floor higher than the newest stable release including this one, so stable
   users can always satisfy it.
 - Moving from beta to stable remains subject to "never below active": a
   machine on `0.5.0-beta.3` moves to stable only with `0.5.0` or later.
+- **Fix ancestry (Q11, recommended).** A version floor claims that every
+  version at or above it contains the fix. `compatibility.json` records the
+  fixing commit or commits for each floor. The publisher refuses to publish a
+  floor, or any later release at or above it, unless every published tag at
+  or above the floor contains those commits (`git merge-base --is-ancestor`).
+  As a consequence, a maintenance line below a raised floor can no longer
+  publish releases.
 
 **Tests (shared by Core and Desktop)**
 
@@ -489,54 +550,72 @@ C++ tests, both run in CI, must agree on all of it:
   - A publisher regression without an epoch raise is rejected.
   - With an epoch raise signed under the epoch policy, a lower floor is
     accepted.
-  - Stable-only machines ignore beta fresh floors.
+  - Stable-only machines ignore beta announced floors, except while their
+    active version is a beta.
+  - Channel derivation is tested, including a beta manifest that claims
+    `stable`, and a stable-preference machine running a bundled beta.
+  - Epochs are integers from 0 to 2147483647. `security_floor.epoch` must
+    equal `elevation_floor.epoch`.
 
 ### Effective floor
 
-Each effective floor (security and elevation) is computed the same way.
-First find the highest floor epoch among the available evidence. Within that
-epoch, the floor is the highest version, by the rules above, among these
-sources:
+There are two kinds of floor, and they are never mixed.
+
+**Committed floors** come from local, signed evidence. For each floor kind
+(security and elevation), find the highest epoch among the evidence. Within
+that epoch, the committed floor is the highest version over these sources:
 
 1. The floors compiled into the verifying binary. Core embeds
-   `release/compatibility.json`. Desktop embeds the floors of its pinned Core.
-2. The floors in the verified manifest of every committed version in
+   `release/compatibility.json`; Desktop embeds the floors of its pinned Core.
+2. The floors in the verified manifests of all committed versions in
    `versions/`.
-3. The newest valid `state/floor-<seq>.json`. It contains the exact manifest
-   bytes and signatures that established the floor, so it verifies itself.
+3. All valid `state/floor-<seq>.json` records. Each one holds the exact
+   manifest bytes and signatures that established it, so it verifies itself.
    The same evidence is kept in the HKLM or `/etc` copy.
-4. Floors from freshly fetched signed manifests of the followed channels.
-   These are used for selection and warnings only (see Enforcement).
+
+Evidence in sources 2 and 3 is re-verified with the current trust set,
+including keys in the `historical` role (see Trust and keys). A key rotation
+or revocation therefore never discards floors that were already established.
+
+**Announced floors** come from freshly fetched signed manifests of the followed
+channels, and from the freshness index. They never gate repair to the
+committed target, the foreground daemon, the unelevated CLI, or IPC and VPN
+connections through the installed service.
+
+- An announced floor causes a persistent "security update required" state, and
+  it ranks updates.
+- An announced elevation floor taken from a release-key-and-hardware-signed
+  manifest additionally gates update and install operations. It never gates
+  repair. Below it, Desktop requires a package upgrade before updating.
+- A floor that comes only from the freshness key `F` never gates anything.
 
 Only a privileged Core process writes floor records. It appends a floor only
-after a switch to a version at or above it has committed. A record that fails
-verification is ignored and reported; the remaining evidence still applies.
+after a switch to a version at or above that floor has committed. A record
+that fails verification is ignored and reported; the remaining evidence still
+applies. Deleting or reverting one record, or one location, cannot lower a
+committed floor while other evidence remains. No command deletes or lowers
+floor or active evidence.
 
-Deleting or reverting one record or one location cannot lower the floor while
-other evidence remains. No command deletes or lowers floor or active evidence.
-A whole-machine or VM-snapshot restore reverts every source together; that
-case is outside the local-attacker model, and source 4 bounds it at the next
-online check.
+A whole-machine or VM-snapshot restore reverts all sources together. That is
+outside the local-attacker model. Announced floors bound it at the next online
+check.
 
-**Enforcement**
+**Enforcement of committed floors**
 
-- **Locally committed floors (sources 1–3):**
-  - No version below the security floor is installed, switched to or used as
-    a repair source.
-  - No elevated process runs below the elevation floor.
-  - A binary below the security floor may run elevated only to install a
-    release at or above that floor, and only if the binary itself is at or
-    above the elevation floor.
-- **Fresh floors (source 4):**
-  - They never block IPC with, or VPN connections through, the installed
-    service, and they never block diagnostics.
-  - They show a persistent "security update required" state.
-  - They block elevation of below-floor code for any purpose other than
-    installing a release at or above them.
-  - Below a fresh elevation floor, Desktop requires a package upgrade.
-- **Below-floor service (decided):** a service below the committed security
-  floor does not block the VPN. The service and Desktop report
-  `below_security_floor`, and Desktop offers repair.
+- No version below the security floor is installed, switched to, or used as a
+  repair source.
+- No elevated process runs below the elevation floor.
+- A binary below the security floor may run elevated only to install or repair
+  to a release at or above that floor, and only if it is itself at or above
+  the elevation floor.
+- Each raise of the elevation floor requires a Desktop package that bundles a
+  Core at or above it. Machines whose broker is below the raised floor must
+  upgrade the package. The release process plans such a raise as a coordinated
+  Core and Desktop release.
+
+**Below-floor service (decided).** A service below the committed security floor
+does not block the VPN. The service and Desktop report `below_security_floor`,
+and Desktop offers repair.
 
 ### Elevated maintenance session (replaces caller-trusted `service update -source`)
 
@@ -558,7 +637,8 @@ bimeron maintenance-session <128-bit-nonce> <caller-pid>
 
 **Request**
 
-The first request names one operation: `update`, `repair` or `import-check`.
+The first request names one operation: `update`, `repair`, `install` or `status`
+(see Session operations).
 It also carries the consent flags.
 
 **Streaming an update**
@@ -588,8 +668,8 @@ its signed size and digest.
 **Checks inside the broker**
 
 - Ordering and floors:
-  - the broker's own version must be at or above the effective elevation floor;
-  - the new `core_version` must be at or above the effective security floor;
+  - the broker's own version must be at or above the committed elevation floor;
+  - the new `core_version` must be at or above the committed security floor;
   - the new `core_version` must be at least the maximum of the active version
     and the verified installed version.
 - Equal versions are accepted only when the bytes are identical (republishing).
@@ -601,22 +681,30 @@ its signed size and digest.
 
 **Switch and commit**
 
-1. The broker keeps open handles to the verified staging members for the whole
-   switch.
+1. The broker writes a switch journal into `state/` before it stops the
+   service. The journal records the old and new executable digests, the old and
+   new registrations, the backup name, and the staging name. It keeps open
+   handles to the verified staging members for the whole switch.
 2. It replaces the service executable through the existing transaction: stop,
    backup, rename, start, readiness, rollback. The source is the verified
    staging handle, never the broker's own image and never a re-resolved path.
    The backup and staged names in the service directory carry a random
    suffix, so a leftover file never blocks a later attempt. A stopped service
    is activated and verified before commit.
-3. Readiness uses the restricted readiness channel. Its pipe name carries a
-   per-start 128-bit nonce, passed through the `StartService` arguments, so it
-   cannot be pre-created.
+3. Readiness uses the restricted readiness channel.
+   - Windows: the pipe name carries a per-start 128-bit nonce passed through
+     the `StartService` arguments, so it cannot be pre-created.
+   - Linux: the readiness socket lives in the root-owned, non-world-writable
+     `/run/bimeron/`. Users cannot create entries there, so no nonce is
+     needed.
+   - On Linux, the registration change is ordered as follows: write the new
+     unit, run `daemon-reload`, then move the executable. The journal records
+     each step.
 4. After readiness, the broker promotes `staging/<random>` to
    `versions/<version>` with one rename.
 5. It appends the active and floor records, then writes the HKLM or `/etc`
-   copy.
-6. It cleans up.
+   copy. It flushes both.
+6. Only then does it delete the backup and the journal, and clean up.
 
 A failed state write after readiness never rolls back the service. Instead,
 the broker reports the failure and reconciliation repeats the write. A failed
@@ -625,15 +713,28 @@ neither floor evidence nor usable.
 
 **Crash points**
 
-On the next privileged run, a leftover staging directory or a service-directory
-backup is reconciled against the installed service digest, under these rules:
+Every privileged run first reconciles any journal, before any other work.
+Reconciliation never infers success from digests alone:
 
-- **Installed digest equals a staging member** whose manifest verifies: the
-  broker completes promotion and appends the records.
-- **Installed digest equals the backup**: the broker removes the staging
-  directory and the backup.
-- **Anything else**: the broker treats the service as damaged and repair takes
+- **Installed digest equals the new staging member.** The broker re-runs
+  activation and readiness with a fresh nonce. If readiness passes, it
+  promotes the staging entry and appends the records. Otherwise it restores the
+  backup and the old registration, and deletes the staging entry. A release
+  that never became ready is therefore never committed, even if the broker
+  died after starting it.
+- **Installed digest equals the backup.** The broker restores the old
+  registration if it was changed, then removes the staging directory, the
+  backup and the journal.
+- **Installed digest equals a member of `versions/<v>` with `v` above the
+  active version** (a crash between promotion and the records). The broker
+  appends the missing records.
+- **Anything else.** The broker treats the service as damaged and repair takes
   over.
+
+The registration is always reconciled to match the image that is finally
+installed. A store-era image is never left under the four-argument
+registration, and a pre-store image is never left under the five-argument
+one.
 
 **Wintun**
 
@@ -647,6 +748,19 @@ verified full path.
 
 The legacy `service update -source` command is refused by store-capable builds,
 with a message naming the maintenance session.
+
+**Session operations**
+
+- **`update`** streams a newer release and switches to it.
+- **`repair`** restores the committed target. If no local source verifies, it
+  asks Desktop to stream the target bundle.
+- **`install`** handles first installation, with no service registered:
+  1. It takes the service owner from the authenticated caller.
+  2. It switches from the verified package bootstrap, or from a streamed
+     bundle, through the same journaled path.
+  3. After readiness, it promotes the bundle and writes the records.
+- **`status`** is read-only. It reports the store, journal and registration
+  state, and the committed floors, to the authenticated caller.
 
 ### Re-registration that disables pre-store tools
 
@@ -675,32 +789,37 @@ heals it.
 
 | Entry point | Binary | Verification | Inputs |
 | --- | --- | --- | --- |
-| Maintenance session: update, repair | Newest committed store version at or above the elevation floor. On bootstrap, the bundled copy at or above the elevation floor, verified against the signed manifest shipped with the package. | Desktop: handle-bound digest. Broker: self-check. | Nonce, PID, streamed bytes |
-| Installer action (MSI, DEB) | `bimeron-core` in the package directory, run directly as SYSTEM or root | Self-check against the shipped signed manifest | None; fixed package-relative paths |
-| Foreground IKEv2 daemon | Same as the maintenance session | Same | Existing foreground contract; per-installation policy outside the store |
-| Service | Service directory copy | Committed digest; Wintun digest at load | SCM or systemd only |
-| RepairBootstrap (Desktop) | Retired once the installer seeds the store | n/a | n/a |
+| Maintenance session (`update`, `repair`, `install`, `status`) | Newest committed store version at or above the committed elevation floor. With no committed version, the bundled package copy at or above that floor. | Desktop: handle-bound digest. Broker: self-check | Nonce, PID, streamed bytes |
+| Installer action (MSI, DEB) | `bimeron-core` in the package directory, run directly as SYSTEM or root | Self-check against the package-shipped signed manifest | None; fixed package-relative paths |
+| Foreground IKEv2 daemon | Same as the maintenance session | Self-check | Existing foreground contract; policy file at a fixed location (below) |
+| Service | Service directory copy | No self-check (see below); Wintun pin at load | SCM or systemd only |
+| RepairBootstrap (Desktop) | Retired | n/a | n/a |
 
 **Foreground policy file**
 
-The foreground policy file (`bimeron-foreground.json`) is per installation and
-cannot live in an immutable signed version directory. It moves to a protected
-location outside the store. Core and Desktop agree on that location; see the
-work split.
+The per-installation `bimeron-foreground.json` moves to a fixed admin-only
+location under the Core root: `%ProgramFiles%\Bimeron Core\policy\` or
+`/usr/local/lib/bimeron/policy/`. Only privileged processes write it. It is
+never read from the executable's own directory.
 
-**Elevated self-check**
+**Elevated self-check** (maintenance session, installer action and foreground
+daemon only)
 
-Every elevated Core process checks itself at startup, before any mutation:
-
-1. It locks its own image by handle.
+1. It locks its own image by handle. The handle path and file ID must lie under
+   the fixed store root, or under the fixed package directory, reached by the
+   handle-relative walk. A genuine binary copied or linked anywhere else
+   refuses to run.
 2. It hashes the image and requires a matching member in a verified signed
-   manifest: its own `versions/` directory, or the package-shipped manifest
-   during bootstrap.
-3. It requires its own version to be at or above the effective elevation floor.
-4. It refuses to run if non-allowlisted environment variables are present:
-   `GO*`, `GODEBUG`, `ZONEINFO` and the like. Under admin-approval elevation,
-   `HKCU\Environment` is inherited, and the Go runtime reads some of these
-   variables before `main` runs.
+   manifest. That manifest is the one in the image's own `versions/<v>/`
+   directory, or the package-shipped manifest for the package copy.
+3. It requires its own version to be at or above the committed elevation
+   floor.
+4. It refuses to run when environment variables are present that the Go
+   runtime reads before `main` and that change security-relevant behavior:
+   `GODEBUG`, `GOTRACEBACK`, `GOMAXPROCS`, `GOGC`, `GOMEMLIMIT`, `ZONEINFO`.
+   It clears every other variable that is not on a small allowlist at the start
+   of `main`. Under admin-approval elevation, `HKCU\Environment` is inherited,
+   so this matters on Windows.
 5. It sets the current directory to the system directory.
 6. It resolves locations only through `GetSystemDirectoryW`,
    `SHGetKnownFolderPath` and handle-derived paths.
@@ -708,9 +827,14 @@ Every elevated Core process checks itself at startup, before any mutation:
 The broker acts only at machine scope. With over-the-shoulder credentials, all
 per-user state belongs to another account.
 
-**Not elevated: the installed service image.** The installed service image is
-never used as the elevated binary. It would have to lock its own image and
-then could not be replaced.
+**The service does not self-check.** During a switch its image is still in
+staging, and Q4 requires a below-floor service to keep running. The service
+checks only the compiled-in Wintun pin before loading the DLL. It also reports
+`below_security_floor`. The broker, not the service, verifies the installed
+digest against committed evidence.
+
+**The installed service image is never used as the elevated binary.** It
+would have to lock its own image, and then could not be replaced.
 
 ### Launch verification in Desktop
 
@@ -748,7 +872,15 @@ The real boundaries are:
 5. Keep the handle open while calling `CreateProcessW` or `ShellExecuteExW`
    (`runas`) on the same canonical path. Close it after the process exists.
 
-While the handle is held, no writer, rename or delete can succeed. The image
+While the handle is held, no writer, rename or delete can succeed.
+
+**Residual risk: share-mode locks.** `Users` can read and execute `versions/`
+and the package copies. Any logged-in user can therefore open a Core
+executable with share mode 0, which blocks Desktop's open, `CreateProcess` and
+AppInfo for every user while the handle exists. This is a local denial of
+service, not an integrity risk. Desktop reports it as `store-unavailable` and
+names the blocking process through Restart Manager. The broker never relies on
+`Users` lacking that ability. The image
 loader and the AppInfo service need only read and execute access, which are
 compatible with this share mode; acceptance verifies this on the VM.
 
@@ -763,7 +895,8 @@ compatible with this share mode; acceptance verifies this on the VM.
   4. Execute it as `/proc/self/fd/<n>`. For ELF, the kernel resolves the path
      before close-on-exec takes effect, so the fd is not leaked into the
      child.
-  5. Go launchers use `ExtraFiles` the same way.
+  5. Go launchers do the same through `/proc/self/fd/<n>` of the held
+     close-on-exec descriptor. `ExtraFiles` is not needed.
 - **What the fd binding guarantees:** it binds the inode, not the content.
   Write access restricted to root keeps the content.
 - **Elevated broker:**
@@ -815,10 +948,12 @@ never for elevation.
   repair fails closed with `store-unavailable`. It never falls back to a lower
   version, to its own image, or to a bundled copy that is not exactly the
   target or higher.
-- **Missing-service installation** installs the active version, or the newest
-  committed version if no active record exists. If nothing is committed, it
-  installs the verified package bootstrap version, which must meet the
-  floor. It never installs `os.Executable()` bytes.
+- **Missing-service installation** uses the session `install` operation. It
+  installs the active version, or the newest committed version if no active
+  record exists. If nothing is committed, it installs the verified package
+  bootstrap or a streamed bundle, either of which must meet the floor. It
+  promotes the bundle and writes records only after readiness. It never
+  installs `os.Executable()` bytes.
 - **Unchanged rules.** The existing consent, ownership, readiness and rollback
   rules stay in force. The repair request still carries no paths, versions or
   digests.
@@ -833,36 +968,44 @@ who can delete release assets keep users on an older signed release.
 ### Release freshness index (decided)
 
 Visible errors do not reveal a release that was never visible, for example
-when the release listing is hidden or replayed. The addition below
-must also keep working if the maintainer is unavailable for a long time.
+when the release listing is hidden or replayed. This addition must keep
+working while the maintainer is unavailable for a long time.
 
-- **The index.** A small signed file is published with every release and
-  re-signed on a schedule. Its name is `freshness-index.json` plus
-  `freshness-index.json.sig`. It contains, per channel, the newest version,
-  the SHA-256 of its manifest and its security floor, plus `issued` and
-  `expires` timestamps. The expiry is 180 days after issue.
-- **Signing.** A dedicated freshness key `F` signs the index, in the same
-  statement format with the domain `bimeron-freshness-index-v1`.
-  - The verifiers' trust file grants `F` a single role. A signature by `F` is
-    never accepted for a manifest, a trust change or a floor.
-  - `F` therefore cannot authorize code. The most a stolen `F` can do is claim
-    a release that does not exist, which shows up as a visible error, or keep
-    re-signing an old "latest", which is the freeze that the index cannot stop
-    either way.
-- **Unattended re-signing.** A scheduled job re-signs the index, for example
-  monthly, using only `F`. It runs without the maintainer, so a long absence
-  does not let the index expire. `F` may live in CI because its power is
-  narrow. It is rotated like `R`, through the trust set.
+- **Content.** A small signed file, `freshness-index.json` plus
+  `freshness-index.json.sig`, is published with every release and re-signed on
+  a schedule. For each channel it holds the newest version, the SHA-256 of that
+  version's manifest and its security floor. An empty channel, such as stable
+  before the first stable release, is an explicit `null` entry. The file also
+  carries `issued` and `expires` timestamps. The expiry is 180 days after
+  issue.
+- **Signing key.** A dedicated freshness key `F` signs the index, with the
+  message construction above.
+  - The trust file grants `F` a single role. A signature by `F` is never
+    accepted for a manifest, a trust change or a floor that gates anything.
+  - At worst, a stolen `F` can claim a release that does not exist (a visible
+    error), or keep re-signing an old "latest", which is the same freeze the
+    index exists to detect.
+- **Validity rules.**
+  - `expires - issued` must not exceed 180 days.
+  - `issued` may not lie in the future by more than the allowed clock skew.
+  - Desktop stores the highest `issued` value it has seen and rejects older
+    indexes, so a replayed index cannot hide a release seen before.
+  - Together, these rules stop a stolen `F` from suppressing staleness
+    warnings indefinitely.
+- **Unattended re-signing.** A scheduled job re-signs the index, at least
+  monthly, using only `F`. A long absence of the maintainer therefore does not
+  let the index expire. `F` may live in CI because its power is narrow. It is
+  rotated like `R`, through the trust set.
 - **Client behavior.**
-  - Desktop fetches the index. If the index names a newer version than
-    discovery found, or its manifest digest does not match, Desktop shows a
-    visible error.
+  - If the index names a newer version than discovery found, or a different
+    manifest digest, Desktop shows a visible error.
   - An expired or missing index produces only a warning such as "update
-    information is stale". It never blocks the VPN, the CLI or repair.
-  - The floor it names is used as a fresh floor hint (source 4), so it only
-    produces a warning.
+    information is stale". It never blocks the VPN, the CLI, repair or
+    updates.
+  - The floor in the index is an announced floor from `F`, so it never gates
+    anything.
 - **If the job stops** (the maintainer is absent and CI is down), users see a
-  stale warning after the expiry. Nothing else changes.
+  stale warning after expiry. Nothing else changes.
 
 ### Cleanup
 
@@ -885,14 +1028,14 @@ previous committed version.
 - `release/compatibility.json` gains `security_floor` and `elevation_floor`
   (each `{epoch, version}`, reviewed) and `store_contract`.
 - `hello.capabilities` gains `core_store: <contract>` and the service's
-  effective floors.
+  committed floors.
 - `version -json` reports the binary's compiled contract and floors without
   contacting a service.
 
 **Commands**
 
 - **Unelevated:** `bimeron store status -json` lists committed versions,
-  verification results, the active version and the effective floors. It is
+  verification results, the active version and the committed and announced floors. It is
   diagnostic only; Desktop verifies the store itself.
 - **Elevated:**
   - `maintenance-session` as described above.
@@ -915,27 +1058,44 @@ previous committed version.
 
 ### Package installer action
 
-The installer action is reworked; it is not extended in place.
+The installer action is reworked, not extended in place.
 
-- It becomes a commit-time action, not a deferred action that runs before
-  install finalization. It runs `bimeron-core store import-package` directly,
-  with no Qt GUI process running as SYSTEM or root and no window.
-- It works only upward:
+- **Execution.** It is a commit-time action, not a deferred action that runs
+  before install finalization. It runs `bimeron-core store import-package`
+  directly, as SYSTEM or root, with no Qt GUI process and no window.
+- **Upgrades only.** It acts only on an existing, owned service:
   1. It verifies the bundled Core against the package-shipped signed manifest
      using Core's embedded keys.
-  2. If the bundled version is newer than the committed version, it performs a
-     normal switch from staging.
-  3. Otherwise it does nothing.
-- There is no rollback action, because a rollback action would itself be a
-  downgrade path running as SYSTEM.
-- The condition excludes MSI repair and maintenance modes, unless the action
-  is proven safe under an unsolicited repair started by a standard user.
-- Commit actions do not run when rollback is disabled by policy, so
-  acceptance must verify that case.
-- **Fallback:** on first launch, Desktop detects an unseeded store or a
-  bundled version newer than the committed one, and offers the normal elevated
-  maintenance session.
-- **Linux:** DEB `postinst` calls the same command.
+  2. It computes a lower bound: the maximum of the committed version and the
+     build version of the installed admin-only image. That image may be a
+     pre-store service.
+  3. It switches through the journaled path only if the bundled version is
+     above that bound. The existing owner and registration are kept and
+     upgraded to the store-era registration.
+- **Fresh machines.** With no registered service, the action does nothing.
+  The service is installed by Desktop's first elevated maintenance session
+  (`install`), which takes the owner from the authenticated caller. A fresh
+  installation therefore shows the MSI elevation prompt and then one Desktop
+  elevation prompt, as today.
+- **No rollback action.** A rollback action would itself be a downgrade path
+  running as SYSTEM.
+- **Conditions.** The action's condition excludes MSI repair and maintenance
+  modes, unless it is proven safe under an unsolicited repair started by a
+  standard user. Commit actions do not run when rollback is disabled by
+  policy, so acceptance must verify that case.
+- **Package file mapping.** Package files map to signed members by content,
+  not by name. `bimeron-core.exe` and `repair/bimeron-repair.exe` must
+  byte-equal the signed `core` member. The package's `wintun.dll` and license
+  texts must byte-equal the signed `sidecar` and `notice` members.
+- **Fallback.** On first launch, Desktop detects a bundled version above the
+  committed one and offers the normal elevated session.
+- **Linux.** DEB `postinst` calls the same command. The package declares
+  `Depends: pkexec | policykit-1`, because Debian 12 split `pkexec` into its
+  own package.
+- **MSI rules.**
+  - `HKLM\SOFTWARE\Bimeron\Core` must never appear in the MSI Registry
+    table, so MSI repair and uninstall cannot touch it.
+  - The MSI must block downgrades.
 
 ### Authenticode (deferred)
 
@@ -1015,7 +1175,7 @@ assets, and replayed old signed metadata.
 | Foreign handle blocking update or repair | Users cannot open service or state files; held staging handles; random backup names; streamed fallback source; deferred trash |
 | Release-key or hardware-key compromise | Every release needs the release key and a YubiKey; an epoch reset needs the release key and both YubiKeys; planned rotation of the current release key |
 | Freeze or withholding | Visible error for missing or invalid metadata; signed freshness index with a 180-day expiry (Q5) |
-| Fresh floor locks a user out of the VPN | Fresh floors never block connectivity; only elevation is gated |
+| Announced floor or stolen freshness key locks users out | Announced floors never gate repair, the foreground daemon, the CLI or connectivity; only a hardware-signed announced elevation floor gates updates; `F` gates nothing |
 | Unsolicited MSI repair as a standard user | Installer action excluded from repair modes, upward-only, no rollback action |
 | Alternate administrator approves UAC | Machine paths only; the readiness channel; caller identity from the authenticated transport, as in #140 |
 
@@ -1026,8 +1186,8 @@ assets, and replayed old signed metadata.
 - Same-user malware can always ask the user to approve elevation of its own
   binary. Authenticode (Q7) makes the publisher visible, but it is not a
   defense on its own.
-- Restoring a whole disk or VM reverts store and floor together. Only fresh
-  online floors (source 4) bound it.
+- Restoring a whole disk or VM reverts store and floor together. Only
+  announced floors bound it.
 - A foreign handle can delay cleanup indefinitely. Cleanup never blocks
   updates.
 
@@ -1044,7 +1204,8 @@ assets, and replayed old signed metadata.
   that release's signed schema 2 manifest and signatures. The installer action
   seeds the store and switches the service upward, as described above.
 - **Existing installs whose service is newer than the package.** These were
-  updated through the pre-store updater. The service stays in place. The next
+  updated through the pre-store updater. The installer action's lower bound
+  includes the installed image's build version, so the service stays in place. The next
   update or repair streams a signed bundle at or above the installed version
   and commits it. Nothing installed is adopted without its full signed member
   set.
@@ -1052,7 +1213,7 @@ assets, and replayed old signed metadata.
   file list, so it persists, together with the floor evidence. Uninstalling the
   service remains an explicit action. `store purge` keeps all evidence.
 - **Older Desktop package after a store-era one.** Pre-store tools refuse the
-  re-registered service. Desktop should also block MSI downgrades.
+  re-registered service. The MSI must block downgrades.
 - **Linux package management.** DEB remains the only Linux package. The store
   survives upgrade, removal and purge.
 
@@ -1103,7 +1264,7 @@ and the test vectors.
   - version vectors.
 - Store use:
   - discovery and usable-version selection;
-  - effective floors from the embedded value and the HKLM or `/etc` copy.
+  - committed floors from the embedded value and the HKLM or `/etc` copy.
 - Launching:
   - handle- or fd-bound launches for every CLI run and every elevation;
   - fixed protected `pkexec`;
@@ -1129,14 +1290,18 @@ Testing runs on a disposable clone of the Windows 10 STD VM and on an Ubuntu
 22.04 VM, never on the host. Each case records binary hashes and the service
 and store state before and after.
 
-1. **Fresh install.** A fresh install of the store-capable Desktop seeds the
-   store, installs the service from it and re-registers it. It shows one UAC
-   prompt.
+1. **Fresh install.** The MSI prompt is followed by one Desktop prompt, whose
+   `install` session installs the service from the verified bootstrap with the
+   store-era registration and the caller as owner. After readiness, the
+   bootstrap is committed.
 2. **Update A to B.** B is committed and the service runs B. The floor rises
    only if B raises it. The CLI and the broker now run from B.
 3. **Failed update.** B raises the floor but fails readiness. The service
    returns to A and the floor is unchanged. B is not in `versions/` and is not
-   used. The VPN connects.
+   used, and the VPN connects. Variant: the broker is killed between start and
+   readiness, through logoff or reboot, with a B that never becomes ready.
+   Reconciliation restores A and the old registration, and the floor is
+   unchanged.
 4. **Repair after an update.** A healthy B service is left as B. A damaged B
    (XOR at 0x1000, zeroed header, missing file) is restored to B, never to the
    bundled A.
@@ -1155,24 +1320,37 @@ and store state before and after.
    repair; the legacy update command of a pre-store build; the 0.3.x
    installer action after uninstall and reinstall. Each fails closed. Then
    store-capable repair heals an image replaced by hand.
-8. **Path and contention attacks** by a standard user:
+8. **Path and contention attacks** by a standard user. Update and repair
+   succeed despite these, except where noted:
    - pre-create the readiness pipe, `Global\BimeronCoreUpdate` and the
      maintenance pipe;
-   - hold share-0 handles on service, state and store files during update and
-     repair;
+   - hold share-0 handles on state files and on non-executable store files
+     during update and repair;
+   - hold share-0 handles on store executables: the result is
+     `store-unavailable` with the blocking process named, and no corruption;
    - pre-create the store root (ProgramData variant only).
 9. **UAC, alternate administrator and pkexec.** A standard user approves with
    alternate administrator credentials, and update and repair succeed with the
    owner preserved. A malicious `HKCU\Environment` (`GODEBUG`, `ZONEINFO`) is
    refused. Linux uses pkexec with polkit and alternate credentials.
-10. **Fresh-floor and censored network.** A machine below a freshly announced
-    floor still connects through the installed service and shows a persistent
-    warning. Below a fresh elevation floor, Desktop requires a package upgrade.
+10. **Announced floors and censored network.**
+    - A machine below an announced floor still connects and shows a persistent
+      warning.
+    - With an announced floor, a damaged service and an archive that cannot be
+      downloaded, repair to the committed target still succeeds.
+    - The foreground IKEv2 daemon works under an announced floor.
+    - An `F`-signed index with a maximal floor produces a warning only.
+    - Below an announced, hardware-signed elevation floor, update requires a
+      package upgrade, but repair still works.
 11. **Installer behavior.** Cases: `msiexec /fa` by a standard user; an MSI
     rollback in mid-transaction; `DisableRollback` policy; a DEB upgrade,
     removal and purge. The store and floor persist; no downgrade happens.
-12. **Crash injection** at every commit step (after the switch, after
-    promotion, after the records). Reconciliation reaches a consistent state.
+12. **Crash injection** at every journal step on both operating systems:
+    before the stop, after the backup, after the registration change (Linux:
+    after the unit write, after `daemon-reload`, after the executable move),
+    after the start, after readiness, after promotion, and after the records.
+    Reconciliation reaches a consistent state, and only a ready release is
+    committed.
 13. **Keys.**
     - A release signed only by `R`, or only by YubiKeys, is refused.
     - `R` plus either YubiKey is accepted.
@@ -1183,6 +1361,11 @@ and store state before and after.
       C++.
     - The freshness key is refused for manifests.
     - An expired freshness index only warns.
+    - A replayed older index is rejected, and so is one with more than 180 days
+      of validity.
+    - A machine several releases behind updates across an `R` rotation, a
+      YubiKey revocation and an epoch raise, through bridge releases.
+    - Floor evidence survives the rotation and the revocation.
 14. **Version grammar.** The shared conformance file passes in Go and C++. Rejected forms, the NTFS case-collision attempt, and
     beta-to-stable transitions.
 15. **Foreground IKEv2** on a store-era Desktop, with the relocated policy file.
@@ -1268,6 +1451,21 @@ All decided by the user on November 18, 2026:
 | Q7 | Authenticode is deferred; constraints are reserved |
 | Q8 | "Never below active" is strict; there is no manual downgrade |
 | Q9 | Pre-store tools are intentionally unable to manage store-era services |
+
+Follow-up questions raised by the second adversarial review, with
+recommended defaults already written into this draft:
+
+- **Q10. Trust-set changes reaching Desktop.** Recommended: Desktop accepts a
+  manifest that verifies under its embedded trust set or under the trust set of
+  the newest committed store Core, which is itself verified through bridge
+  releases. Rotations and revocations then do not need a Desktop package
+  release. The alternative is to require a Desktop package release for every
+  trust change, which re-couples Core security updates to Desktop releases.
+- **Q11. Fix ancestry for version floors.** Recommended: the publisher refuses
+  a floor unless every published tag at or above it contains the recorded
+  fixing commits. The consequence is that maintenance lines below a raised
+  floor cannot publish. The alternative is a documented single-line release
+  model without the check.
 
 The remaining hardware detail is settled during the key ceremony. Each
 YubiKey uses PIV Ed25519 (firmware 5.7+) or OpenPGP Ed25519 (firmware
