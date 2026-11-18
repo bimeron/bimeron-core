@@ -6,9 +6,11 @@ import (
 	"context"
 	"debug/buildinfo"
 	"debug/elf"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -219,6 +221,9 @@ func copyLinuxServiceFile(source, destination string) error {
 // The source must be a regular file; a final symlink is not followed.
 func copyLinuxUpdateSource(source, staged string) error {
 	in, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return errUpdateSourceLink
+	}
 	if err != nil {
 		return err
 	}
@@ -226,6 +231,12 @@ func copyLinuxUpdateSource(source, staged string) error {
 	info, err := in.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return errUpdateSourceNotRegular
+	}
+	// A staged file left by an interrupted update would block O_EXCL. The
+	// staging name is fixed inside the root-owned service directory, so
+	// removing it only discards our own unverified copy.
+	if err = os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove stale staged update: %w", err)
 	}
 	out, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
