@@ -110,7 +110,8 @@ normal routing applies. This is not a VPN gateway for other machines.
 The table is installed when a run starts, before access key resolution,
 bootstrap DNS and the upstream connection; until the TUN exists, only loopback,
 marked core sockets, DHCP, IPv6 ND and `direct` CIDRs leave the host, and DNS
-ports (53 and 853) are dropped for unmarked sockets even to `direct` CIDRs. A
+ports (53 and 853), LLMNR (5355) and NetBIOS names (UDP 137) are dropped for
+unmarked sockets even to `direct` CIDRs; mDNS (5353) is not. A
 start is refused with `adapter_name_in_use` when another interface already uses
 the tunnel name, before any protection is installed. It stays
 installed across every reconnect attempt, recovery wait, closed session and

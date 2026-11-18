@@ -25,6 +25,14 @@ type DNSPort struct {
 // DNSPorts lists DNS over UDP/TCP and DNS over TLS/QUIC.
 var DNSPorts = []DNSPort{{6, 53}, {17, 53}, {6, 853}, {17, 853}}
 
+// LinkLocalNamePorts lists LLMNR (UDP/TCP 5355) and the NetBIOS name service
+// (UDP 137), which disclose queried names to the local link. mDNS (UDP 5353)
+// stays permitted for local discovery where a direct rule covers it.
+var LinkLocalNamePorts = []DNSPort{{17, 5355}, {6, 5355}, {17, 137}}
+
+// NamePorts lists every port blocked outside the tunnel for name resolution.
+func NamePorts() []DNSPort { return append(append([]DNSPort(nil), DNSPorts...), LinkLocalNamePorts...) }
+
 func Plan(p *routing.Policy, disableIPv6 bool) ([]EgressRule, error) {
 	c := p.Config()
 	var rules []EgressRule

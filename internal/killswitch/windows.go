@@ -209,7 +209,7 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 		// inside a direct CIDR. Only the core, loopback and the tunnel, whose
 		// permits weigh more, reach DNS ports; direct CIDR permits weigh less.
 		if installErr == nil && (layer == wf.LayerALEAuthConnectV4 || layer == wf.LayerALEAuthConnectV6) {
-			for _, dns := range DNSPorts {
+			for _, dns := range NamePorts() {
 				if err = add(layer, ^uint64(0)-5, false, match(wf.FieldIPProtocol, dns.Protocol), match(wf.FieldIPRemotePort, dns.Port)); err != nil {
 					installErr = err
 					break

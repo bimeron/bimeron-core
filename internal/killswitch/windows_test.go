@@ -351,7 +351,7 @@ func TestDNSPortsBlockedAboveDirectRules(t *testing.T) {
 			t.Fatal("DNS block has wrong weight or layer", r.Weight, r.Layer)
 		}
 	}
-	if blocks != 2*len(DNSPorts) {
+	if blocks != 2*len(NamePorts()) {
 		t.Fatal("DNS blocks", blocks)
 	}
 	// DNS through the core, the tunnel and loopback must keep outweighing it;

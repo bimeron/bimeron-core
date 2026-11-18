@@ -46,10 +46,12 @@ and removal use atomic WFP transactions.
   are not resolved outside the tunnel while protection holds. A `direct` rule
   for a LAN or corporate DNS server therefore does not make that server usable
   while the kill switch is enabled; names resolve through the tunnel DNS. DNS
-  over HTTPS on port 443 to a resolver inside a `direct` CIDR is not covered,
-  and link-local name protocols (mDNS on UDP 5353, LLMNR on UDP 5355,
-  NetBIOS name service on UDP 137) remain permitted where a `direct` rule
-  covers their destinations.
+  over HTTPS on port 443 to a resolver inside a `direct` CIDR is not covered.
+  LLMNR (UDP and TCP 5355) and the NetBIOS name service (UDP 137), which
+  disclose queried names to the local link, are blocked the same way. mDNS
+  (UDP 5353) stays permitted where a `direct` rule covers its destination, so
+  local discovery such as printers and casting keeps working; it can disclose
+  names of local services queried on that link.
 - Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
   guests) does not pass the application layers these filters use and is not
   covered by the kill switch.
