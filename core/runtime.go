@@ -41,6 +41,18 @@ type networkPath struct {
 }
 type link interface{ Close() error }
 
+// protectedPlatform is implemented by platforms whose kill switch belongs to
+// the whole run (Acquire through release), not to a single Open. Acquire
+// installs the protection before any session traffic; Open only refines it and
+// never removes it; release removes it unless RetainProtection was called.
+type protectedPlatform interface {
+	// Protected reports whether Acquire installed kill switch protection.
+	Protected() bool
+	// RetainProtection makes the pending release keep the protection
+	// installed: a handover to the next session or a failed cleanup.
+	RetainProtection()
+}
+
 func hysteria2Fault(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -88,6 +100,19 @@ func newBackend(c SessionConfig) backend {
 	return &vpnBackend{platform: newPlatform(c), metadata: vpn.NewDNSMetadata()}
 }
 func (b *vpnBackend) Acquire(ctx context.Context) (func(), error) { return b.platform.Acquire(ctx) }
+
+// Protected reports whether the platform holds run-scoped kill switch protection.
+func (b *vpnBackend) Protected() bool {
+	p, ok := b.platform.(protectedPlatform)
+	return ok && p.Protected()
+}
+
+// RetainProtection keeps run-scoped protection installed through release.
+func (b *vpnBackend) RetainProtection() {
+	if p, ok := b.platform.(protectedPlatform); ok {
+		p.RetainProtection()
+	}
+}
 func (b *vpnBackend) Open(ctx context.Context, c SessionConfig, report func(string, string)) (session, error) {
 	setupCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
