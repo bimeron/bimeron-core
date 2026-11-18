@@ -119,9 +119,28 @@ A Windows console daemon uses:
 `user-hash` is the first 16 bytes of the SHA-256 of the current user's SID string
 (UTF-8), as 32 lowercase hex characters. Access is limited to that user and
 SYSTEM. Prefer the service pipe, and fall back to the console daemon only when the
-service pipe is missing (`ERROR_FILE_NOT_FOUND`), as the CLI does. A busy pipe or
-access denied does not mean the service is missing. Remote pipe connections are
-rejected.
+service pipe is missing (`ERROR_FILE_NOT_FOUND`), as the CLI does. A busy pipe,
+access denied or a failed identity check does not mean the service is missing.
+Remote pipe connections are rejected.
+
+Verify the server before writing the first byte, as described in
+[Server identity](CONTROL.MD#server-identity). In short:
+
+- Service pipe: the pipe object owner, read from the connected handle with
+  `GetSecurityInfo`, must be `S-1-5-18`. When SCM reports a BimeronCore process
+  ID, `GetNamedPipeServerProcessId` must match it. Do not open the server
+  token: a standard user cannot open a LocalSystem token.
+- Console daemon pipe: the owner must be `S-1-5-32-544`, and the server token
+  must belong to the current user and be elevated. If the GUI launched the
+  daemon, the server process ID must also match that launch.
+- IKEv2 foreground and repair pipes: follow the checks in the same section.
+- Unix sockets: the peer credentials (`SO_PEERCRED`, `getpeereid` or
+  `LOCAL_PEERCRED`) must report UID 0. Check the runtime directory with `lstat`
+  before connecting.
+
+On failure, close the connection and report `control_server_untrusted`. Do not
+fall back to another endpoint. A service built before this check leaves the
+service pipe owned by `S-1-5-32-544` and is rejected until it is updated.
 
 On Linux the socket is `/run/bimeron/control.sock`; on macOS it is
 `/var/run/bimeron/control.sock`. The socket mode is 0600. The client UID must be
