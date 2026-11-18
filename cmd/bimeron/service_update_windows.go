@@ -81,7 +81,7 @@ func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 func updateWindowsServiceContext(ctx context.Context, s *mgr.Service, expect updateExpectation) error {
 	return updateWindowsServiceMode(ctx, s, expect, false)
 }
-func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool) error {
+func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -150,8 +150,8 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	if _, err = os.Lstat(backup); !os.IsNotExist(err) {
 		return fmt.Errorf("previous update backup present; resolve it before retrying")
 	}
-	defer os.Remove(staged)
-	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyServiceFile); err != nil {
+	defer removeStagedUpdate(staged, &err)
+	if err = stageVerifiedUpdate(expect.source, staged, expect.sha256, copyUpdateSource); err != nil {
 		return err
 	}
 	info, err := buildinfo.ReadFile(staged)
@@ -166,6 +166,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	newPE.Close()
 	if machine != newMachine {
 		return fmt.Errorf("update architecture differs from installed service")
+	}
+	if err = inheritServiceFileACL(staged); err != nil {
+		return err
 	}
 	status, err := s.Query()
 	if err != nil {

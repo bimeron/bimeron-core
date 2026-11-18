@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,11 +70,44 @@ func verifyUpdateFile(path, want string) error {
 	return nil
 }
 
-func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string, string) error) error {
-	if err := copyFile(source, staged); err != nil {
-		return err
+// Release executables are tens of MiB; the bound keeps a bad source from
+// filling the system volume. Tests lower it.
+var maxUpdateSourceSize int64 = 256 << 20
+
+var errUpdateSourceNotRegular = errors.New("update source must be a regular file, not a link")
+
+// copyUpdateData copies at most maxUpdateSourceSize bytes, then syncs and closes out.
+func copyUpdateData(out *os.File, in io.Reader) error {
+	n, err := io.Copy(out, io.LimitReader(in, maxUpdateSourceSize+1))
+	if err == nil && n > maxUpdateSourceSize {
+		err = fmt.Errorf("update source exceeds %d bytes", maxUpdateSourceSize)
 	}
-	return verifyUpdateFile(staged, wantSHA256)
+	if err == nil {
+		err = out.Sync()
+	}
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// removeStagedUpdate deletes a leftover staged file and reports a failed removal.
+func removeStagedUpdate(staged string, err *error) {
+	if removeErr := os.Remove(staged); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		*err = errors.Join(*err, fmt.Errorf("remove staged update: %w", removeErr))
+	}
+}
+
+// stageVerifiedUpdate verifies the staged copy, not the source, and removes it
+// on failure.
+func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string, string) error) (err error) {
+	if err = copyFile(source, staged); err == nil {
+		err = verifyUpdateFile(staged, wantSHA256)
+	}
+	if err != nil {
+		removeStagedUpdate(staged, &err)
+	}
+	return err
 }
 
 func waitUpdatedServiceContext(parent context.Context, wantVersion string) error {
