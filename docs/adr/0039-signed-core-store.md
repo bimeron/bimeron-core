@@ -1,6 +1,6 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 5, November 18, 2026. Two follow-up questions
+Status: proposed draft, revision 6, November 18, 2026. Two follow-up questions
 (Q10, Q11) await the user; the rest is decided. Not accepted. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
@@ -156,6 +156,7 @@ risk.
   state/                       privileged only
     floor-<seq>.json           append-only floor evidence
     active-<seq>.json          append-only active records
+    switch.json                switch journal (replaced atomically per step)
     lock                       store lock
 ```
 
@@ -324,18 +325,55 @@ stolen secret or lost device can lower a floor.
 #### Bridge releases and update selection
 
 - **Bridge releases.** Trust-set changes and epoch raises ship only in a
-  bridge release that the previous trust set verifies. Bridge releases are
-  never deleted, and they are marked in the manifest and the freshness index.
-- **Update selection** repeats the following, for a bounded number of hops:
-  pick the newest release that the current broker's trust set and epoch can
-  verify, then install it. A machine that is several releases behind therefore
-  crosses rotations, revocations and epoch raises in order. It is never
-  stranded behind a permanent verification error.
-- **Desktop trust (Q10, recommended).** Desktop accepts a manifest that
-  verifies under its embedded trust set, or under the trust set of the newest
-  committed store Core. That store Core was itself verified through the bridge
-  chain. Desktop is not the security boundary, so this widening is
+  bridge release.
+  - The bridge's signer set must satisfy two policies. Under the previous
+    trust set, it must meet the ordinary policy, or the epoch policy for an
+    epoch raise. Under the trust set embedded in the bridge itself, it must
+    meet the ordinary policy. Each count uses only active release and
+    hardware keys.
+  - A bridge that rotates `R` is therefore signed by both the old and the new
+    `R`. This lets a committed bridge pass its own self-check, and lets it be
+    repaired from a streamed bundle.
+  - The publisher checks both policies before it publishes.
+  - Bridge releases are never deleted.
+  - Every manifest names the previous bridge's tag and manifest digest, so
+    Desktop can fetch the bridge chain directly, even when old releases have
+    dropped off the release listing.
+- **Update selection.** It repeats the following, for at most 8 hops: pick the
+  newest release that the current broker's trust set and epoch can verify,
+  then install it.
+  - Each hop must be strictly above the active version. Otherwise selection
+    stops; it never re-prompts without progress.
+  - If no verifiable path exists within the hop limit, Desktop reports that a
+    package upgrade is required.
+  - A release that cannot be verified is an update error only when no
+    verifiable path to it exists. A post-bridge release that is merely not yet
+    reachable is not an error.
+  - A machine that is several releases behind therefore crosses rotations,
+    revocations and epoch raises in order.
+- **Choosing the hop.** `version -json` reports a binary's trust key IDs and
+  roles, and the session `status` reports the committed epoch. Desktop selects
+  hops from that data and from verified manifests only. Marks in the freshness
+  index are hints that do not affect the choice.
+- **Which keys count, by context.**
+  - For streamed bytes, fetched manifests and self-checks, only active release
+    and hardware keys are trusted.
+  - Historical keys count only when re-verifying evidence already stored in
+    admin-only `state/` and `versions/`, with the ordinary policy.
+  - `F` counts only for the freshness index.
+  - Historical keys are never removed, except by an epoch reset, so stored
+    evidence keeps verifying.
+- **Desktop trust (Q10, recommended, pending).** Desktop accepts a manifest
+  that verifies under its embedded trust set, or under the trust set of the
+  newest committed store Core. That store Core was itself verified through
+  the bridge chain. Desktop is not the security boundary, so this widening is
   acceptable, and trust changes then need no Desktop package release.
+  - If Q10 is adopted, Desktop uses one trust set rather than the union of the
+    two: the set of the higher-versioned binary among its pinned Core and the
+    newest committed store Core. A union would keep accepting keys that the
+    newer set has retired.
+  - Desktop obtains that trust set from `version -json`, never by parsing the
+    binary.
 
 #### YubiKey requirements
 
@@ -426,8 +464,8 @@ Later rotations of `R` use bridge releases:
   trust set. The trust root is then the administrator who installs the
   package. This is why the spare is stored separately.
 - **If `R` and a YubiKey are compromised together**, take these steps:
-  1. Publish a bridge release signed with `R` and every hardware key still
-     held. It raises the floor epoch and both floors, and rotates `R`.
+  1. Publish a bridge release signed with the old `R`, the new `R`, and every
+     hardware key still held, meeting the bridge rule above. It raises the floor epoch and both floors, and rotates `R`.
   2. If a compromised hardware key is not in the maintainer's possession, the
      epoch policy cannot be met, and only the package-release path remains.
   3. Machines are protected only after they reach the bridge release or the
@@ -577,6 +615,26 @@ Evidence in sources 2 and 3 is re-verified with the current trust set,
 including keys in the `historical` role (see Trust and keys). A key rotation
 or revocation therefore never discards floors that were already established.
 
+**Evidence a verifier cannot evaluate.** Some evidence an older binary cannot
+evaluate:
+
+- a `versions/` entry, active record, floor record or HKLM//etc copy that
+  names a version above the verifier's own version;
+- evidence that lists key IDs absent from the verifier's trust set;
+- evidence with an epoch the verifier cannot verify.
+
+When a privileged process finds such evidence, it does not ignore it. It
+treats the store as read-only, refuses every elevated role except `status`,
+and reports `newer-component-required`. "Ignored and reported" applies only to
+records whose signatures fail under keys the verifier knows. An older package
+copy elevated after a rotation therefore cannot evade a newer elevation floor
+or the active version.
+
+**Active records are not publisher-signed.** They are local, admin-only state,
+trusted through the store ACL, and they carry the version and manifest digest
+of the active release. "Never below active" therefore uses the active record
+directly, whatever keys the verifier knows.
+
 **Announced floors** come from freshly fetched signed manifests of the followed
 channels, and from the freshness index. They never gate repair to the
 committed target, the foreground daemon, the unelevated CLI, or IPC and VPN
@@ -584,10 +642,15 @@ connections through the installed service.
 
 - An announced floor causes a persistent "security update required" state, and
   it ranks updates.
-- An announced elevation floor taken from a release-key-and-hardware-signed
-  manifest additionally gates update and install operations. It never gates
-  repair. Below it, Desktop requires a package upgrade before updating.
+- An announced elevation floor from a manifest signed by the release key and
+  a hardware key additionally gates the `update` operation only.
+  - It never gates `install`, `repair` or missing-service installation; those
+    show a warning instead.
+  - Below it, Desktop requires a package upgrade before updating.
 - A floor that comes only from the freshness key `F` never gates anything.
+- **Epochs.** Announced floors from an epoch below the committed epoch are
+  ignored. Announced floors from a higher epoch count only if their manifest
+  meets the epoch policy.
 
 Only a privileged Core process writes floor records. It appends a floor only
 after a switch to a version at or above that floor has committed. A record
@@ -597,8 +660,9 @@ committed floor while other evidence remains. No command deletes or lowers
 floor or active evidence.
 
 A whole-machine or VM-snapshot restore reverts all sources together. That is
-outside the local-attacker model. Announced floors bound it at the next online
-check.
+outside the local-attacker model. Announced floors then show the
+"security update required" state at the next online check, but they do not
+restore the lost floors.
 
 **Enforcement of committed floors**
 
@@ -681,60 +745,121 @@ its signed size and digest.
 
 **Switch and commit**
 
-1. The broker writes a switch journal into `state/` before it stops the
-   service. The journal records the old and new executable digests, the old and
-   new registrations, the backup name, and the staging name. It keeps open
-   handles to the verified staging members for the whole switch.
-2. It replaces the service executable through the existing transaction: stop,
-   backup, rename, start, readiness, rollback. The source is the verified
-   staging handle, never the broker's own image and never a re-resolved path.
-   The backup and staged names in the service directory carry a random
-   suffix, so a leftover file never blocks a later attempt. A stopped service
-   is activated and verified before commit.
-3. Readiness uses the restricted readiness channel.
-   - Windows: the pipe name carries a per-start 128-bit nonce passed through
-     the `StartService` arguments, so it cannot be pre-created.
-   - Linux: the readiness socket lives in the root-owned, non-world-writable
-     `/run/bimeron/`. Users cannot create entries there, so no nonce is
-     needed.
-   - On Linux, the registration change is ordered as follows: write the new
-     unit, run `daemon-reload`, then move the executable. The journal records
-     each step.
-4. After readiness, the broker promotes `staging/<random>` to
-   `versions/<version>` with one rename.
-5. It appends the active and floor records, then writes the HKLM or `/etc`
-   copy. It flushes both.
-6. Only then does it delete the backup and the journal, and clean up.
+The whole switch, and any reconciliation, runs while the broker holds the store
+lock (see Store location and protection). Holding the lock proves that no other writer is
+active. A process that cannot acquire the lock does not touch the journal or
+the service, and reports `store-busy`. The installer action does not wait
+indefinitely: on `store-busy` it leaves the work to the Desktop fallback.
 
-A failed state write after readiness never rolls back the service. Instead,
-the broker reports the failure and reconciliation repeats the write. A failed
-switch deletes the staging entry, so a release that never committed is
-neither floor evidence nor usable.
+**The journal.** `state/switch.json` is replaced atomically at every step:
+write a temporary file, flush it, rename it, then flush the directory. Each
+step is durable before its effect takes place. The journal records:
+
+- the operation (`update`, `repair`, `install`, or installer);
+- the old and new executable digests and versions, or "no previous service"
+  for `install`;
+- the old and new registrations;
+- the backup and staging names;
+- whether the service was running, and the suspended recovery settings;
+- the last completed step, one of `prepared`, `stopped`,
+  `registration-changed`, `old-image-moved`, `new-image-placed`, `started`,
+  `ready`, `promoted`, `recorded`.
+
+The switch proceeds through these steps:
+
+1. **`prepared`.** The broker has verified the staging entry, which it holds
+   open by handle for the whole switch. It suspends SCM recovery actions, or
+   the unit's `Restart=` policy, so the service manager cannot restart an image
+   in the middle of the switch. The journal records the original settings.
+2. **`stopped`.** The service has stopped, with the existing stop and cleanup
+   proof.
+3. **`registration-changed`.** The registration is changed first, before any
+   image moves.
+   - Windows: `ChangeServiceConfig` writes the five-argument registration.
+   - Linux: the new unit is written and `daemon-reload` runs.
+
+   The intermediate state, an old image under the new registration, fails
+   closed: a pre-store image refuses to run with the extra argument, and
+   pre-store tools refuse the new registration.
+4. **`old-image-moved`.** The old image is renamed to the backup name, which
+   carries a random suffix. With `install` there is no old image.
+5. **`new-image-placed`.** The new image is copied from the staging handle,
+   flushed and renamed into place. On Linux this is the new executable path
+   named in the new unit. The source is never the broker's own image and never
+   a re-resolved path.
+6. **`started`.** The service is started.
+7. **`ready`.** Readiness passes on the restricted readiness channel.
+   - Windows: the pipe name carries a per-start 128-bit nonce, passed through
+     the `StartService` arguments.
+   - Linux: the readiness socket lives in the root-owned `/run/bimeron/`,
+     where users cannot create entries.
+
+   A stopped service is also activated and verified. Afterwards it is returned
+   to its recorded state.
+8. **`promoted`.** `staging/<random>` is renamed to `versions/<version>`.
+9. **`recorded`.** The broker appends the active and floor records, writes the
+   HKLM or `/etc` copy, flushes both, and restores the recovery settings. It
+   then deletes the backup and finally the journal.
+
+**"Installed"** always means the image at the path that the current
+registration names.
+
+**Failure before `ready`.** If any step before `ready` fails within the
+session, the broker rolls back: it removes the new image, restores the
+backup, then restores the old registration. Each journal step is attempted at
+most once per session. If the rollback itself fails, the service is left
+stopped, and explicit repair is required. The broker never loops.
+
+A failed write after `ready` never rolls back the service. The next
+reconciliation repeats it.
 
 **Crash points**
 
-Every privileged run first reconciles any journal, before any other work.
-Reconciliation never infers success from digests alone:
+Only `update`, `repair`, `install` and the installer action reconcile. They do
+so under the store lock, after reading the request, and under the existing
+disruption consent. `status`, the foreground daemon and the service only
+report a pending journal. Desktop shows a pending switch, not damage, and
+reconciliation never runs before the caller's request has been read.
 
-- **Installed digest equals the new staging member.** The broker re-runs
-  activation and readiness with a fresh nonce. If readiness passes, it
-  promotes the staging entry and appends the records. Otherwise it restores the
-  backup and the old registration, and deletes the staging entry. A release
-  that never became ready is therefore never committed, even if the broker
-  died after starting it.
-- **Installed digest equals the backup.** The broker restores the old
-  registration if it was changed, then removes the staging directory, the
+Reconciliation is driven by the last durable journal step, never by digests
+alone:
+
+- **Before `ready`: backward, whatever image is present or missing.**
+  1. Stop the service if it is running.
+  2. Verify that the backup's digest equals the journaled old digest, and place
+     it at the old target path.
+  3. Restore the journaled old registration.
+  4. Restore the recovery settings and the recorded run state.
+  5. Delete the staging entry, then the journal.
+
+  A release that never became ready is therefore never committed. Restoring the
+  journaled pre-switch image is not an installation. It is allowed even below
+  the committed security floor (Q4), and is reported as
+  `below_security_floor`.
+- **Before `ready`, with a missing or mismatched backup, or an `install`
+  journal.** The broker goes forward only if no backward path exists. It
+  re-verifies the staging entry, or the verified package bootstrap, against its
+  signed manifest under the reconciler's trust. The version must be at or above
+  the reconciler's committed security floor, and at or above the maximum of the
+  active version and the verified installed version. The broker then runs
+  `started` and `ready` with a fresh nonce. If both fail, the service is left
+  stopped and the journal kept, and the broker reports `journal-unrecoverable`
+  for explicit repair. For an `install` journal, going backward means deleting
+  the new registration and the new image.
+- **From `ready` onward: forward only.** The broker completes promotion, the
+  records, the HKLM or `/etc` copy and the recovery settings, then deletes the
   backup and the journal.
-- **Installed digest equals a member of `versions/<v>` with `v` above the
-  active version** (a crash between promotion and the records). The broker
-  appends the missing records.
-- **Anything else.** The broker treats the service as damaged and repair takes
-  over.
+- **Unreadable journals.**
+  - A journal that cannot be parsed blocks every mutating operation with
+    `journal-corrupt`. It is never deleted automatically. `status` reports
+    it.
+  - Explicit repair then applies the backward rule to the state it observes.
+  - A journal written under a higher store contract makes the store
+    read-only.
 
-The registration is always reconciled to match the image that is finally
-installed. A store-era image is never left under the four-argument
-registration, and a pre-store image is never left under the five-argument
-one.
+The registration always ends up matching the installed image. A store-era
+image is never left under the four-argument registration: the registration
+changes before the image, and is restored only after the old image is back.
 
 **Wintun**
 
@@ -789,7 +914,7 @@ heals it.
 
 | Entry point | Binary | Verification | Inputs |
 | --- | --- | --- | --- |
-| Maintenance session (`update`, `repair`, `install`, `status`) | Newest committed store version at or above the committed elevation floor. With no committed version, the bundled package copy at or above that floor. | Desktop: handle-bound digest. Broker: self-check | Nonce, PID, streamed bytes |
+| Maintenance session (`update`, `repair`, `install`, `status`) | The highest-version verified binary among the newest committed store version and the bundled package copy that meets the committed elevation floor. A newer package copy therefore steps in after a package upgrade, even when commit actions did not run | Desktop: handle-bound digest. Broker: self-check | Nonce, PID, streamed bytes |
 | Installer action (MSI, DEB) | `bimeron-core` in the package directory, run directly as SYSTEM or root | Self-check against the package-shipped signed manifest | None; fixed package-relative paths |
 | Foreground IKEv2 daemon | Same as the maintenance session | Self-check | Existing foreground contract; policy file at a fixed location (below) |
 | Service | Service directory copy | No self-check (see below); Wintun pin at load | SCM or systemd only |
@@ -999,6 +1124,8 @@ working while the maintainer is unavailable for a long time.
 - **Client behavior.**
   - If the index names a newer version than discovery found, or a different
     manifest digest, Desktop shows a visible error.
+  - A mismatch never blocks installing a release verified by the release key
+    and a hardware key.
   - An expired or missing index produces only a warning such as "update
     information is stale". It never blocks the VPN, the CLI, repair or
     updates.
@@ -1186,8 +1313,8 @@ assets, and replayed old signed metadata.
 - Same-user malware can always ask the user to approve elevation of its own
   binary. Authenticode (Q7) makes the publisher visible, but it is not a
   defense on its own.
-- Restoring a whole disk or VM reverts store and floor together. Only
-  announced floors bound it.
+- Restoring a whole disk or VM reverts store and floor together. Announced
+  floors only warn about it at the next online check.
 - A foreign handle can delay cleanup indefinitely. Cleanup never blocks
   updates.
 
@@ -1202,7 +1329,9 @@ assets, and replayed old signed metadata.
   of rolling the service back. Upgrading the Desktop package fixes this.
 - **First store-capable Desktop.** It bundles its pinned Core together with
   that release's signed schema 2 manifest and signatures. The installer action
-  seeds the store and switches the service upward, as described above.
+  switches the existing service upward through the journaled path and commits
+  the bundled release only after readiness, as described above. It never places
+  a release in `versions/` without a switch.
 - **Existing installs whose service is newer than the package.** These were
   updated through the pre-store updater. The installer action's lower bound
   includes the installed image's build version, so the service stays in place. The next
@@ -1345,12 +1474,25 @@ and store state before and after.
 11. **Installer behavior.** Cases: `msiexec /fa` by a standard user; an MSI
     rollback in mid-transaction; `DisableRollback` policy; a DEB upgrade,
     removal and purge. The store and floor persist; no downgrade happens.
-12. **Crash injection** at every journal step on both operating systems:
-    before the stop, after the backup, after the registration change (Linux:
-    after the unit write, after `daemon-reload`, after the executable move),
-    after the start, after readiness, after promotion, and after the records.
-    Reconciliation reaches a consistent state, and only a ready release is
-    committed.
+12. **Crash injection** at every journal step on both operating systems,
+    for the first pre-store-to-store-era switch and for later switches. The
+    cases include:
+    - a crash between the two renames;
+    - a crash between rollback's remove and rename;
+    - a crash between the Linux unit switch and the executable move;
+    - a crash between start and readiness, including a release that never
+      becomes ready.
+
+    Reconciliation must reach a consistent state, commit only a ready release,
+    and leave the registration matching the image. Further cases:
+    - a corrupt journal, which must yield `journal-corrupt` and never be
+      deleted automatically;
+    - concurrent sessions and the installer action, which must yield
+      `store-busy` and never reconcile a live journal;
+    - a boot start or SCM recovery start of an uncommitted image, which Desktop
+      must show as a pending switch;
+    - suspended recovery settings, which must be restored on commit and on
+      rollback.
 13. **Keys.**
     - A release signed only by `R`, or only by YubiKeys, is refused.
     - `R` plus either YubiKey is accepted.
@@ -1366,6 +1508,12 @@ and store state before and after.
     - A machine several releases behind updates across an `R` rotation, a
       YubiKey revocation and an epoch raise, through bridge releases.
     - Floor evidence survives the rotation and the revocation.
+    - After a rotation, an elevated older package copy refuses with
+      `newer-component-required`.
+    - A committed bridge passes its own self-check and can be repaired from a
+      streamed bundle.
+    - Hop selection stops without progress, and reports that a package upgrade
+      is required beyond 8 hops.
 14. **Version grammar.** The shared conformance file passes in Go and C++. Rejected forms, the NTFS case-collision attempt, and
     beta-to-stable transitions.
 15. **Foreground IKEv2** on a store-era Desktop, with the relocated policy file.
@@ -1465,7 +1613,9 @@ recommended defaults already written into this draft:
   a floor unless every published tag at or above it contains the recorded
   fixing commits. The consequence is that maintenance lines below a raised
   floor cannot publish. The alternative is a documented single-line release
-  model without the check.
+  model without the check. If the check is adopted, it is based on the
+  publisher's own record of signed releases, not on the tags in the remote
+  repository; otherwise anyone who can push a tag could block publication.
 
 The remaining hardware detail is settled during the key ceremony. Each
 YubiKey uses PIV Ed25519 (firmware 5.7+) or OpenPGP Ed25519 (firmware
