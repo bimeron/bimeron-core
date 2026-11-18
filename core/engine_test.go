@@ -56,6 +56,8 @@ func testConfig() SessionConfig {
 func testEngine(b backend) *Engine {
 	e := New(Options{RetryMin: time.Millisecond, RetryMax: 4 * time.Millisecond})
 	e.factory = func(SessionConfig) backend { return b }
+	// Host interface changes must not end recovery waits in tests.
+	e.observe = func(string) string { return "" }
 	return e
 }
 func testDeadline(t *testing.T) context.Context {
@@ -162,11 +164,11 @@ func TestReconnectClosesBeforeOpening(t *testing.T) {
 	}
 }
 
-func TestPermanentSessionFailureDoesNotReconnect(t *testing.T) {
+func TestPermanentStartupFailureDoesNotReconnect(t *testing.T) {
 	var opens atomic.Int32
 	engine := testEngine(fakeBackend{open: func(context.Context) (session, error) {
 		opens.Add(1)
-		return fakeSession{wait: func(context.Context) error { return fault("access_key_unavailable", false) }}, nil
+		return nil, fault("access_key_unavailable", false)
 	}})
 	ctx := testDeadline(t)
 	if err := engine.Start(ctx, testConfig()); err != nil {
@@ -182,6 +184,35 @@ func TestPermanentSessionFailureDoesNotReconnect(t *testing.T) {
 		if event := <-engine.Events(); event.State == Reconnecting {
 			t.Fatal("reconnect state emitted for permanent failure")
 		}
+	}
+}
+
+// After loss of an established session, a failure that a retry alone cannot
+// fix keeps recovering and stays visible in LastError.
+func TestEstablishedPermanentFailureKeepsRecovering(t *testing.T) {
+	var opens atomic.Int32
+	engine := testEngine(fakeBackend{open: func(context.Context) (session, error) {
+		if opens.Add(1) == 1 {
+			return fakeSession{wait: func(context.Context) error { return fault("access_key_unavailable", false) }}, nil
+		}
+		return nil, fault("access_key_unavailable", false)
+	}})
+	ctx := testDeadline(t)
+	if err := engine.Start(ctx, testConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, engine, Connected)
+	for opens.Load() < 5 {
+		time.Sleep(time.Millisecond)
+	}
+	if s := engine.Status(); s.State != Reconnecting || s.LastError != "access_key_unavailable" || !s.LastErrorPermanent || s.ReconnectLimit != cycleAttemptLimit || s.ReconnectCycle != 1 {
+		t.Fatal(s)
+	}
+	if err := engine.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if engine.Status().State != Disconnected {
+		t.Fatal(engine.Status())
 	}
 }
 

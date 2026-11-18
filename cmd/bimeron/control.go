@@ -14,6 +14,9 @@ import (
 
 func controlCommand(command string, args []string) error {
 	r := control.Request{Command: command}
+	if command == "reconnect" {
+		r.Command = "reconnect_now"
+	}
 	if command == "start" {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: bimeron start <config-file>")
@@ -59,6 +62,12 @@ func controlCommand(command string, args []string) error {
 	}
 	if a.Status.LastError != "" {
 		fmt.Println("Last error:", a.Status.LastError)
+	}
+	if a.Status.KillSwitch == core.KillSwitchHolding {
+		fmt.Println("Kill switch holding: traffic outside the tunnel stays blocked until connection or stop.")
+	}
+	if a.Status.State == core.Reconnecting && !a.Status.NextAttemptAt.IsZero() {
+		fmt.Println("Next attempt:", a.Status.NextAttemptAt.Local().Format(time.TimeOnly))
 	}
 	if command == "start" {
 		fmt.Println("Start accepted. Use bimeron status or watch to follow connection.")

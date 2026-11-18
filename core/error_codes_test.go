@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"bimeron/internal/problem"
 	"bimeron/internal/sshtunnel"
@@ -108,10 +109,20 @@ func TestLastErrorIsAlwaysCatalogCode(t *testing.T) {
 	if err := e.Start(ctx, testConfig()); err != nil {
 		t.Fatal(err)
 	}
-	_ = e.Wait(ctx)
+	// Loss of the established session keeps recovering; the uncoded failure
+	// is published only as the generic catalog code.
+	for e.Status().State != Reconnecting {
+		if ctx.Err() != nil {
+			t.Fatal("no recovery", e.Status())
+		}
+		time.Sleep(time.Millisecond)
+	}
 	status := e.Status()
-	if status.State != Failed || status.LastError != connectionFailed || status.ErrorStage != "" {
+	if status.LastError != connectionFailed || status.ErrorStage != "" {
 		t.Fatalf("status = %+v", status)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
 	}
 	for {
 		select {

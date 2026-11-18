@@ -36,7 +36,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "bimeron doctor [-output report.json] (read-only diagnostics)")
 	fmt.Fprintln(w, "bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove] (Windows; preview by default)")
 	fmt.Fprintln(w, "bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
-	fmt.Fprintln(w, "bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
+	fmt.Fprintln(w, "bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron reconnect (retry a waiting reconnect now)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
 	fmt.Fprintln(w, "bimeron run <config-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\n"+recoverUsage+"\nbimeron check [-dns 1.1.1.1] <key-file>")
 }
 
@@ -71,7 +71,7 @@ func run(args []string) error {
 		return serviceCommand(args[1:])
 	case "daemon":
 		return daemon(args[1:])
-	case "start", "status", "stop", "shutdown":
+	case "start", "status", "stop", "shutdown", "reconnect":
 		return controlCommand(args[0], args[1:])
 	case "watch":
 		return watchControl(args[1:])

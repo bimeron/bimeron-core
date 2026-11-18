@@ -5,7 +5,8 @@ A [Windows service](SERVICE.MD) is available for background operation.
 
 `run` retains its existing behavior: it starts one session in the current
 console. Ctrl+C disconnects it, restores network settings, and exits the process.
-This command does not require a daemon.
+With the kill switch enabled, a session that fails keeps running and keeps
+protection until Ctrl+C. This command does not require a daemon.
 
 To control the core with separate commands, first open an administrator CMD:
 
@@ -22,6 +23,7 @@ dist\windows-amd64\bimeron.exe status
 dist\windows-amd64\bimeron.exe watch
 dist\windows-amd64\bimeron.exe stats
 dist\windows-amd64\bimeron.exe capabilities
+dist\windows-amd64\bimeron.exe reconnect
 dist\windows-amd64\bimeron.exe stop
 dist\windows-amd64\bimeron.exe shutdown
 ```
@@ -29,11 +31,12 @@ dist\windows-amd64\bimeron.exe shutdown
 | Command | Behavior |
 | --- | --- |
 | `start <config>` | Sends the profile to the daemon and starts connecting. Returns as soon as the request is accepted; wait for `connected` through `status` or `watch`. |
-| `status` | Shows session state, the last error, and active TCP/UDP transport endpoints. |
+| `status` | Shows session state, the last error, active TCP/UDP transport endpoints, the time of the next reconnect attempt, and whether the kill switch is holding traffic. |
 | `stats` | Session counters: TCP/UDP flows, DNS, bytes, and routing decisions. No addresses or keys. |
 | `capabilities` | Platform capabilities: VPN, kill switch, split routing. The GUI reads this instead of assuming parity. Runs locally without a daemon; also available through IPC. |
 | `watch` | Shows events and keeps waiting while the daemon is unavailable or restarting. Ctrl+C stops only the viewer. |
-| `stop` | Disconnects the session and waits for route, DNS, and kill-switch cleanup. The daemon keeps running and accepts another `start`. Repeated `stop` is safe. |
+| `reconnect` | Ends a pending reconnect wait so the next attempt starts now, or retries a failed session whose kill switch is held. Returns `reconnect_not_pending` when there is nothing to retry. Never interrupts an attempt in progress. |
+| `stop` | Disconnects the session and waits for route, DNS, and kill-switch cleanup. A kill switch held by a failed session is released only by `stop` or `shutdown`. The daemon keeps running and accepts another `start`. Repeated `stop` is safe. |
 | `shutdown` | Stops the session, then exits the daemon. If cleanup fails, returns an error and keeps the daemon available. |
 
 Ctrl+C in the daemon console also disconnects the session and exits after waiting

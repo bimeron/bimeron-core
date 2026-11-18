@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -300,4 +301,257 @@ func TestLinuxTUNCleanupAndImmediateReopen(t *testing.T) {
 	if _, err := net.InterfaceByName("Bimeron"); err != nil {
 		t.Fatal("foreign TUN was removed", err)
 	}
+}
+
+// fakeGuardSystem emulates the nft commands of the Bimeron table.
+type fakeGuardSystem struct {
+	present bool
+	fail    bool
+	calls   []string
+	scripts []string
+}
+
+func (f *fakeGuardSystem) run(_ context.Context, name, input string, args ...string) ([]byte, error) {
+	command := name + " " + strings.Join(args, " ")
+	f.calls = append(f.calls, command)
+	if name != "nft" {
+		return nil, errors.New("unexpected command: " + command)
+	}
+	switch {
+	case input != "":
+		if f.fail {
+			return nil, errors.New("injected nft failure")
+		}
+		f.scripts = append(f.scripts, input)
+		f.present = true
+	case command == "nft delete table inet "+linuxnet.FirewallTable:
+		f.present = false
+	case strings.Contains(command, "list table"):
+		if f.present {
+			return []byte(`{"nftables":[{"table":{"family":"inet","name":"` + linuxnet.FirewallTable + `","comment":"` + linuxnet.Owner + `"}}]}`), nil
+		}
+		return []byte(`{"nftables":[]}`), nil
+	}
+	return nil, nil
+}
+
+func TestLinuxKillSwitchBelongsToRun(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeGuardSystem{}
+	manager := &linuxnet.Manager{Dir: t.TempDir(), Resolver: filepath.Join(t.TempDir(), "resolv.conf"), Run: f.run}
+	p := &linuxPlatform{killSwitch: true, name: "Bimeron", manager: manager}
+	unlocked := 0
+	unlock := func() { unlocked++ }
+	journal := func() *linuxnet.State {
+		t.Helper()
+		s, err := manager.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	release, err := p.acquire(ctx, unlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.present || !p.Protected() || unlocked != 0 {
+		t.Fatal("Acquire did not install run protection", f.calls)
+	}
+	if s := journal(); s == nil || !s.Guard || s.Name != "Bimeron" {
+		t.Fatal("guard not journaled", s)
+	}
+	release()
+	if f.present || p.Protected() || journal() != nil || unlocked != 1 {
+		t.Fatal("release without RetainProtection kept protection", f.calls)
+	}
+
+	// Handover: the next run finds and atomically replaces the retained table.
+	if release, err = p.acquire(ctx, unlock); err != nil {
+		t.Fatal(err)
+	}
+	p.RetainProtection()
+	release()
+	if !f.present || unlocked != 2 {
+		t.Fatal("RetainProtection did not keep protection", f.calls)
+	}
+	if s := journal(); s == nil || !s.Guard {
+		t.Fatal("retained guard lost its journal", s)
+	}
+	if release, err = p.acquire(ctx, unlock); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.scripts[len(f.scripts)-1]; !strings.HasPrefix(last, "delete table inet "+linuxnet.FirewallTable+"\n") {
+		t.Fatal("retained table was not replaced atomically", last)
+	}
+	release()
+	if f.present || journal() != nil || unlocked != 3 {
+		t.Fatal("next run release kept protection", f.calls)
+	}
+
+	// A failed install keeps the journal, unlocks, and deletes nothing.
+	f.fail, f.calls = true, nil
+	if _, err := p.acquire(ctx, unlock); err == nil || err.Error() != "kill_switch_arm_failed_run_recover" {
+		t.Fatal("unexpected arm failure", err)
+	}
+	if p.Protected() || unlocked != 4 {
+		t.Fatal("failed install reported protection or kept the lock")
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "delete table") {
+			t.Fatal("failed install removed protection", f.calls)
+		}
+	}
+	if s := journal(); s == nil || !s.Guard {
+		t.Fatal("failed install must stay recoverable", s)
+	}
+
+	// Without the kill switch, leftover protection needs explicit recovery.
+	off := &linuxPlatform{name: "Bimeron", manager: manager}
+	if _, err := off.acquire(ctx, unlock); err == nil || err.Error() != "kill_switch_pending_run_recover" {
+		t.Fatal("pending protection was not reported", err)
+	}
+	f.fail = false
+	if err := manager.Recover(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	if release, err = off.acquire(ctx, unlock); err != nil {
+		t.Fatal(err)
+	}
+	if off.Protected() || len(f.calls) != 0 {
+		t.Fatal("Acquire without the kill switch touched nftables", f.calls)
+	}
+	release()
+	if unlocked != 6 {
+		t.Fatal("release did not unlock", unlocked)
+	}
+}
+
+// TestLinuxTUNKillSwitchHold verifies in an isolated namespace that the kill
+// switch blocks before the TUN exists and survives failed and closed sessions
+// until the run releases it.
+func TestLinuxTUNKillSwitchHold(t *testing.T) {
+	if os.Getenv("BIMERON_NETNS_TEST") != "1" {
+		t.Skip("requires unshare -n")
+	}
+	current, _ := os.Readlink("/proc/self/ns/net")
+	host, _ := os.Readlink("/proc/1/ns/net")
+	if os.Geteuid() != 0 || current == "" || current == host {
+		t.Fatal("refusing to change host network namespace")
+	}
+	if _, err := exec.LookPath("nft"); err != nil {
+		t.Skip("requires nftables")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	run := func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Stdin = strings.NewReader(input)
+		return cmd.Output()
+	}
+	for _, args := range [][]string{
+		{"link", "set", "lo", "up"},
+		{"link", "add", "rlphysical", "type", "dummy"},
+		{"address", "add", "192.0.2.1/24", "dev", "rlphysical"},
+		{"link", "set", "rlphysical", "up"},
+		{"route", "add", "default", "dev", "rlphysical"},
+	} {
+		if _, err := run(ctx, "ip", "", args...); err != nil {
+			t.Fatal("ip", args, err)
+		}
+	}
+	defer run(context.Background(), "ip", "", "link", "del", "rlphysical")
+	dir := t.TempDir()
+	resolver := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(resolver, []byte("nameserver 192.0.2.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manager := linuxnet.NewManager()
+	manager.Dir, manager.Resolver, manager.Run = dir, resolver, run
+	defer manager.Recover(context.Background(), false)
+	p := &linuxPlatform{killSwitch: true, name: "Bimeron", manager: manager}
+	// nftables drops in OUTPUT make an unmarked UDP send fail with EPERM.
+	send := func(d *net.Dialer) error {
+		t.Helper()
+		c, err := d.DialContext(ctx, "udp4", "203.0.113.9:9")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		_, err = c.Write([]byte("kill-switch-hold"))
+		return err
+	}
+	blocked := func(stage string) {
+		t.Helper()
+		if _, err := run(ctx, "nft", "", "list", "table", "inet", linuxnet.FirewallTable); err != nil {
+			t.Fatal(stage, "kill switch table missing", err)
+		}
+		if err := send(&net.Dialer{}); !errors.Is(err, syscall.EPERM) {
+			t.Fatal(stage, "unmarked traffic was not blocked", err)
+		}
+		if err := send(&net.Dialer{Control: linuxnet.BoundDialer("rlphysical")}); err != nil {
+			t.Fatal(stage, "marked core traffic was blocked", err)
+		}
+	}
+	open := func() (link, error) {
+		return p.Open(ctx, SessionConfig{Name: "Bimeron", MTU: 1420, KillSwitch: true}, &flowRouter{}, func(string, string) {})
+	}
+	// A closed session removes its TUN; only the run-scoped guard remains.
+	tunGone := func(stage string) {
+		t.Helper()
+		if _, err := net.InterfaceByName("Bimeron"); err == nil {
+			t.Fatal(stage, "TUN interface still exists")
+		}
+	}
+
+	release, err := p.acquire(ctx, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked("before the tunnel exists:")
+	manager.Run = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
+		if name == "ip" && strings.Join(args, " ") == "-4 rule add pref "+linuxnet.TunnelPriority+" iif lo lookup "+linuxnet.Table+" protocol "+linuxnet.Protocol {
+			return nil, errors.New("injected setup failure")
+		}
+		return run(ctx, name, input, args...)
+	}
+	if l, err := open(); err == nil {
+		l.Close()
+		t.Fatal("injected setup failure was ignored")
+	}
+	manager.Run = run
+	blocked("after a failed session:")
+	tunGone("after a failed session:")
+	for i := 0; i < 2; i++ {
+		l, err := open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Close(); err != nil {
+			t.Fatal(err)
+		}
+		blocked("after a closed session:")
+		tunGone("after a closed session:")
+		if s, err := manager.Load(); err != nil || s == nil || !s.Guard || s.Routing || s.DNSMethod != "" {
+			t.Fatal("journal must keep only the guard", s, err)
+		}
+	}
+	p.RetainProtection()
+	release()
+	blocked("after a retained release:")
+	if release, err = p.acquire(ctx, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := run(ctx, "nft", "", "list", "table", "inet", linuxnet.FirewallTable); err == nil {
+		t.Fatal("release kept the kill switch table")
+	}
+	if s, err := manager.Load(); err != nil || s != nil {
+		t.Fatal("recovery journal remains", s, err)
+	}
+	if err := send(&net.Dialer{}); err != nil {
+		t.Fatal("traffic still blocked after release", err)
+	}
+	tunGone("after stop:")
 }

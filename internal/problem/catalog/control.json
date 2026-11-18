@@ -210,6 +210,11 @@
       "en": "The VPN core rejected a malformed request from the application. Restart the application; if this repeats, report the problem.",
       "ru": "Ядро VPN отклонило некорректный запрос приложения. Перезапустите приложение, а если ошибка повторится — сообщите о проблеме."
     },
+    "kill_switch_held": {
+      "kind": "control",
+      "en": "The kill switch is still blocking traffic for the failed connection. Disconnect first, or connect a profile that also uses the kill switch.",
+      "ru": "Kill switch всё ещё блокирует трафик после неудачного подключения. Сначала отключитесь или подключите профиль, в котором тоже включён kill switch."
+    },
     "operation_conflict": {
       "kind": "control",
       "en": "Another operation with the same request is already in progress. Wait until it finishes.",
@@ -224,6 +229,11 @@
       "kind": "control",
       "en": "The VPN process is closing. Wait a moment and try again.",
       "ru": "Процесс VPN завершает работу. Подождите немного и повторите попытку."
+    },
+    "reconnect_not_pending": {
+      "kind": "control",
+      "en": "There is no reconnection waiting to be retried.",
+      "ru": "Нет ожидающего повторного подключения."
     },
     "recovery_required": {
       "kind": "control",

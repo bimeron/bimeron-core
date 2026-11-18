@@ -202,6 +202,149 @@ func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
 		t.Fatal("journal must keep only the guard", s, err)
 	}
 }
+
+// guardScripts records nft scripts and the journal each one was applied over.
+func guardScripts(t *testing.T, m *Manager, f *fakeSystem) (*[]string, *[]*State) {
+	t.Helper()
+	var scripts []string
+	var journals []*State
+	m.Run = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
+		if name == "nft" && input != "" {
+			scripts = append(scripts, input)
+			s, err := m.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			journals = append(journals, s)
+		}
+		return f.run(ctx, name, input, args...)
+	}
+	return &scripts, &journals
+}
+
+func TestGuardBeforeTunnelIsJournaledAndHeldAcrossSessions(t *testing.T) {
+	m, f, original := testManager(t)
+	scripts, journals := guardScripts(t, m, f)
+	ctx := context.Background()
+	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "192.168.1.0/24", Action: routing.Direct}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Guard(ctx, "Bimeron", p, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.guard || len(*scripts) != 1 {
+		t.Fatal("guard not installed", f.calls)
+	}
+	if s := (*journals)[0]; s == nil || !s.Guard || s.Name != "Bimeron" || s.Routing || s.DNSMethod != "" {
+		t.Fatal("journal must record the guard before nft runs", s)
+	}
+	want, err := Firewall("Bimeron", p, true, false)
+	if err != nil || (*scripts)[0] != want {
+		t.Fatal("guard must use exactly the Firewall exceptions", (*scripts)[0], err)
+	}
+	for _, call := range f.calls {
+		if strings.HasPrefix(call, "ip ") {
+			t.Fatal("guard touched routing before the tunnel exists", call)
+		}
+	}
+	// Re-arming replaces the owned table atomically, without a gap.
+	if err := m.Guard(ctx, "Bimeron", p, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix((*scripts)[1], "delete table inet "+FirewallTable+"\n") {
+		t.Fatal("re-arming did not replace the table", (*scripts)[1])
+	}
+	// Session setups and session cleanups keep the run's guard.
+	for i := 0; i < 2; i++ {
+		if err := m.Configure(ctx, "Bimeron", 1420, p, true, true); err != nil {
+			t.Fatal(err)
+		}
+		if last := (*scripts)[len(*scripts)-1]; !strings.HasPrefix(last, "delete table inet "+FirewallTable+"\n") {
+			t.Fatal("Configure did not replace the early guard", last)
+		}
+		if err := m.Recover(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(m.Resolver)
+		if string(b) != string(original) || !f.guard || len(f.rules["-4"]) != 0 || len(f.routes["-4"]) != 0 {
+			t.Fatal("session cleanup lost the guard or left routing", f.calls)
+		}
+		if s, err := m.Load(); err != nil || s == nil || !s.Guard || s.Routing || s.DNSMethod != "" {
+			t.Fatal("journal must keep only the guard", s, err)
+		}
+	}
+	// Run release.
+	if err := m.Recover(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if f.guard {
+		t.Fatal("release kept the guard")
+	}
+	if s, err := m.Load(); err != nil || s != nil {
+		t.Fatal("journal was not cleared", s, err)
+	}
+}
+
+func TestConfigureRollbackKeepsEarlyGuard(t *testing.T) {
+	m, f, original := testManager(t)
+	ctx := context.Background()
+	if err := m.Guard(ctx, "Bimeron", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	f.fail = "-6 rule add pref 10901"
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err == nil {
+		t.Fatal("expected setup failure")
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "delete table inet bimeron_core") {
+			t.Fatal("rollback removed the early guard", f.calls)
+		}
+	}
+	b, _ := os.ReadFile(m.Resolver)
+	if string(b) != string(original) || !f.guard || len(f.rules["-4"]) != 0 || len(f.rules["-6"]) != 0 {
+		t.Fatal("rollback lost protection or left routing", f.calls)
+	}
+	if s, err := m.Load(); err != nil || s == nil || !s.Guard || s.Routing {
+		t.Fatal("journal must keep only the guard", s, err)
+	}
+}
+
+func TestGuardFailureKeepsJournal(t *testing.T) {
+	m, f, _ := testManager(t)
+	f.fail = "nft -f -"
+	if err := m.Guard(context.Background(), "Bimeron", nil, true); err == nil {
+		t.Fatal("expected nft failure")
+	}
+	if s, err := m.Load(); err != nil || s == nil || !s.Guard || s.Name != "Bimeron" {
+		t.Fatal("failed install must stay recoverable", s, err)
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "delete table") {
+			t.Fatal("failed install removed protection", f.calls)
+		}
+	}
+}
+
+func TestGuardRefusesUnrecoveredSession(t *testing.T) {
+	m, f, _ := testManager(t)
+	ctx := context.Background()
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, false); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	if err := m.Guard(ctx, "Other", nil, true); err == nil {
+		t.Fatal("guard overwrote an unrecovered journal")
+	}
+	if f.guard || len(f.calls) != 0 {
+		t.Fatal("guard ran over an unrecovered session", f.calls)
+	}
+	if s, err := m.Load(); err != nil || s == nil || s.Name != "Bimeron" || !s.Routing {
+		t.Fatal("journal changed", s, err)
+	}
+}
+
 func TestDisabledIPv6DirectPrefixesStayInTunnel(t *testing.T) {
 	p, err := routing.Compile(routing.Config{Default: routing.Proxy, Rules: []routing.Rule{{CIDR: "2001:db8::/32", Action: routing.Direct}, {CIDR: "192.168.1.0/24", Action: routing.Direct}}})
 	if err != nil {
