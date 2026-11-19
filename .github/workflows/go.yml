@@ -335,6 +335,9 @@ jobs:
       - name: Hysteria client and server tests
         working-directory: third_party/hysteria-core
         run: go test ./client ./server
+      - name: Hysteria stream cancellation integration test
+        working-directory: third_party/hysteria-core
+        run: go test ./internal/integration_tests -run '^TestClientServerTCPContextReleasesStreams$' -count=1 -v
       - name: Race check the URI and relay adapters
         if: runner.os == 'Linux'
         run: go test -race ./internal/accesskey ./internal/hysteria2
