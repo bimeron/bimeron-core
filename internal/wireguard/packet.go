@@ -13,6 +13,10 @@ import (
 // maxQueued bounds received datagrams waiting for ReadFrom.
 const maxQueued = 64
 
+// socketSetupTimeout bounds opening a direct socket, including the
+// outbound socket hook.
+const socketSetupTimeout = 10 * time.Second
+
 // maxTunnelPeers bounds tunnel destinations of one packet socket. The VPN
 // handler uses one destination per flow and DNS a few.
 const maxTunnelPeers = 64
@@ -95,14 +99,37 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	if s := p.direct[v6]; s != nil {
 		return s, nil
 	}
+	p.mu.Unlock()
+	// Open the socket without holding the lock: the outbound hook may block,
+	// and Close must stay responsive. Bound the hook by the socket setup
+	// timeout and by the packet socket's lifetime.
 	network, local := "udp4", "0.0.0.0:0"
 	if v6 {
 		network, local = "udp6", "[::]:0"
 	}
-	lc := net.ListenConfig{Control: p.client.control}
-	s, err := lc.ListenPacket(context.Background(), network, local)
+	ctx, cancel := context.WithTimeout(context.Background(), socketSetupTimeout)
+	go func() {
+		select {
+		case <-p.closed:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	lc := p.client.listenConfig(ctx)
+	s, err := lc.ListenPacket(ctx, network, local)
+	cancel()
+	p.mu.Lock()
 	if err != nil {
 		return nil, err
+	}
+	if err := p.usable(); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if existing := p.direct[v6]; existing != nil {
+		// A concurrent writer opened one first.
+		_ = s.Close()
+		return existing, nil
 	}
 	if !p.writeDeadline.IsZero() {
 		_ = s.SetWriteDeadline(p.writeDeadline)

@@ -264,11 +264,12 @@ Design record: [ADR 0041](adr/0041-wireguard-amneziawg-client.md).
   closed before the new one opens the port. The socket hook may be
   `Control` or `ControlContext` of the outbound dialer.
 - The session reports connected only after a completed handshake (up to 20
-  seconds), followed by a DNS check through the AllowedIPs scope. There is no
+  seconds). In VPN mode a DNS check through the AllowedIPs scope follows;
+  SOCKS5 mode starts its listener right after the handshake. There is no
   public HTTPS check, because its target may lie outside AllowedIPs. A
   missing handshake fails with the retryable `wireguard_handshake_timeout`.
-  Health checks force a new handshake when the last one is older than 150
-  seconds and wait until the handshake time changes.
+  In VPN mode, health checks force a new handshake when the last one is
+  older than 150 seconds and wait until the handshake time changes.
 - Start failures: `wireguard_socket_failed` (retryable; the outbound UDP
   socket or a fixed `ListenPort` could not be opened),
   `wireguard_platform_limit` (packet sizes from S1–S4, `Jmax`, I1–I5 or MTU
@@ -315,4 +316,42 @@ depends on an installed Bimeron:
 ```sh
 go test ./internal/wgconf ./internal/wireguard/... ./internal/config ./cmd/bimeron ./core -run 'WireGuard|AWG|AmneziaWG|Upstream|Import|Edit|Parse|Coverage|Detect'
 go test ./internal/wgconf -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s
+```
+
+## Benchmarks
+
+`BenchmarkTCPBulk` in `internal/wireguard` moves 1 MiB per operation through
+one TCP connection and back over loopback. Every server runs in the same
+process, so CPU time includes the server and both WireGuard netstacks. Use
+the rows to compare implementations, not to estimate link speed. "native"
+is amneziawg-go as its own examples use it: its batched standard bind and
+netstack, without Bimeron's bind, scope or resource tracking.
+
+Linux test VM, 10 vCPU, median of three 3-second runs (2026-11-20):
+
+| Path | MB/s | CPU µs per MiB | Heap in use |
+|---|---:|---:|---:|
+| Bimeron, plain WireGuard | 98 | 50,900 | 19 MiB |
+| native amneziawg-go, plain WireGuard | 101 | 48,900 | 66 MiB |
+| Bimeron, AWG 1.0 | 105 | 47,200 | 22 MiB |
+| native amneziawg-go, AWG 1.0 | 113 | 45,100 | 55 MiB |
+| Bimeron, AWG 2.0 | 89 | 59,100 | 16 MiB |
+| native amneziawg-go, AWG 2.0 | 79 | 67,400 | 66 MiB |
+| Bimeron, AWG 3.1 | 84 | 63,600 | 18 MiB |
+| native amneziawg-go, AWG 3.1 | 84 | 64,700 | 71 MiB |
+| Bimeron, Shadowsocks chacha20-ietf-poly1305 (no netstack on either side) | 509 | 5,900 | 13 MiB |
+
+Within the noise of a shared VM, Bimeron's single-socket bind matches the
+engine's own batched bind. The memory difference comes from the standard
+bind's preallocated batches. The Shadowsocks row is not a like-for-like
+comparison: the WireGuard rows include two userspace TCP stacks, which a
+real deployment also has (Bimeron's TUN stack plus the tunnel netstack).
+Threshold for regressions: Bimeron within 20% of native amneziawg-go
+throughput on the same run. If a live comparison with a kernel-level
+WireGuard client shows a larger gap, it is tracked separately (ADR 0041).
+
+Run:
+
+```sh
+go test ./internal/wireguard -run '^$' -bench TCPBulk -benchtime 3s -count 3
 ```

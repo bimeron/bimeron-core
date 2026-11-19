@@ -400,3 +400,21 @@ func TestEditBatchLimit(t *testing.T) {
 		t.Fatalf("batch limit: %v", err)
 	}
 }
+
+func TestPacketSizes(t *testing.T) {
+	c, err := Parse(strings.Replace(sample(), "DNS = ", "MTU = 1984\nDNS = ", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, transport, _, _ := c.PacketSizes(); transport != 2016 {
+		t.Fatalf("plain transport size %d", transport)
+	}
+	c, err = Parse(strings.Replace(sample(), "DNS = ", "S1 = 20\nS4 = 8\nJmax = 900\nI1 = <b 0x0102><r 40>\nRandomTrailers = true\nDNS = ", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handshake, transport, junk, signature := c.PacketSizes()
+	if handshake != 500 || transport != 32+8+DefaultMTU || junk != 900 || signature != 42 {
+		t.Fatalf("sizes %d %d %d %d", handshake, transport, junk, signature)
+	}
+}

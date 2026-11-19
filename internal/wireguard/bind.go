@@ -20,8 +20,12 @@ type Listen func(ctx context.Context, network, address string) (net.PacketConn, 
 // Bind is a single-socket conn.Bind for one fixed peer endpoint. Datagrams
 // from other sources are dropped before they reach the engine.
 type Bind struct {
-	listen   Listen
-	peer     netip.AddrPort
+	listen Listen
+	peer   netip.AddrPort
+	// port is a configured ListenPort; zero means ephemeral. Open always
+	// binds it, whatever the engine requests, so a failed attempt can
+	// never fall back to another port.
+	port     uint16
 	mu       sync.Mutex
 	socket   *net.UDPConn
 	sent     atomic.Uint64
@@ -35,15 +39,19 @@ func (b *Bind) openFailed() bool { return b.failed.Load() }
 
 var _ conn.Bind = (*Bind)(nil)
 
-// NewBind returns a bind that reaches peer through listen.
-func NewBind(listen Listen, peer netip.AddrPort) *Bind {
-	return &Bind{listen: listen, peer: netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port())}
+// NewBind returns a bind that reaches peer through listen from local port
+// (zero for an ephemeral port).
+func NewBind(listen Listen, peer netip.AddrPort, port uint16) *Bind {
+	return &Bind{listen: listen, peer: netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port()), port: port}
 }
 
 // errBind replaces socket errors, which may contain local addresses.
 var errBind = errors.New("WireGuard socket failed")
 
 func (b *Bind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
+	if b.port != 0 {
+		port = b.port
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.socket != nil {
@@ -69,6 +77,12 @@ func (b *Bind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	actual := uint16(0)
 	if addr, ok := socket.LocalAddr().(*net.UDPAddr); ok {
 		actual = uint16(addr.Port)
+	}
+	if b.port != 0 && actual != b.port {
+		_ = socket.Close()
+		b.socket = nil
+		b.failed.Store(true)
+		return nil, 0, errBind
 	}
 	return []conn.ReceiveFunc{b.receiver(socket)}, actual, nil
 }

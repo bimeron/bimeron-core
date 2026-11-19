@@ -595,9 +595,15 @@ func (c *Config) PacketSizes() (handshake, transport, junk, signature int) {
 	for key, size := range map[string]int{"S1": 148, "S2": 92, "S3": 64} {
 		handshake = max(handshake, size+number(key))
 	}
-	padding, _ := parseRange(c.AWG["ContentPaddingAddition"], 0, maxPadding)
-	// Content is padded to a multiple of 16 before the 16-byte tag.
-	transport = int(messageSizes["S4"]) + number("S4") + c.TunnelMTU() + 15 + int(padding.Hi)
+	if c.AWG["RandomTrailers"] == "true" {
+		// The engine pads handshakes with random trailers up to its default
+		// 500-byte window.
+		handshake = max(handshake, 500)
+	}
+	// The engine aligns content to 16 bytes but never beyond the MTU, and
+	// caps content padding and trailers by the peer's observed datagram
+	// size, so a transport message is at most header, tag, S4 and MTU.
+	transport = int(messageSizes["S4"]) + number("S4") + c.TunnelMTU()
 	junk = number("Jmax")
 	for i := 1; i <= 5; i++ {
 		if n, err := signatureSize(c.AWG["I"+strconv.Itoa(i)]); err == nil {

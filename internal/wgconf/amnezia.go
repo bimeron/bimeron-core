@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"bimeron/internal/problem"
 )
@@ -55,7 +56,8 @@ func decodeAmnezia(payload string) (map[string]json.RawMessage, error) {
 		data = b
 	}
 	var top map[string]json.RawMessage
-	if len(data) > maxAmneziaJSON || json.Unmarshal(data, &top) != nil || top == nil {
+	// The JSON decoder would silently replace invalid UTF-8.
+	if len(data) > maxAmneziaJSON || !utf8.Valid(data) || json.Unmarshal(data, &top) != nil || top == nil {
 		return nil, amneziaInvalid()
 	}
 	return top, nil

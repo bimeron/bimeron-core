@@ -55,7 +55,7 @@ type Client struct {
 	tunnel    tunnel
 	bind      *Bind
 	outbound  net.Dialer
-	control   func(network, address string, c syscall.RawConn) error
+	control   func(network, address string, c syscall.RawConn) error // for the device bind
 	endpoint  netip.AddrPort
 	fixedPort bool
 	allowed   []netip.Prefix
@@ -139,7 +139,7 @@ func newWithEngine(o Options, start engine) (*Client, error) {
 		}
 	}
 	lc := net.ListenConfig{Control: client.control}
-	client.bind = NewBind(lc.ListenPacket, endpoint)
+	client.bind = NewBind(lc.ListenPacket, endpoint, uint16(c.ListenPort))
 	handshake, transportSize, junk, signature := c.PacketSizes()
 	t, err := start(tunnelConfig{
 		Addresses: c.LocalAddresses(),
@@ -164,6 +164,17 @@ func boolIndex(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// listenConfig binds a socket hook to ctx, so a ControlContext hook can
+// observe cancellation.
+func (c *Client) listenConfig(ctx context.Context) net.ListenConfig {
+	if d := c.outbound; d.ControlContext != nil {
+		return net.ListenConfig{Control: func(network, address string, rc syscall.RawConn) error {
+			return d.ControlContext(ctx, network, address, rc)
+		}}
+	}
+	return net.ListenConfig{Control: c.outbound.Control}
 }
 
 // Endpoint is the physical peer address this generation uses.
@@ -228,6 +239,10 @@ func (c *Client) waitHandshakeAfter(ctx context.Context, previous time.Time) err
 
 // LastHandshake reports the most recent completed handshake.
 func (c *Client) LastHandshake() time.Time { return c.tunnel.LastHandshake() }
+
+// candidateTimeout bounds one address of a name when the caller set no
+// deadline and other addresses remain.
+const candidateTimeout = 5 * time.Second
 
 // probeFreshness is how recent a handshake must be for Probe to pass
 // without a new one.
@@ -310,8 +325,19 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 		return nil, err
 	}
 	last := error(ErrBlocked)
-	for _, to := range candidates {
-		stream, err := c.dialOne(ctx, to)
+	for i, to := range candidates {
+		// Share the remaining time among the remaining candidates, so a
+		// silent first address cannot use up the whole dial deadline.
+		attempt, cancel := ctx, context.CancelFunc(func() {})
+		if rest := len(candidates) - i; rest > 1 {
+			budget := candidateTimeout
+			if deadline, ok := ctx.Deadline(); ok {
+				budget = time.Until(deadline) / time.Duration(rest)
+			}
+			attempt, cancel = context.WithTimeout(ctx, budget)
+		}
+		stream, err := c.dialOne(attempt, to)
+		cancel()
 		if err == nil {
 			return stream, nil
 		}

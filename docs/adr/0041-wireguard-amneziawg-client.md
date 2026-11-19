@@ -50,8 +50,8 @@ and the AmneziaVPN client is GPL-3.0. Bimeron must not ship GPL code.
    DNS) for every session generation, so a reconnect after a network change
    creates a new device and resolves the name again.
 5. **Connected status.** A session reports connected only after a completed
-   handshake (20-second bound), followed by a DNS check through the scope
-   (a public HTTPS target may be outside AllowedIPs). Health
+   handshake (20-second bound). In VPN mode a DNS check through the scope
+   follows (a public HTTPS target may be outside AllowedIPs), and health
    monitoring uses handshake freshness and forces a handshake when the last
    one is older than 150 seconds, instead of HTTP probes.
 6. **AllowedIPs scope.** `[Routing] AllowedIPsMode` (`direct` by default,
