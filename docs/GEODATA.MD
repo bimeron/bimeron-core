@@ -78,8 +78,9 @@ therefore estimates both costs before compiling.
 
 The limits were measured with Go 1.26 on Windows 10 (amd64) when they were set:
 
-- the heaviest datasets the limits accept retain under 3 MiB when they fill the
-  endpoint budget and about 10 MiB when they fill the instruction budget;
+- the heaviest inputs found that the limits accept retain under 3 MiB when they
+  fill the endpoint budget and about 10 MiB when they fill the instruction
+  budget;
 - two public V2Ray-format GeoSite datasets, with 372 and 417 regular
   expressions, use at most 10,625 instructions and 125,170 endpoints in total
   and at most 1,500 endpoints in one expression.
@@ -97,7 +98,12 @@ The first command reports the dataset's usage of each limit and the heap its
 decoded form retains. It fails when the dataset uses more than half of a total
 limit or a quarter of a per-expression limit. Re-evaluate the limits before
 shipping such a dataset, and update the figures above. The second command
-reports the heap retained by the heaviest accepted inputs.
+reports the heap retained by two inputs that fill a total budget: anchored
+Unicode classes for the endpoint budget and counted repetition for the
+instruction budget. On Go 1.26 and Windows 10 they retain 2.9 MiB and 2.6 MiB.
+The 10 MiB instruction-budget figure came from other instruction-heavy inputs
+when the limits were set, so treat the second command as a regression check,
+not as a proof of the worst case.
 
 ## Go API
 
