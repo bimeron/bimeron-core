@@ -20,15 +20,17 @@ func retainedHeap(t *testing.T, f func() any) float64 {
 	return float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)) / (1 << 20)
 }
 
-// TestMeasureGeoRegexWorstCase reports the heap retained by the heaviest
-// datasets the regex limits accept: one fills the endpoint budget with
-// anchored Unicode classes, the other the instruction budget with counted
-// repetition. Set BIMERON_GEOSITE_MEASURE_WORST=1 to run it.
+// TestMeasureGeoRegexWorstCase reports the heap retained by heavy datasets
+// that the regex limits accept, each filling one total budget: anchored
+// Unicode classes for the endpoint budget, and unanchored and anchored
+// counted repetition for the instruction budget. Anchored patterns go through
+// one-pass compilation. This is a regression check, not a proof of the worst
+// case. Set BIMERON_GEOSITE_MEASURE_WORST=1 to run it.
 func TestMeasureGeoRegexWorstCase(t *testing.T) {
 	if os.Getenv("BIMERON_GEOSITE_MEASURE_WORST") != "1" {
 		t.Skip("BIMERON_GEOSITE_MEASURE_WORST is not set")
 	}
-	for _, value := range []string{`^\pL{22}$`, "[a-z]{1000}"} {
+	for _, value := range []string{`^\pL{22}$`, "[a-z]{1000}", "^[a-z]{1000}$"} {
 		tree, err := syntax.Parse(value, syntax.Perl)
 		if err != nil {
 			t.Fatal(err)
@@ -71,6 +73,7 @@ func TestMeasureGeoSiteRegexBudget(t *testing.T) {
 	retained := retainedHeap(t, func() any {
 		var err error
 		if d, err = decodeGeoData(nil, data, &budget); err != nil {
+			t.Logf("usage up to the failure: %+v", budget)
 			t.Fatal(err)
 		}
 		return d
