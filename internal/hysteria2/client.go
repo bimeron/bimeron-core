@@ -140,10 +140,19 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// The upstream TCP call blocks reading the server response without a
-	// deadline and exposes no stream to cancel, so honor ctx by abandoning the
-	// call. The pending result is closed when it arrives; the call itself is
-	// bounded by the QUIC connection lifetime.
+	// The vendored client cancels its stream when ctx ends (TCPContext). Other
+	// upstreams honor ctx by abandoning the call; a late result is closed when
+	// it arrives and the call is bounded by the QUIC connection lifetime.
+	if dialer, ok := c.upstream.(contextDialer); ok {
+		conn, err := dialer.TCPContext(ctx, address)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, dialFailure(err)
+		}
+		return streamConn{Conn: conn}, nil
+	}
 	type result struct {
 		conn net.Conn
 		err  error
@@ -156,12 +165,7 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	select {
 	case r := <-done:
 		if r.err != nil {
-			var rejected hyerrors.DialError
-			if errors.As(r.err, &rejected) {
-				// The rejection message is server-provided text; never expose it.
-				return nil, &Failure{"hysteria2_dial_rejected", "tcp_connect", false}
-			}
-			return nil, r.err
+			return nil, dialFailure(r.err)
 		}
 		return streamConn{Conn: r.conn}, nil
 	case <-ctx.Done():
@@ -172,6 +176,19 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 		}()
 		return nil, ctx.Err()
 	}
+}
+
+type contextDialer interface {
+	TCPContext(context.Context, string) (net.Conn, error)
+}
+
+func dialFailure(err error) error {
+	var rejected hyerrors.DialError
+	if errors.As(err, &rejected) {
+		// The rejection message is server-provided text; never expose it.
+		return &Failure{"hysteria2_dial_rejected", "tcp_connect", false}
+	}
+	return err
 }
 
 type streamConn struct{ net.Conn }
