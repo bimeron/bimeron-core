@@ -12,9 +12,19 @@ establish trust on its own.
 | `e6fb20d55656904a` | `lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI=` | Hardware key A, YubiKey serial 22337246 | Primary signer for releases after `v0.4.0-beta.2`. |
 | `095d295f5fe9a4e2` | `6K8uY/1qIogN2j3ZdpEr4PuTqXzH7EseTd6kzHxpIr4=` | Hardware key B, YubiKey serial 19344964 | Backup signer, used only when key A is unavailable. |
 
-Desktop 0.3.1 and later pin all three keys. Core repair acquisition
-(`cmd/bimeron/repair_acquire.go`) fetches only the broker's own exact release, so
-a Core built from this source pins only keys A and B.
+Desktop 0.3.1 is planned to pin all three keys (bimeron-desktop#67, not yet
+released). Desktop 0.3.0 and earlier pin only `7370a2d8cf890e5e`, so the first
+hardware-signed release must not be published before Desktop 0.3.1, and its
+`release/compatibility.json` must set `gui_min` to at least `0.3.1`. Core
+repair acquisition (`cmd/bimeron/repair_acquire.go`) fetches only the broker's
+own exact release, so a Core built from this source pins only keys A and B.
+
+The publisher enforces these ranges (`release.SigningKeyUse`): signing and
+`-verify` accept `7370a2d8cf890e5e` only for tags up to and including
+`v0.4.0-beta.2` (including backfills of published tags), accept keys A and B
+only for later tags, and refuse a hardware-signed manifest whose `gui_min` is
+below `0.3.1`. A test keeps the publisher's hardware key list equal to Core's
+repair trust.
 
 ## Hardware keys
 
@@ -61,7 +71,8 @@ time with `ykman openpgp keys attest sig` while the device is connected.
 an empty signature slot (it refuses to replace an existing key), and runs a
 signing self-test. `scripts/release-manifest.go` signs with a card when
 `BIMERON_RELEASE_CARD_SERIAL` is set; see [RELEASE_UPDATES.md](RELEASE_UPDATES.md).
-Both read PINs from the console without echo and never print them. Hardware
+Both read PINs from the console without echo and never print them, so run
+them in PowerShell or cmd; Git Bash's mintty is not a console. Hardware
 signing is implemented for Windows PC/SC.
 
 ## Adding, rotating and retiring keys

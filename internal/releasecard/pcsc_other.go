@@ -16,4 +16,5 @@ func (*pcscContext) Close() error                      { return nil }
 func (*pcscContext) Readers() ([]string, error)        { return nil, errNoReaders }
 func (*pcscContext) Connect(string) (*pcscCard, error) { return nil, errNoReaders }
 func (*pcscCard) Close() error                         { return nil }
+func (*pcscCard) Leave() error                         { return nil }
 func (*pcscCard) Transmit([]byte) ([]byte, error)      { return nil, errNoReaders }

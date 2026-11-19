@@ -28,6 +28,12 @@ type Transport interface {
 
 var errNoReaders = errors.New("no smart card readers")
 
+// Bounds for a chained (61xx) card response.
+const (
+	maxResponseChunks = 64
+	maxResponseSize   = 65536
+)
+
 // MaxManifestSize is the largest manifest this package signs. YubiKey 5
 // OpenPGP accepts at most 3070 bytes of PSO input; the bound keeps a margin so a
 // growing manifest fails early in tests rather than at release time.
@@ -128,10 +134,16 @@ type Info struct {
 	MaxResponse    int
 	SigTouch       TouchPolicy
 	SigTouchKnown  bool
+	// SigKeyStatus is the key information DO (0xDE) status of the signature
+	// key: 0 absent, 1 generated on the card, 2 imported.
+	SigKeyStatus      byte
+	SigKeyStatusKnown bool
 }
 
 // SigSlotEmpty reports whether no signature key fingerprint is recorded.
-func (i *Info) SigSlotEmpty() bool { return i.SigFingerprint == [20]byte{} }
+func (i *Info) SigSlotEmpty() bool {
+	return i.SigFingerprint == [20]byte{} && (!i.SigKeyStatusKnown || i.SigKeyStatus == 0)
+}
 
 // SigIsEd25519 reports whether the signature slot uses Ed25519 attributes.
 func (i *Info) SigIsEd25519() bool {
@@ -189,7 +201,10 @@ func (c *Card) exchange(op string, cla, ins, p1, p2 byte, data []byte, le int, e
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
-	for {
+	for chunks := 0; ; chunks++ {
+		if chunks > maxResponseChunks || len(out) > maxResponseSize {
+			return nil, fmt.Errorf("%s: card response too long", op)
+		}
 		if len(resp) < 2 {
 			return nil, fmt.Errorf("%s: short card response", op)
 		}
@@ -290,6 +305,13 @@ func (c *Card) readInfo() (*Info, error) {
 			}
 			if len(ints) == 2 {
 				i.MaxCommand, i.MaxResponse = ints[0], ints[1]
+			}
+		}
+	}
+	if ki, err := c.getData(0x00DE); err == nil {
+		for j := 0; j+1 < len(ki); j += 2 {
+			if ki[j] == 0x01 {
+				i.SigKeyStatus, i.SigKeyStatusKnown = ki[j+1], true
 			}
 		}
 	}
@@ -409,14 +431,29 @@ func parsePublicKey(resp []byte) (ed25519.PublicKey, error) {
 
 // VerifySigningPIN presents PW1 for signing. The caller owns and wipes pin.
 func (c *Card) VerifySigningPIN(pin []byte) error {
-	_, err := c.exchange("VERIFY PIN", 0x00, 0x20, 0x00, 0x81, pin, 0, false)
-	return pinError(err, "PIN")
+	return pinError(c.verify("VERIFY PIN", 0x81, pin), "PIN")
 }
 
 // VerifyAdminPIN presents PW3. The caller owns and wipes pin.
 func (c *Card) VerifyAdminPIN(pin []byte) error {
-	_, err := c.exchange("VERIFY Admin PIN", 0x00, 0x20, 0x00, 0x83, pin, 0, false)
-	return pinError(err, "admin PIN")
+	return pinError(c.verify("VERIFY Admin PIN", 0x83, pin), "admin PIN")
+}
+
+// verify sends VERIFY and wipes the command buffer that held the PIN.
+func (c *Card) verify(op string, ref byte, pin []byte) error {
+	if len(pin) == 0 || len(pin) > 127 {
+		return fmt.Errorf("%s: PIN length out of range", op)
+	}
+	cmd := encodeAPDU(0x00, 0x20, 0x00, ref, pin, 0, false)
+	resp, err := c.t.Transmit(cmd)
+	clear(cmd)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if sw := statusWord(resp); len(resp) < 2 || sw != 0x9000 {
+		return &StatusError{op, sw}
+	}
+	return nil
 }
 
 // ErrWrongPIN reports a rejected PIN. YubiKeys answer 6982 rather than 63Cx.
@@ -473,6 +510,18 @@ func (c *Card) ProbeSignLength(n int) (uint16, error) {
 func (c *Card) GenerateSigningKey(touch TouchPolicy, created time.Time) (ed25519.PublicKey, error) {
 	if !c.info.SigSlotEmpty() {
 		return nil, ErrSlotOccupied
+	}
+	if !c.info.SigKeyStatusKnown {
+		// Without the key information DO, require the card to report that no
+		// signature public key exists before changing anything.
+		_, err := c.exchange("READ PUBLIC KEY", 0x00, 0x47, 0x81, 0x00, []byte{0xB6, 0x00}, 256, false)
+		var se *StatusError
+		if err == nil {
+			return nil, ErrSlotOccupied
+		}
+		if !errors.As(err, &se) || se.SW != 0x6A88 {
+			return nil, fmt.Errorf("cannot confirm that the signature slot is empty: %w", err)
+		}
 	}
 	if touch != TouchOn && touch != TouchFixed {
 		return nil, errors.New("touch policy must require a touch for every signature")
@@ -572,7 +621,7 @@ func List() ([]CardRef, error) {
 		if err == nil {
 			refs = append(refs, CardRef{r, c.info.Serial})
 		}
-		h.Close()
+		h.Leave()
 	}
 	return refs, nil
 }
@@ -610,7 +659,7 @@ func Open(serial uint32) (*Card, error) {
 			}
 			return c, nil
 		}
-		h.Close()
+		h.Leave()
 	}
 	ctx.Close()
 	return nil, fmt.Errorf("no OpenPGP card with serial %d is connected", serial)

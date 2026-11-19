@@ -112,6 +112,16 @@ func (c *pcscContext) Connect(reader string) (*pcscCard, error) {
 	return &pcscCard{h}, nil
 }
 
+// Leave disconnects without resetting, for cards this process did not use.
+func (c *pcscCard) Leave() error {
+	procEndTransaction.Call(c.handle, scardLeaveCard)
+	rc, _, _ := procDisconnect.Call(c.handle, scardLeaveCard)
+	if rc != 0 {
+		return scardError("SCardDisconnect", rc)
+	}
+	return nil
+}
+
 // Close resets the card so a verified PIN does not outlive this process.
 func (c *pcscCard) Close() error {
 	procEndTransaction.Call(c.handle, scardResetCard)

@@ -10,9 +10,11 @@ import (
 	"testing"
 
 	"bimeron/internal/releasecard"
+	"bimeron/release"
 )
 
 func TestManifestGenerationAndTamper(t *testing.T) {
+	isolateSignerEnv(t)
 	dir := t.TempDir()
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
@@ -84,6 +86,7 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 }
 
 func TestStableManifestRejectsWrongKeyAndMissingArchive(t *testing.T) {
+	isolateSignerEnv(t)
 	dir := t.TempDir()
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
@@ -161,6 +164,7 @@ func (e *commandError) Error() string { return e.cause.Error() + ": " + e.output
 // publisher must refuse a larger manifest for every key type, and the current
 // manifest shape must stay well below the bound.
 func TestManifestSizeBound(t *testing.T) {
+	isolateSignerEnv(t)
 	dir := t.TempDir()
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
@@ -173,7 +177,7 @@ func TestManifestSizeBound(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	sign := func(compat string) (string, error) {
 		cmd := exec.Command("go", "run", "../scripts/release-manifest.go", "-tag", "v0.12.34-beta.56", "-dir", dir, "-compat", compat)
-		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key), "BIMERON_RELEASE_CARD_SERIAL=")
+		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
@@ -198,5 +202,72 @@ func TestManifestSizeBound(t *testing.T) {
 	}
 	if out, err := sign(largePath); err == nil || !strings.Contains(out, "at most 2560 bytes") {
 		t.Fatalf("oversized manifest was not refused: %v %s", err, out)
+	}
+}
+
+// isolateSignerEnv clears signer settings inherited from the developer's
+// environment and allows the fixed test key, which no verifier pins.
+func isolateSignerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BIMERON_RELEASE_CARD_SERIAL", "")
+	t.Setenv("BIMERON_RELEASE_ED25519_KEY", "")
+	t.Setenv("BIMERON_RELEASE_ED25519_PUBLIC_KEY", "")
+	t.Setenv("BIMERON_RELEASE_TEST_UNPINNED_KEY", "1")
+}
+
+// Every key is limited to its release range, so a release that Core repair
+// (hardware keys only) would reject cannot be published. These checks run
+// before any card, signature or archive is touched.
+func TestManifestKeyPolicy(t *testing.T) {
+	isolateSignerEnv(t)
+	dir := t.TempDir()
+	compat, err := os.ReadFile("compatibility.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hardwareCompat := filepath.Join(dir, "hardware-compatibility.json")
+	data := strings.Replace(string(compat), `"gui_min": "0.3.0"`, `"gui_min": "0.3.1"`, 1)
+	if err := os.WriteFile(hardwareCompat, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(tag, compatPath string, env ...string) string {
+		t.Helper()
+		args := []string{"run", "../scripts/release-manifest.go", "-tag", tag, "-dir", dir, "-compat", compatPath}
+		// Card signing is checked without -verify; the policy refuses before any card is opened.
+		if !strings.Contains(strings.Join(env, " "), "BIMERON_RELEASE_CARD_SERIAL=2") {
+			args = append(args, "-verify")
+		}
+		cmd := exec.Command("go", args...)
+		cmd.Env = append(os.Environ(), env...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s accepted with %v", tag, env)
+		}
+		return string(out)
+	}
+	legacy := "BIMERON_RELEASE_ED25519_PUBLIC_KEY=" + release.LegacyReleaseKey
+	hardware := "BIMERON_RELEASE_ED25519_PUBLIC_KEY=" + release.HardwareReleaseKeys[0]
+	card := "BIMERON_RELEASE_CARD_SERIAL=22337246"
+	for _, tc := range []struct {
+		name, tag, compat, want string
+		env                     []string
+	}{
+		{"legacy key after beta.2", "v0.4.0-beta.3", hardwareCompat, "is retired", []string{legacy}},
+		{"legacy key on a card", "v0.4.0", hardwareCompat, "is retired", []string{legacy, card}},
+		{"hardware key on a legacy tag", "v0.4.0-beta.2", "compatibility.json", "only releases after v0.4.0-beta.2", []string{hardware}},
+		{"hardware gui_min below 0.3.1", "v0.4.0-beta.3", "compatibility.json", "gui_min must be at least 0.3.1", []string{hardware}},
+		{"unpinned key outside tests", "v0.4.0-beta.3", hardwareCompat, "not a release signing key", []string{"BIMERON_RELEASE_ED25519_PUBLIC_KEY=" + base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)), "BIMERON_RELEASE_TEST_UNPINNED_KEY="}},
+	} {
+		if out := run(tc.tag, tc.compat, tc.env...); !strings.Contains(out, tc.want) {
+			t.Fatalf("%s: got %q, want %q", tc.name, out, tc.want)
+		}
+	}
+	// With an allowed key and gui_min the policy passes and verification
+	// proceeds to the (absent) archives.
+	if out := run("v0.4.0-beta.3", hardwareCompat, hardware); strings.Contains(out, "gui_min") || strings.Contains(out, "signing key") || strings.Contains(out, "retired") || strings.Contains(out, "only releases after") {
+		t.Fatalf("allowed hardware key refused by policy: %s", out)
+	}
+	if out := run("v0.4.0-beta.2", "compatibility.json", legacy); strings.Contains(out, "retired") || strings.Contains(out, "signing key") {
+		t.Fatalf("legacy key refused for a legacy tag: %s", out)
 	}
 }

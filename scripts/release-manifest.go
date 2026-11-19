@@ -4,7 +4,10 @@
 //
 // Signing uses BIMERON_RELEASE_CARD_SERIAL (an OpenPGP hardware token such as
 // a YubiKey, with BIMERON_RELEASE_ED25519_PUBLIC_KEY naming its pinned key) or,
-// for legacy tooling, the software key in BIMERON_RELEASE_ED25519_KEY.
+// for legacy tooling, the software key in BIMERON_RELEASE_ED25519_KEY. Signing
+// and -verify accept only the keys allowed for the tag (release.SigningKeyUse);
+// tests set BIMERON_RELEASE_TEST_UNPINNED_KEY=1 to use a key no verifier pins.
+// Card PIN entry needs a real console (PowerShell or cmd), not mintty.
 package main
 
 import (
@@ -25,6 +28,7 @@ import (
 	"strings"
 
 	"bimeron/internal/releasecard"
+	"bimeron/release"
 
 	"golang.org/x/term"
 )
@@ -123,6 +127,15 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	if err != nil {
 		return err
 	}
+	// Repair acquisition and Desktop pin specific keys per release range; refuse
+	// a key that would publish a release some verifier cannot accept.
+	use, err := release.SigningKeyUse(tag, pub)
+	if err != nil {
+		return err
+	}
+	if use == release.KeyUnpinned && os.Getenv("BIMERON_RELEASE_TEST_UNPINNED_KEY") != "1" {
+		return fmt.Errorf("key %s is not a release signing key (docs/RELEASE_KEYS.md)", keyID(pub))
+	}
 	var c compatibility
 	data, err := os.ReadFile(compatPath)
 	if err != nil {
@@ -139,6 +152,11 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	}
 	if requireReviewed && (!c.GUIReviewed || c.GUIMin == nil) {
 		return errors.New("GUI update compatibility is unavailable; review release/compatibility.json before publication")
+	}
+	if use == release.KeyHardware && c.GUIMin != nil {
+		if cmp, err := release.CompareVersions(*c.GUIMin, release.HardwareGUIMin); err != nil || cmp < 0 {
+			return fmt.Errorf("gui_min must be at least %s for a hardware-signed release: older Desktop versions do not pin the hardware keys", release.HardwareGUIMin)
+		}
 	}
 	channel := "stable"
 	if strings.Contains(tag, "-") {
@@ -228,6 +246,9 @@ func cardSign(serial string, pub ed25519.PublicKey, msg []byte) ([]byte, error) 
 		fmt.Fprintf(os.Stderr, "Signing PIN for card %d: ", n)
 		p, err := term.ReadPassword(fd)
 		fmt.Fprintln(os.Stderr)
+		if err == nil && len(p) == 0 {
+			err = errors.New("empty PIN")
+		}
 		return p, err
 	}
 	touch := func() { fmt.Fprintf(os.Stderr, "Touch the YubiKey (card %d) to sign the manifest...\n", n) }

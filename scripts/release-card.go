@@ -111,6 +111,9 @@ func info(c *releasecard.Card) error {
 		fmt.Printf("sig fingerprint:   %X\n", i.SigFingerprint)
 		fmt.Printf("sig created:       %s\n", time.Unix(int64(i.SigCreated), 0).UTC().Format(time.RFC3339))
 	}
+	if i.SigKeyStatusKnown {
+		fmt.Printf("sig key status:    %s\n", map[byte]string{0: "absent", 1: "generated on card", 2: "imported"}[i.SigKeyStatus])
+	}
 	if i.SigTouchKnown {
 		fmt.Printf("sig touch policy:  %s\n", i.SigTouch)
 	}

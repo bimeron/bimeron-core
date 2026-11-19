@@ -51,7 +51,8 @@ go run scripts/release-manifest.go -tag <tag> -dir <release-dir>
 
 The signer checks that the card holds exactly the configured public key before
 it asks for the card's OpenPGP PIN, then asks for a touch, and verifies the
-returned signature before writing it. It needs an interactive console. Use the
+returned signature before writing it. It needs a real console: run it in
+PowerShell or cmd, not Git Bash's mintty. Use the
 backup key B (`19344964`, see RELEASE_KEYS.md) only when key A is unavailable.
 Every signer refuses a manifest larger than 2560 bytes, below the YubiKey's
 3070-byte signature input limit; a test keeps the current manifest well under
@@ -66,10 +67,18 @@ or place it in shell history or logs. The publisher verifies using only the
 public key. A key ID alone does not establish trust. Protect release tags with
 GitHub rulesets.
 
+Signing and `-verify` (also used by the prepared-release publisher) accept a key
+only for its release range, so a release that Desktop or Core repair would
+reject cannot be published: `7370a2d8cf890e5e` only for tags up to and including
+`v0.4.0-beta.2`, the hardware keys only for later tags. A hardware-signed
+manifest must set `gui_min` to at least `0.3.1`.
+
 To rotate, first release a GUI trusting both keys, then switch the signer, then
 retire the old key after the supported update window. Desktop 0.3.0 and earlier
 pin only `7370a2d8cf890e5e`: they cannot verify a release signed by a hardware
-key and must first update to Desktop 0.3.1, which pins all three keys.
+key. Desktop 0.3.1 is planned to pin all three keys; publish the first
+hardware-signed Core release only after Desktop 0.3.1 is released, with
+`gui_min` of at least `0.3.1`.
 
 ## Documentation for each version
 

@@ -33,6 +33,8 @@ type fakeCard struct {
 	pending    []byte
 	chained    int
 	extended   int
+	noKeyInfo  bool
+	keyStatus  byte
 }
 
 func newFakeCard(maxCommand int) *fakeCard {
@@ -149,6 +151,11 @@ func (f *fakeCard) Transmit(cmd []byte) ([]byte, error) {
 			return f.respond(f.appData())
 		case 0x00D6:
 			return sw([]byte{f.touch, 0x20}, 0x9000), nil
+		case 0x00DE:
+			if f.noKeyInfo {
+				return sw(nil, 0x6A88), nil
+			}
+			return sw([]byte{0x01, f.keyStatus, 0x02, 0x00, 0x03, 0x00}, 0x9000), nil
 		}
 		return sw(nil, 0x6A88), nil
 	case 0x20:
@@ -187,6 +194,7 @@ func (f *fakeCard) Transmit(cmd []byte) ([]byte, error) {
 				return sw(nil, 0x6982), nil
 			}
 			_, f.priv, _ = ed25519.GenerateKey(rand.Reader)
+			f.keyStatus = 0x01
 			f.touch = 0 // YubiKeys reset the touch policy on generation.
 		}
 		if f.priv == nil {
@@ -370,4 +378,48 @@ func TestHardwareKeyVectors(t *testing.T) {
 			t.Fatalf("%s: hardware vector does not verify", v.dir)
 		}
 	}
+}
+
+// A key without a recorded fingerprint must still block generation, whether
+// the card reports it through the key information DO or only through READ
+// PUBLIC KEY.
+func TestGenerateRefusesUnfingerprintedKey(t *testing.T) {
+	for _, noKeyInfo := range []bool{false, true} {
+		f := newFakeCard(3070)
+		f.noKeyInfo = noKeyInfo
+		_, f.priv, _ = ed25519.GenerateKey(rand.Reader)
+		f.keyStatus = 0x02
+		c, err := NewCard(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.VerifyAdminPIN([]byte(f.admin)); err != nil {
+			t.Fatal(err)
+		}
+		before := append([]byte(nil), f.attrs...)
+		if _, err := c.GenerateSigningKey(TouchFixed, time.Now()); !errors.Is(err, ErrSlotOccupied) {
+			t.Fatalf("noKeyInfo=%v: replaced an existing key: %v", noKeyInfo, err)
+		}
+		if !bytes.Equal(before, f.attrs) {
+			t.Fatal("algorithm attributes changed before the slot check")
+		}
+	}
+	f := newFakeCard(3070)
+	f.noKeyInfo = true
+	if _, pub := generated(t, f); len(pub) != ed25519.PublicKeySize {
+		t.Fatal("empty slot without key information was not usable")
+	}
+}
+
+func TestResponseChainIsBounded(t *testing.T) {
+	c := &Card{t: endlessCard{}}
+	if _, err := c.getData(0x006E); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("unbounded response chain: %v", err)
+	}
+}
+
+type endlessCard struct{}
+
+func (endlessCard) Transmit([]byte) ([]byte, error) {
+	return sw(make([]byte, 256), 0x6100), nil
 }

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,6 +127,11 @@ func TestRepairTrustsOnlyHardwareReleaseKeys(t *testing.T) {
 		if len(k) != ed25519.PublicKeySize || hex.EncodeToString(sum[:8]) != want[i] {
 			t.Fatalf("repair key %d does not match docs/RELEASE_KEYS.md", i)
 		}
+	}
+	// The publisher refuses any other key for releases this source can build,
+	// so a release that repair would reject cannot be published.
+	if strings.Join(repairUpdateKeys, ",") != strings.Join(release.HardwareReleaseKeys, ",") {
+		t.Fatal("repair trust differs from the publisher's hardware key allowlist")
 	}
 }
 
