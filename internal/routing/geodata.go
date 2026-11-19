@@ -161,7 +161,9 @@ func geoError(kind, group string, rule int, err error) *GeoDataError {
 	return &GeoDataError{Code: code, Kind: strings.ToLower(kind), Group: group, Rule: rule, Err: err}
 }
 
-type regexBudget struct{ count, bytes, insts, runes int }
+// regexBudget accumulates the regex estimates of a dataset; maxInsts and
+// maxRunes record the largest single expression.
+type regexBudget struct{ count, bytes, insts, runes, maxInsts, maxRunes int }
 
 // geoLimit names an exceeded decoder limit and matches errGeoLimit.
 type geoLimit string
@@ -329,10 +331,15 @@ func groupID(s string) (string, error) {
 // are ignored; attribute selectors in rule identifiers are not supported.
 // Inputs are never retained and no files are opened.
 func DecodeGeoData(geoIP, geoSite []byte) (*GeoData, error) {
+	return decodeGeoData(geoIP, geoSite, &regexBudget{})
+}
+
+// decodeGeoData decodes like DecodeGeoData and leaves the regex estimates in
+// regexes, so that tests can measure datasets against the limits.
+func decodeGeoData(geoIP, geoSite []byte, regexes *regexBudget) (*GeoData, error) {
 	d := &GeoData{ips: map[string]*ipGroup{}, sites: map[string]*domainGroup{}}
 	budget := maxGeoEntries
 	groups := maxGeoGroups
-	regexes := &regexBudget{}
 	for kind, input := range [][]byte{geoIP, geoSite} {
 		if len(input) > maxGeoBytes {
 			return nil, geoError([]string{"GeoIP", "GeoSite"}[kind], "", 0, errGeoLimit)
@@ -523,6 +530,8 @@ func decodeDomain(b []byte, g *domainGroup, budget *regexBudget) error {
 		insts, runes := regexWeight(tree)
 		budget.insts += insts
 		budget.runes += runes
+		budget.maxInsts = max(budget.maxInsts, insts)
+		budget.maxRunes = max(budget.maxRunes, runes)
 		switch {
 		case insts > maxGeoRegexInst:
 			return geoLimit("regex instructions")

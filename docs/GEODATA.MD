@@ -61,6 +61,44 @@ and provide explicit bytes; `[GeoData]` paths are metadata in that API and do
 not authorize hidden filesystem or network access. Empty dataset bytes mean
 unavailable data, not a request to open a path.
 
+### Regex budgets
+
+The GeoSite regex limits bound the memory that compiled expressions keep for
+the lifetime of a session. Go's `regexp` compiler is not bounded by expression
+length alone: counted repetition expands the program, and one-pass compilation
+of anchored patterns can keep a copy of a rune set per instruction. The decoder
+therefore estimates both costs before compiling.
+
+| Limit | Per expression | All expressions |
+|---|---|---|
+| Length | 1,024 bytes | 1 MiB of text |
+| Count | | 10,000 |
+| Estimated instructions | 4,096 | 65,536 |
+| Estimated rune-range endpoints | 32,768 | 524,288 |
+
+The limits were measured with Go 1.26 on Windows 10 (amd64) when they were set:
+
+- the heaviest datasets the limits accept retain under 3 MiB when they fill the
+  endpoint budget and about 10 MiB when they fill the instruction budget;
+- two public V2Ray-format GeoSite datasets, with 372 and 417 regular
+  expressions, use at most 10,625 instructions and 125,170 endpoints in total
+  and at most 1,500 endpoints in one expression.
+
+Only these two datasets were measured. Measure again when a GUI starts to
+bundle or recommend a different GeoSite dataset, when the Go minor version
+changes, and when the estimator or the limits change:
+
+```sh
+BIMERON_GEOSITE_MEASURE=/path/to/geosite.dat go test ./internal/routing -run '^TestMeasureGeoSiteRegexBudget$' -count=1 -v
+BIMERON_GEOSITE_MEASURE_WORST=1 go test ./internal/routing -run '^TestMeasureGeoRegexWorstCase$' -count=1 -v
+```
+
+The first command reports the dataset's usage of each limit and the heap its
+decoded form retains. It fails when the dataset uses more than half of a total
+limit or a quarter of a per-expression limit. Re-evaluate the limits before
+shipping such a dataset, and update the figures above. The second command
+reports the heap retained by the heaviest accepted inputs.
+
 ## Go API
 
 ```go

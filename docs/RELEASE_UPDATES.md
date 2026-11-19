@@ -96,6 +96,11 @@ version-specific link when editing the notes; it also gives readers the matching
 configuration and integration guides. For older releases without the link, open
 the release tag in GitHub and navigate to `README.md`.
 
+If the release changes the Go minor version, the GeoSite regex estimator or its
+limits, or the GeoSite dataset a GUI bundles or recommends, re-measure the regex
+budgets as described in [GEODATA.MD](GEODATA.MD#regex-budgets) before tagging
+and update the recorded figures.
+
 ## Publish prepared bytes
 
 The tag CI builds and tests distributions but never creates a release. Build
