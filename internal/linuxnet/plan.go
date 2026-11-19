@@ -49,10 +49,13 @@ func Firewall(name string, policy *routing.Policy, disableIPv6, replace bool) (s
 	// DNS outside the tunnel would reveal destinations even to a resolver in a
 	// direct CIDR; core sockets, loopback and the tunnel are accepted above.
 	fmt.Fprintf(&b, "add rule inet %s output meta l4proto { tcp, udp } th dport { 53, 853 } drop\n", FirewallTable)
-	// LLMNR and NetBIOS name queries disclose names to the local link; mDNS
-	// stays available for local discovery.
+	// LLMNR and NetBIOS name traffic discloses queried and local names to the
+	// local link: queries, NetBIOS replies and registrations (137 to 137) and
+	// LLMNR answers of a local responder (source port 5355). mDNS stays
+	// available for local discovery.
 	fmt.Fprintf(&b, "add rule inet %s output udp dport { 137, 5355 } drop\n", FirewallTable)
 	fmt.Fprintf(&b, "add rule inet %s output tcp dport 5355 drop\n", FirewallTable)
+	fmt.Fprintf(&b, "add rule inet %s output meta l4proto { tcp, udp } th sport 5355 drop\n", FirewallTable)
 	for _, r := range rules {
 		family := "ip"
 		if r.Prefix.Addr().Is6() {

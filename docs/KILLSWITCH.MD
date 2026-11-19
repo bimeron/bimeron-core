@@ -48,10 +48,13 @@ and removal use atomic WFP transactions.
   while the kill switch is enabled; names resolve through the tunnel DNS. DNS
   over HTTPS on port 443 to a resolver inside a `direct` CIDR is not covered.
   LLMNR (UDP and TCP 5355) and the NetBIOS name service (UDP 137), which
-  disclose queried names to the local link, are blocked the same way. mDNS
-  (UDP 5353) stays permitted where a `direct` rule covers its destination, so
-  local discovery such as printers and casting keeps working; it can disclose
-  names of local services queried on that link.
+  disclose queried and local names to the local link, are blocked the same way
+  and are also refused inbound. mDNS (UDP 5353) is not blocked separately: it
+  is permitted only where a `direct` rule covers its multicast destination
+  (`224.0.0.251/32` or `ff02::fb/128`), so a LAN rule such as `192.168.1.0/24`
+  alone does not permit it. With such a rule, local discovery such as printers
+  and casting keeps working, and it can disclose names of local services
+  queried on that link.
 - Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
   guests) does not pass the application layers these filters use and is not
   covered by the kill switch.
@@ -80,8 +83,9 @@ stop, not to a single connection attempt:
 1. **Start.** Before network inspection, key or `ssconf` resolution, bootstrap
    DNS and the transport check, the core installs the full rule set without the
    tunnel interface permit: the core executable exception, loopback, DHCP,
-   IPv6 neighbor discovery, the DNS port block (53 and 853 for every process
-   but the core, above `direct` CIDRs), `direct` CIDRs and the default block.
+   IPv6 neighbor discovery, the name port block (DNS 53 and 853, LLMNR 5355
+   and NetBIOS names 137 for every process but the core, above `direct`
+   CIDRs), `direct` CIDRs and the default block.
    Filters left by an earlier process are replaced in the same transaction.
 2. **Tunnel adapter created.** The core installs the set again with the permit
    for the new adapter before it configures routes and DNS. Each replacement is

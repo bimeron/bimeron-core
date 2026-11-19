@@ -336,23 +336,49 @@ func TestLiveCoreExceptionCondition(t *testing.T) {
 func TestDNSPortsBlockedAboveDirectRules(t *testing.T) {
 	f := &fakeAPI{}
 	armFake(t, f, 42)
-	blocks := 0
+	type portBlock struct {
+		layer wf.LayerID
+		field wf.FieldID
+		proto uint8
+		port  uint16
+	}
+	got := map[portBlock]int{}
 	for _, r := range f.rules {
-		var port, proto bool
-		for _, c := range r.Conditions {
-			port = port || c.Field == wf.FieldIPRemotePort
-			proto = proto || c.Field == wf.FieldIPProtocol
-		}
-		if !port || !proto || r.Action != wf.ActionBlock {
+		if r.Action != wf.ActionBlock {
 			continue
 		}
-		blocks++
-		if r.Weight != ^uint64(0)-5 || (r.Layer != wf.LayerALEAuthConnectV4 && r.Layer != wf.LayerALEAuthConnectV6) {
-			t.Fatal("DNS block has wrong weight or layer", r.Weight, r.Layer)
+		b := portBlock{layer: r.Layer}
+		for _, c := range r.Conditions {
+			switch c.Field {
+			case wf.FieldIPProtocol:
+				b.proto = c.Value.(uint8)
+			case wf.FieldIPRemotePort, wf.FieldIPLocalPort:
+				b.field, b.port = c.Field, c.Value.(uint16)
+			}
+		}
+		if b.port == 0 {
+			continue
+		}
+		got[b]++
+		if r.Weight != ^uint64(0)-5 {
+			t.Fatal("name port block has wrong weight", r.Weight, b)
 		}
 	}
-	if blocks != 2*len(NamePorts()) {
-		t.Fatal("DNS blocks", blocks)
+	// DNS, DNS over TLS/QUIC, LLMNR and NetBIOS names are refused on connect;
+	// LLMNR and NetBIOS names inbound too. mDNS (5353) is never blocked here.
+	want := map[portBlock]int{}
+	for _, layer := range []wf.LayerID{wf.LayerALEAuthConnectV4, wf.LayerALEAuthConnectV6} {
+		for _, p := range []DNSPort{{6, 53}, {17, 53}, {6, 853}, {17, 853}, {17, 5355}, {6, 5355}, {17, 137}} {
+			want[portBlock{layer, wf.FieldIPRemotePort, p.Protocol, p.Port}] = 1
+		}
+	}
+	for _, layer := range []wf.LayerID{wf.LayerALEAuthRecvAcceptV4, wf.LayerALEAuthRecvAcceptV6} {
+		for _, p := range []DNSPort{{17, 5355}, {6, 5355}, {17, 137}} {
+			want[portBlock{layer, wf.FieldIPLocalPort, p.Protocol, p.Port}] = 1
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("name port blocks:\n got %v\nwant %v", got, want)
 	}
 	// DNS through the core, the tunnel and loopback must keep outweighing it;
 	// these permits are the only ones matching the app, interface or loopback.

@@ -216,6 +216,17 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 				}
 			}
 		}
+		// LLMNR and NetBIOS names are also refused inbound: an accepted
+		// datagram from a direct peer would otherwise authorize a flow on which
+		// later name queries to that peer never reach the connect block.
+		if installErr == nil && (layer == wf.LayerALEAuthRecvAcceptV4 || layer == wf.LayerALEAuthRecvAcceptV6) {
+			for _, name := range LinkLocalNamePorts {
+				if err = add(layer, ^uint64(0)-5, false, match(wf.FieldIPProtocol, name.Protocol), match(wf.FieldIPLocalPort, name.Port)); err != nil {
+					installErr = err
+					break
+				}
+			}
+		}
 		if installErr != nil {
 			break
 		}
