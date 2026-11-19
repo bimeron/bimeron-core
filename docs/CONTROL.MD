@@ -98,6 +98,11 @@ free text. English and Russian texts come from the catalog described in
 [ERRORS.MD](ERRORS.MD). `ErrorStage` and progress event codes are not catalog
 codes.
 
+Display response strings as plain text. A client cannot tell a genuine daemon
+from an impostor by its text, so the CLI replaces control and bidirectional
+formatting characters in every daemon string it prints, including error codes.
+SSH prompts follow [SSH.MD](SSH.MD#gui-and-local-control-ipc).
+
 Changes to required fields or existing command semantics require a new version.
 
 ## Server identity
