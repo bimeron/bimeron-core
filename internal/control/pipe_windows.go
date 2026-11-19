@@ -261,10 +261,16 @@ func processUser(h windows.Handle) (string, bool, error) {
 const ServiceReadinessPipe = `\\.\pipe\Bimeron.Core.Readiness`
 
 func ListenServiceReadiness() (net.Listener, error) {
-	return listenServiceReadinessPipe(ServiceReadinessPipe, "SY")
+	return listenServiceReadinessPipe(ServiceReadinessPipe, readinessPipeSDDL("SY"))
 }
-func listenServiceReadinessPipe(path, objectOwner string) (net.Listener, error) {
-	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;GA;;;BA)", InputBufferSize: 1024, OutputBufferSize: 4096})
+
+// readinessPipeSDDL lets only SYSTEM create pipe instances. Administrators can
+// connect but cannot serve the pipe or change its security.
+func readinessPipeSDDL(objectOwner string) string {
+	return "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;" + pipeClientRights + ";;;BA)"
+}
+func listenServiceReadinessPipe(path, sddl string) (net.Listener, error) {
+	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: sddl, InputBufferSize: 1024, OutputBufferSize: 4096})
 }
 
 // CallServiceReadiness binds the responding process to the SCM-observed service.
