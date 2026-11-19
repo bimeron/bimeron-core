@@ -47,8 +47,9 @@ require (
 )
 
 require (
+	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20261116
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5
-	golang.getoutline.org/sdk v0.0.21
+	golang.getoutline.org/sdk v0.0.23
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 )

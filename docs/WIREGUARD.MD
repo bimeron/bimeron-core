@@ -60,12 +60,12 @@ except for required keys.
 
 | Section | Key | Notes |
 |---|---|---|
-| Interface | `PrivateKey` | Required. 32 bytes in base64. Secret. |
+| Interface | `PrivateKey` | Required. 32 bytes in base64, not all zero. Secret. |
 | Interface | `Address` | Required. A list of IPv4/IPv6 addresses or prefixes; may repeat. These are the tunnel addresses. |
 | Interface | `DNS` | A list of IP addresses (no search domains); may repeat. |
 | Interface | `MTU` | 576–9000. Tunnel MTU; the default is 1420. IPv6 addresses need at least 1280. |
 | Interface | `ListenPort` | 0–65535. The local UDP port. |
-| Peer | `PublicKey` | Required. |
+| Peer | `PublicKey` | Required. Not all zero. |
 | Peer | `PresharedKey` | Optional. Secret. |
 | Peer | `Endpoint` | Required. `host:port`; IPv6 goes in brackets. |
 | Peer | `AllowedIPs` | Required. A list of prefixes; may repeat. |
@@ -87,9 +87,9 @@ the options in use.
 
 | Version | Options |
 |---|---|
-| 1.0 | `Jc` (0–128), `Jmin`, `Jmax` (0–65507, `Jmin` ≤ `Jmax`), `S1`, `S2` (0–65387), `H1`–`H4` (single uint32 values) |
-| 1.5 | `I1`–`I5`: signature packets written as tags `<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, plus the data tags `<d>`, `<ds>`, `<dz>` |
-| 2.0 | `S3`, `S4`; `H1`–`H4` as ranges `lo-hi` |
+| 1.0 | `Jc` (0–128), `Jmin`, `Jmax` (0–65507, `Jmin` ≤ `Jmax`), `S1` (0–65359), `S2` (0–65415), `H1`–`H4` (single uint32 values) |
+| 1.5 | `I1`–`I5`: signature packets written as tags `<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, plus the data tags `<d>`, `<ds>` and `<dz N>` (a size field of 1–8 bytes). `0x` before hex bytes is optional. One packet is at most 65,507 bytes |
+| 2.0 | `S3` (0–65443), `S4`; `H1`–`H4` as ranges `lo-hi`. `S4` plus 32, the tunnel MTU and the largest `ContentPaddingAddition` must fit 65,507 bytes |
 | 3.0 | `HeaderProtectionKey` (base64, secret; requires every S1–S4 to be at least 12), `ContentPaddingAddition` (range), `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts` (ranges, at least 1); `PersistentKeepalive` as a range |
 | 3.1 | `RandomTrailers`, `DisableCookies` (`true`, `false`, `on`, `off`) |
 
@@ -220,6 +220,7 @@ An `edit` operation is `{"op":"set_field","section":"Interface"|"Peer","key":K,"
 - `value: ""` removes every line of the key.
 - Keys must use the canonical spelling. Values containing `#`, CR or LF, or
   with spaces at either end, fail with `value_has_invalid_characters`.
+- A batch holds at most 256 operations; more fail with `invalid_request`.
 - Operations run in order. Any failure returns the original text and its
   inspection, with `error` and the failing problem.
 - An edit does not validate the result; check `problems` in the response.
@@ -228,7 +229,9 @@ Problems located in WireGuard text carry `"document": "wireguard"`. Their
 `section`, `field` and `line` then refer to that text. When the text was
 read through `[AccessKey] File`, `source` is `File`. A missing or unreadable
 file reports `file_unreadable` (or `file_not_regular`, `file_path_not_local`,
-`file_too_large`) at `AccessKey`/`File` without the `document` marker.
+`file_too_large`) at `AccessKey`/`File` without the `document` marker. Text that mixes WireGuard and Bimeron sections fails with
+`document_format_ambiguous` (`document: "wireguard"`, `source: "File"`)
+instead of being read as a URI key.
 
 ### Capabilities
 
@@ -242,3 +245,60 @@ file reports `file_unreadable` (or `file_not_regular`, `file_path_not_local`,
 
 Older daemons omit the object. An older CLI answers `bimeron wireguard` with an
 unknown-command error and a nonzero exit.
+
+## Runtime
+
+Design record: [ADR 0041](adr/0041-wireguard-amneziawg-client.md).
+
+- Engine: `github.com/amnezia-vpn/amneziawg-go/v3` `v3.1.20261116` (MIT) with
+  its gVisor netstack. Plain WireGuard runs on the same engine without
+  AmneziaWG options.
+- The WireGuard UDP socket is opened through the session's outbound path
+  (desktop interface binding, Android protect, Apple host network), so it
+  never loops into Bimeron's TUN. The kill switch already permits the core's
+  own sockets. Datagrams from other sources are dropped.
+- The endpoint name is resolved on the outbound path for each session
+  generation. Every reconnect, including one after a network change, starts
+  a new device and resolves the name again.
+- The session reports connected only after a completed handshake (up to 20
+  seconds), followed by the usual transport check. A missing handshake fails
+  with the retryable `wireguard_handshake_timeout`. Health checks force a
+  handshake when the last one is older than 150 seconds.
+- AllowedIPs scope applies to all upstream traffic, including DNS queries
+  and checks. Names given to the SOCKS5 server are resolved through Bimeron's
+  DNS servers, and those queries follow the scope too.
+- UDP datagrams larger than the tunnel MTU are fragmented by the inner
+  stack. Each UDP socket is limited to 64 tunnel destinations and 64 queued
+  replies.
+- The engine logger is silent. Keys never appear in logs, status, problems or
+  diagnostics.
+
+## Compatibility matrix
+
+| Server | Client profile | Loopback CI test | Live check |
+|---|---|---|---|
+| upstream `wireguard-go` | plain WireGuard | yes: TCP, UDP, IPv6, fragmented UDP | pending |
+| `amneziawg-go` without options | plain WireGuard | yes | pending |
+| `amneziawg-go` 1.0 options | AWG 1.0 | yes | pending |
+| `amneziawg-go` with client-side I1–I5 | AWG 1.5 | yes | pending |
+| `amneziawg-go` 2.0 options (S3/S4, H ranges) | AWG 2.0 | yes | pending |
+| `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | pending |
+| mismatched AWG options or keys | — | yes: handshake fails | — |
+
+Platforms: Windows and Linux will be checked live. Android (AAR) and Apple
+builds compile and their unit tests pass, but they have **not been
+validated live**.
+
+## Tests
+
+`internal/wgconf` contains parser, editor and importer tests and the fuzz
+targets `FuzzParse`, `FuzzEdit` and `FuzzImportURI`. `internal/wireguard`
+starts in-process reference servers (`internal/wireguard/wgtest`) on
+127.0.0.1: upstream `wireguard-go` and `amneziawg-go` in 1.x, 2.0 and 3.1
+modes. Run these tests in CI or on a test VM, not on a machine whose network
+depends on an installed Bimeron:
+
+```sh
+go test ./internal/wgconf ./internal/wireguard/... ./internal/config ./cmd/bimeron ./core -run 'WireGuard|AWG|AmneziaWG|Upstream|Import|Edit|Parse|Coverage|Detect'
+go test ./internal/wgconf -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s
+```

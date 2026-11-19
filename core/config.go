@@ -63,6 +63,9 @@ type SessionConfig struct {
 	// SSHHostKeys the session fails with ssh_known_hosts_missing. The Android
 	// embedding always sets it.
 	SSHProfileOnly bool
+	// AllowedIPsMode is the WireGuard [Routing] AllowedIPsMode; empty means
+	// direct. Other upstreams ignore it.
+	AllowedIPsMode string
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters
@@ -176,14 +179,24 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, problem.Of(err).In("Interface").At("DNS")
 	}
+	// WireGuard DNS applies only when the profile does not set its own.
+	if wgDNS := copy.WireGuardDNS(); len(wgDNS) > 0 {
+		dns = wgDNS
+	}
 	if copy.Tunnel.Mode == "vpn" {
 		p, err = copy.VPNPolicy()
 	}
 	if err != nil {
 		return SessionConfig{}, err
 	}
+	if copy.AllowedIPsMode == "only" {
+		// Bimeron rules and Default do not apply; AllowedIPs alone decide.
+		if p, err = routing.Compile(routing.Config{Default: routing.Proxy}); err != nil {
+			return SessionConfig{}, err
+		}
+	}
 	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: copy.Tunnel.Name, Listen: copy.Tunnel.Listen, MTU: copy.Tunnel.MTU,
-		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true}, nil
+		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 
 // maxKeyFile matches the profile key-file limit.

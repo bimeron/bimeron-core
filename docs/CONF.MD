@@ -70,6 +70,21 @@ Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
 allowed. The maximum key-file size is 64 KiB. See [Referenced files](#referenced-files)
 for the rules that apply to every path in a profile.
 
+### WireGuard and AmneziaWG (experimental)
+
+```ini
+[AccessKey]
+File = home.wg.conf
+```
+
+When the file holds wg-quick or AmneziaWG text (an `[Interface]` and one
+`[Peer]` section), Core reads it as a WireGuard profile and never rewrites it.
+The same options may instead be written directly in `[AccessKey]` with
+`Type = wireguard`. `Address`, `DNS` and `MTU` in that text describe the
+tunnel, not the Bimeron TUN. WireGuard `DNS` is used only when
+`[Interface] DNS` is not set. See [WIREGUARD.MD](WIREGUARD.MD) for accepted
+keys, AmneziaWG versions, links and the desktop bridge.
+
 ### Inline static key
 
 ```ini
@@ -686,6 +701,7 @@ on the upstream server.
 | Option | Default | Meaning |
 |---|---|---|
 | `Default` | `proxy` | Action for connections matching no rule. Allowed values: `proxy`, `direct`, `block`. |
+| `AllowedIPsMode` | `direct` | WireGuard profiles only. How AllowedIPs combines with rules: `direct`, `block`, `ignore` or `only`; see [AllowedIPs priority](WIREGUARD.MD#allowedips-priority). |
 
 | Action | Behavior |
 |---|---|

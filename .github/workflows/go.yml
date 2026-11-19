@@ -141,6 +141,14 @@ jobs:
           go test ./internal/routing -run '^$' -bench 'Geo' -benchtime=200ms -count=1
       - name: Check CLI, core, and control races
         run: CGO_ENABLED=1 go test -race ./cmd/bimeron ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
+      - name: WireGuard and AmneziaWG reference servers, races and fuzzing
+        # In-process upstream wireguard-go and amneziawg-go 1.x/2.0/3.1
+        # servers on 127.0.0.1; see docs/WIREGUARD.MD.
+        run: |
+          CGO_ENABLED=1 go test -race -count=1 ./internal/wgconf ./internal/wireguard/...
+          for target in FuzzParse FuzzEdit FuzzImportURI; do
+            go test ./internal/wgconf -run '^$' -fuzz "^${target}\$" -fuzztime=20s
+          done
       - name: VLESS and VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"

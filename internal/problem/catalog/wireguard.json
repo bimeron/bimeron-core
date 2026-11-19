@@ -1,6 +1,16 @@
 {
   "secret_fields": ["PrivateKey", "PresharedKey", "HeaderProtectionKey"],
   "codes": {
+    "invalid_wireguard_transport": {
+      "kind": "connection",
+      "en": "The WireGuard tunnel could not be started from this profile. Check the WireGuard configuration.",
+      "ru": "Не удалось запустить туннель WireGuard по этому профилю. Проверьте конфигурацию WireGuard."
+    },
+    "wireguard_handshake_timeout": {
+      "kind": "connection",
+      "en": "The WireGuard server did not answer the handshake. Check the server address, keys and AmneziaWG settings, or the network.",
+      "ru": "Сервер WireGuard не ответил на рукопожатие. Проверьте адрес сервера, ключи и параметры AmneziaWG или сеть."
+    },
     "document_format_unknown": {
       "kind": "config",
       "en": "This text is neither a Bimeron profile nor a WireGuard or AmneziaWG configuration.",

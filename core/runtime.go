@@ -239,6 +239,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			return nil, nil, nil, nil, fault("invalid_tcp_transport", false)
 		}
 		tcp, udp, closeTransport = client, client, client.Close
+	} else if p.Type == "wireguard" {
+		client, wgErr := startWireGuard(ctx, c, p, outbound, report)
+		if wgErr != nil {
+			return nil, nil, nil, nil, wgErr
+		}
+		tcp, udp, closeTransport = client, client, client.Close
 	} else {
 		tcp, err = proxy.OutlineProfile(p, outbound)
 		if err != nil {
@@ -346,7 +352,13 @@ func (s *vpnSession) Wait(ctx context.Context) error {
 			p, err := s.platform.Inspect(ctx, s.cfg.Name, false)
 			return p.identity, err
 		},
-		probe: func(ctx context.Context) error { _, err := vpn.Check(ctx, s.tcp, s.udp, s.cfg.DNS); return err },
+		probe: func(ctx context.Context) error {
+			if p, ok := s.tcp.(interface{ Probe(context.Context) error }); ok {
+				return p.Probe(ctx)
+			}
+			_, err := vpn.Check(ctx, s.tcp, s.udp, s.cfg.DNS)
+			return err
+		},
 	}
 	for {
 		select {
@@ -522,6 +534,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		client, clientErr := tuic.New(p, net.Dialer{Timeout: 15 * time.Second})
 		if clientErr != nil {
 			return nil, fault("invalid_tcp_transport", false)
+		}
+		d, closeTransport = client, client.Close
+	} else if p.Type == "wireguard" {
+		client, wgErr := startWireGuard(resolveCtx, c, p, net.Dialer{Timeout: 15 * time.Second}, report)
+		if wgErr != nil {
+			return nil, wgErr
 		}
 		d, closeTransport = client, client.Close
 	} else {
