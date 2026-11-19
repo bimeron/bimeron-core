@@ -179,14 +179,18 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, problem.Of(err).In("Interface").At("DNS")
 	}
-	// WireGuard DNS applies only when the profile does not set its own.
-	if wgDNS := copy.WireGuardDNS(); len(wgDNS) > 0 {
-		dns = wgDNS
-	}
-	// Likewise the WireGuard MTU sets the adapter MTU.
 	mtu := copy.Tunnel.MTU
-	if wgMTU := copy.WireGuardTunnelMTU(); wgMTU != 0 {
-		mtu = wgMTU
+	if copy.IsWireGuard() {
+		// Only the WireGuard text sets DNS and MTU for these profiles; Bimeron
+		// [Interface] values are ignored, and missing lines mean automatic
+		// behavior.
+		dns, mtu = DefaultConfig().DNS, DefaultConfig().MTU
+		if wgDNS := copy.WireGuardDNS(); len(wgDNS) > 0 {
+			dns = wgDNS
+		}
+		if wgMTU := copy.WireGuardTunnelMTU(); wgMTU != 0 {
+			mtu = wgMTU
+		}
 	}
 	if copy.Tunnel.Mode == "vpn" {
 		p, err = copy.VPNPolicy()

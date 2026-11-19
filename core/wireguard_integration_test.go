@@ -100,7 +100,13 @@ func TestWireGuardTextSetsAdapterMTUAndDNS(t *testing.T) {
 		{"MTU = 1300\nDNS = 10.8.0.1\n", "", 1300, "10.8.0.1"},
 		{"", "", 1420, "1.1.1.1"},
 		{"MTU = 9000\n", "", 1500, "1.1.1.1"},
-		{"MTU = 1300\nDNS = 10.8.0.1\n", "[Interface]\nMTU = 1400\nDNS = 9.9.9.9\n", 1400, "9.9.9.9"},
+		// Conflicting Bimeron values are ignored: the WireGuard text wins.
+		{"MTU = 1300\nDNS = 10.8.0.1\n", "[Interface]\nMTU = 1400\nDNS = 9.9.9.9\n", 1300, "10.8.0.1"},
+		// Matching values.
+		{"MTU = 1400\nDNS = 9.9.9.9\n", "[Interface]\nMTU = 1400\nDNS = 9.9.9.9\n", 1400, "9.9.9.9"},
+		// No lines in the WireGuard text: automatic; Bimeron values are not
+		// carried over.
+		{"", "[Interface]\nMTU = 1300\nDNS = 9.9.9.9\n", 1420, "1.1.1.1"},
 	} {
 		if err := os.WriteFile(filepath.Join(dir, "k.conf"), []byte(fmt.Sprintf(wg, tc.wgExtra)), 0o600); err != nil {
 			t.Fatal(err)

@@ -113,10 +113,11 @@ func (c *File) validateAllowedIPsMode() error {
 // IsWireGuard reports a WireGuard or AmneziaWG access key.
 func (c *File) IsWireGuard() bool { return c.profile != nil && c.profile.Type == "wireguard" }
 
-// WireGuardDNS returns the WireGuard text's IPv4 resolvers (at most four)
-// when the profile does not set [Interface] DNS itself.
+// WireGuardDNS returns the WireGuard text's unicast IPv4 resolvers (at most
+// four). For WireGuard profiles only the WireGuard text sets DNS: a Bimeron
+// [Interface] DNS is ignored.
 func (c *File) WireGuardDNS() []string {
-	if !c.IsWireGuard() || c.lines["Interface.DNS"] > 0 {
+	if !c.IsWireGuard() {
 		return nil
 	}
 	var out []string
@@ -130,10 +131,10 @@ func (c *File) WireGuardDNS() []string {
 }
 
 // WireGuardTunnelMTU returns the adapter MTU taken from the WireGuard text's
-// MTU when the profile does not set [Interface] MTU itself, clamped to the
-// adapter range 1280-1500. Zero means the profile's own or default MTU.
+// MTU, clamped to the adapter range 1280-1500, or zero when the text has no
+// MTU. For WireGuard profiles a Bimeron [Interface] MTU is ignored.
 func (c *File) WireGuardTunnelMTU() int {
-	if !c.IsWireGuard() || c.lines["Interface.MTU"] > 0 || c.profile.WireGuard.MTU == 0 {
+	if !c.IsWireGuard() || c.profile.WireGuard.MTU == 0 {
 		return 0
 	}
 	return min(max(c.profile.WireGuard.MTU, 1280), 1500)

@@ -133,9 +133,10 @@ order), `awg_header_overlap`, `awg_header_protection_requires_padding`
   because Bimeron's resolver forwards to IPv4 servers only. Without usable
   entries the default 1.1.1.1 applies. DNS queries are routed like other
   traffic, so a resolver outside AllowedIPs follows `AllowedIPsMode`.
-- A Bimeron `[Interface] MTU` or `DNS` in a WireGuard profile currently still
-  overrides the WireGuard value. How such profiles migrate is being agreed;
-  the agreed rule will replace this one.
+- A Bimeron `[Interface] MTU` or `DNS` in a WireGuard profile is ignored when
+  connecting, including profiles written by older versions: the WireGuard
+  value wins on a conflict, and a missing WireGuard line means automatic
+  behavior, not the old Bimeron value. Other protocols are unchanged.
 - `Mode = proxy` (SOCKS5, TCP only), `IPv6 = disable` and `KillSwitch` work as
   for other upstreams.
 

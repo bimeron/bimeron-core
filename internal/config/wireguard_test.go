@@ -70,7 +70,7 @@ func TestWireGuardFileDNS(t *testing.T) {
 	path := filepath.Join(dir, "p.conf")
 	for profile, want := range map[string]string{
 		"[Profile]\nVersion = 1\n[AccessKey]\nFile = k.conf\n":                             "10.8.0.1",
-		"[Profile]\nVersion = 1\n[AccessKey]\nFile = k.conf\n[Interface]\nDNS = 9.9.9.9\n": "",
+		"[Profile]\nVersion = 1\n[AccessKey]\nFile = k.conf\n[Interface]\nDNS = 9.9.9.9\n": "10.8.0.1",
 	} {
 		if err := os.WriteFile(path, []byte(profile), 0o600); err != nil {
 			t.Fatal(err)
