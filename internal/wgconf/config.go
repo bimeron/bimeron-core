@@ -496,12 +496,13 @@ func awgValue(key, value string) (string, error) {
 		return r.String(), invalidArg(err, key)
 	case "RandomTrailers", "DisableCookies":
 		switch strings.ToLower(value) {
-		case "true", "on":
+		// amneziawg-tools write on/off or 1/0.
+		case "true", "on", "1":
 			return "true", nil
-		case "false", "off":
+		case "false", "off", "0":
 			return "false", nil
 		}
-		return "", problem.New("boolean_invalid", "AmneziaWG option must be true, false, on or off")
+		return "", problem.New("boolean_invalid", "AmneziaWG option must be true, false, on, off, 1 or 0")
 	}
 	return "", problem.New("option_unknown", "unknown WireGuard option")
 }

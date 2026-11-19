@@ -109,7 +109,7 @@ the oldest version that has all the options in use.
 | 1.5 | `I1`–`I5`: signature packets written as tags `<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, plus the data tags `<d>`, `<ds>` and `<dz N>` (a size field of 1–8 bytes). `0x` before hex bytes is optional. One packet is at most 65,507 bytes |
 | 2.0 | `S3` (0–65443), `S4`; `H1`–`H4` as ranges `lo-hi`. `S4` plus 32 and the tunnel MTU must fit 65,507 bytes (the engine caps `ContentPaddingAddition` itself) |
 | 3.0 | `HeaderProtectionKey` (base64, secret; requires every S1–S4 to be at least 12), `ContentPaddingAddition` (range), `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts` (ranges, at least 1); `PersistentKeepalive` as a range |
-| 3.1 | `RandomTrailers`, `DisableCookies` (`true`, `false`, `on`, `off`) |
+| 3.1 | `RandomTrailers`, `DisableCookies` (`true`, `false`, `on`, `off`, `1`, `0`) |
 
 H1–H4 must not overlap. Unset values count as 1, 2, 3 and 4, which are the
 plain WireGuard message types. Server-side options (H1–H4, S1–S4,

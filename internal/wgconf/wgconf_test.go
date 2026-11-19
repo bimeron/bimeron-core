@@ -418,3 +418,15 @@ func TestPacketSizes(t *testing.T) {
 		t.Fatalf("sizes %d %d %d %d", handshake, transport, junk, signature)
 	}
 }
+
+func TestAWGBooleanSpellings(t *testing.T) {
+	for value, want := range map[string]string{"1": "true", "on": "true", "true": "true", "0": "false", "off": "false", "false": "false"} {
+		c, err := Parse(strings.Replace(sample(), "DNS = ", "RandomTrailers = "+value+"\nDisableCookies = "+value+"\nDNS = ", 1))
+		if err != nil {
+			t.Fatalf("%s: %v", value, err)
+		}
+		if c.AWG["RandomTrailers"] != want || !strings.Contains(c.UAPI(netip.MustParseAddrPort("192.0.2.1:1"), nil), "random_trailers="+want+"\n") {
+			t.Fatalf("%s: got %q", value, c.AWG["RandomTrailers"])
+		}
+	}
+}
