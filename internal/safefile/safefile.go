@@ -21,9 +21,11 @@ var (
 )
 
 // Read returns the contents of the data file at path if it has at most limit
-// bytes. The path is checked with Stat before it is opened, so devices, FIFOs
-// and named pipes are never opened; the opened file must be the same file and
-// pass the same check. A data file is a regular file; on Windows it may also
+// bytes. The path is checked with Stat before it is opened, so a device, FIFO
+// or named pipe found there is not opened. A file swapped in after that check
+// is opened (on Unix without blocking) and then rejected: the opened file must
+// be the same file and pass the same check before any data is read. A data
+// file is a regular file; on Windows it may also
 // carry a reparse point that is not a link, such as a OneDrive cloud file, and
 // the opened handle must be a local disk file. Other errors come from the file
 // system and name the path.
