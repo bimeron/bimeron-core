@@ -430,3 +430,25 @@ func TestAWGBooleanSpellings(t *testing.T) {
 		}
 	}
 }
+
+func TestGeneratedKeys(t *testing.T) {
+	private, public, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := keyOf(private)
+	if k[0]&7 != 0 || k[31]&128 != 0 || k[31]&64 == 0 {
+		t.Fatal("private key not clamped")
+	}
+	if derived, err := PublicKey(private); err != nil || derived != public {
+		t.Fatal("public key mismatch")
+	}
+	if _, err := PublicKey(base64.StdEncoding.EncodeToString(make([]byte, 32))); code(err) != "wireguard_key_invalid" {
+		t.Fatal("zero key accepted")
+	}
+	a, _ := GeneratePresharedKey()
+	b, _ := GeneratePresharedKey()
+	if a == b || len(keyOf(a)) != 32 {
+		t.Fatal("preshared keys")
+	}
+}

@@ -297,7 +297,8 @@ section or field) instead of being read as a URI key.
 ```json
 {"supported":true,"experimental":true,"protocols":["wireguard","amneziawg"],
  "awg_versions":["1.0","1.5","2.0","3.0","3.1"],"uri_schemes":["vpn","wireguard","wg"],
- "allowed_ips_modes":["direct","block","ignore","only"],"document_api":1}
+ "allowed_ips_modes":["direct","block","ignore","only"],"document_api":1,
+ "key_operations":["generate_keypair","public_key","generate_preshared_key"]}
 ```
 
 The values are static for the build and the same on every desktop platform.

@@ -161,3 +161,35 @@ func TestValidateProfileWithWireGuardFile(t *testing.T) {
 		t.Fatalf("missing file %s", out.String())
 	}
 }
+
+func TestWireGuardBridgeKeyOperations(t *testing.T) {
+	r, raw := callWireGuard(t, map[string]any{"version": 1, "op": "generate_keypair"})
+	if r.Error != "" || len(r.PrivateKey) != 44 || len(r.PublicKey) != 44 {
+		t.Fatalf("keypair %s", raw)
+	}
+	private, public := r.PrivateKey, r.PublicKey
+	r, _ = callWireGuard(t, map[string]any{"version": 1, "op": "public_key", "private_key": private})
+	if r.Error != "" || r.PublicKey != public {
+		t.Fatal("derived public key differs")
+	}
+	r, raw = callWireGuard(t, map[string]any{"version": 1, "op": "public_key", "private_key": "not-a-key"})
+	if problemCode(r) != "wireguard_key_invalid" || strings.Contains(raw, "not-a-key") || r.PublicKey != "" {
+		t.Fatalf("invalid key %s", raw)
+	}
+	r, _ = callWireGuard(t, map[string]any{"version": 1, "op": "generate_preshared_key"})
+	if r.Error != "" || len(r.PresharedKey) != 44 {
+		t.Fatal("preshared key")
+	}
+	r, _ = callWireGuard(t, map[string]any{"version": 1, "op": "capabilities"})
+	if strings.Join(r.Capabilities.KeyOperations, ",") != "generate_keypair,public_key,generate_preshared_key" {
+		t.Fatalf("key operations %v", r.Capabilities.KeyOperations)
+	}
+	for _, bad := range []any{
+		map[string]any{"version": 1, "op": "public_key"},
+		map[string]any{"version": 1, "op": "generate_keypair", "private_key": private},
+	} {
+		if r, _ := callWireGuard(t, bad); r.Error == "" {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+}

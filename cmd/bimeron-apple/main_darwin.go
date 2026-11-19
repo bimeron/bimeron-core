@@ -303,5 +303,6 @@ func embeddedWireGuard(w *core.WireGuardCapabilities) *core.WireGuardCapabilitie
 	}
 	embedded := *w
 	embedded.DocumentAPI = 0
+	embedded.KeyOperations = nil
 	return &embedded
 }

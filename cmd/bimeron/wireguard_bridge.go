@@ -24,6 +24,7 @@ type wireguardRequest struct {
 	Op         string                `json:"op"`
 	Text       *string               `json:"text,omitempty"`
 	URI        *string               `json:"uri,omitempty"`
+	PrivateKey *string               `json:"private_key,omitempty"`
 	Operations *[]wireguardOperation `json:"operations,omitempty"`
 }
 
@@ -31,17 +32,21 @@ type wireguardRequest struct {
 type wireguardResponse struct {
 	Version      int                         `json:"version"`
 	Capabilities *core.WireGuardCapabilities `json:"capabilities,omitempty"`
-	Format       string                      `json:"format,omitempty"`
-	Text         *string                     `json:"text,omitempty"`
-	Name         *string                     `json:"name,omitempty"`
-	Protocol     string                      `json:"protocol,omitempty"`
-	AWGVersion   *string                     `json:"awg_version,omitempty"`
-	Fields       map[string]string           `json:"fields,omitempty"`
-	FieldsError  string                      `json:"fields_error,omitempty"`
-	SecretFields []string                    `json:"secret_fields,omitempty"`
-	AllowedIPs   *wgconf.AllowedIPs          `json:"allowed_ips,omitempty"`
-	Error        string                      `json:"error,omitempty"`
-	Problems     *[]*problem.Error           `json:"problems,omitempty"`
+	// Key operation results; secrets.
+	PrivateKey   string             `json:"private_key,omitempty"`
+	PublicKey    string             `json:"public_key,omitempty"`
+	PresharedKey string             `json:"preshared_key,omitempty"`
+	Format       string             `json:"format,omitempty"`
+	Text         *string            `json:"text,omitempty"`
+	Name         *string            `json:"name,omitempty"`
+	Protocol     string             `json:"protocol,omitempty"`
+	AWGVersion   *string            `json:"awg_version,omitempty"`
+	Fields       map[string]string  `json:"fields,omitempty"`
+	FieldsError  string             `json:"fields_error,omitempty"`
+	SecretFields []string           `json:"secret_fields,omitempty"`
+	AllowedIPs   *wgconf.AllowedIPs `json:"allowed_ips,omitempty"`
+	Error        string             `json:"error,omitempty"`
+	Problems     *[]*problem.Error  `json:"problems,omitempty"`
 }
 
 func (r *wireguardResponse) inspect(d *wgconf.Document, withText bool) {
@@ -98,10 +103,25 @@ func wireguardBridge(in io.Reader, out io.Writer) error {
 		return writeWireGuard(out, wireguardResponse{}, invalidWireGuardRequest("invalid request"))
 	}
 	needsText := req.Op == "detect" || req.Op == "inspect" || req.Op == "edit"
-	if needsText != (req.Text != nil) || (req.Op == "import_uri") != (req.URI != nil) || (req.Op == "edit") != (req.Operations != nil) {
+	if needsText != (req.Text != nil) || (req.Op == "public_key") != (req.PrivateKey != nil) || (req.Op == "import_uri") != (req.URI != nil) || (req.Op == "edit") != (req.Operations != nil) {
 		return writeWireGuard(out, wireguardResponse{}, invalidWireGuardRequest("invalid request members for operation"))
 	}
 	switch req.Op {
+	case "generate_keypair":
+		private, public, err := wgconf.GenerateKeyPair()
+		if err != nil {
+			return writeWireGuard(out, wireguardResponse{}, problem.New("unclassified", "key generation failed"))
+		}
+		return writeWireGuard(out, wireguardResponse{PrivateKey: private, PublicKey: public}, nil)
+	case "public_key":
+		public, err := wgconf.PublicKey(*req.PrivateKey)
+		return writeWireGuard(out, wireguardResponse{PublicKey: public}, err)
+	case "generate_preshared_key":
+		psk, err := wgconf.GeneratePresharedKey()
+		if err != nil {
+			return writeWireGuard(out, wireguardResponse{}, problem.New("unclassified", "key generation failed"))
+		}
+		return writeWireGuard(out, wireguardResponse{PresharedKey: psk}, nil)
 	case "capabilities":
 		return writeWireGuard(out, wireguardResponse{Capabilities: core.WireGuardSupport()}, nil)
 	case "detect":
