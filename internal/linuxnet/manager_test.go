@@ -508,3 +508,58 @@ func TestResolvedDoesNotRevertReusedInterfaceName(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvedDNSGuardLifecycle(t *testing.T) {
+	ctx := context.Background()
+	m, f, _ := testManager(t)
+	if err := os.WriteFile(m.Resolver, []byte("nameserver 127.0.0.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	scripts, journals := guardScripts(t, m, f)
+	if err := m.Configure(ctx, "Bimeron", 1420, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(*scripts) != 1 {
+		t.Fatalf("expected one nft transaction, got %v", *scripts)
+	}
+	for _, fragment := range []string{
+		"create table inet bimeron_core",
+		"policy accept",
+		`oifname != "lo" oifname != "Bimeron" meta mark != 0x524c meta l4proto { tcp, udp } th dport { 53, 853 } drop`,
+	} {
+		if !strings.Contains((*scripts)[0], fragment) {
+			t.Fatalf("missing %q in DNS guard", fragment)
+		}
+	}
+	if s := (*journals)[0]; s == nil || !s.DNSGuard || s.Guard || s.DNSMethod != "" {
+		t.Fatalf("unexpected journal before DNS guard installation: %+v", s)
+	}
+	f.fail = "resolvectl revert"
+	if err := m.Recover(ctx, true); err == nil || !f.guard {
+		t.Fatal("incomplete recovery must keep DNS protection")
+	}
+	f.fail = ""
+	if err := m.Recover(ctx, true); err != nil || f.guard {
+		t.Fatal("recovery must release the session DNS guard even when preserving a kill switch", err)
+	}
+	if s, err := m.Load(); err != nil || s != nil {
+		t.Fatal("journal remained after recovery", s, err)
+	}
+}
+
+func TestResolvedDNSGuardInstallFailureRollsBack(t *testing.T) {
+	m, f, _ := testManager(t)
+	if err := os.WriteFile(m.Resolver, []byte("nameserver 127.0.0.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f.fail = "nft -f -"
+	if err := m.Configure(context.Background(), "Bimeron", 1420, nil, false, false); err == nil {
+		t.Fatal("setup accepted an unprotected resolver")
+	}
+	if strings.Contains(strings.Join(f.calls, "\n"), "resolvectl ") {
+		t.Fatal("resolver configured before guard installation")
+	}
+	if s, err := m.Load(); s != nil || err != nil {
+		t.Fatal("incomplete rollback", s, err)
+	}
+}

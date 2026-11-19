@@ -32,6 +32,7 @@ type State struct {
 	Index        int
 	Routing      bool
 	Guard        bool
+	DNSGuard     bool
 	DNSMethod    string
 	DNSPath      string
 	DNSOriginal  []byte
@@ -218,7 +219,8 @@ func (m *Manager) guardPresent(ctx context.Context) (bool, error) {
 			}
 			// nftables 1.0.6 preserves table comments but omits them from JSON.
 			text, textErr := m.command(ctx, "nft", "list", "table", "inet", FirewallTable)
-			if textErr == nil && bytes.Contains(text, []byte(`comment "`+Owner+`"`)) {
+			header, body, _ := strings.Cut(string(text), "{")
+			if textErr == nil && strings.TrimSpace(header) == "table inet "+FirewallTable && strings.HasPrefix(strings.TrimSpace(body), `comment "`+Owner+`"`) {
 				return true, nil
 			}
 			return false, fmt.Errorf("nftables table bimeron_core belongs to another owner")
@@ -237,7 +239,7 @@ func (m *Manager) Guard(ctx context.Context, name string, p *routing.Policy, dis
 	if err != nil {
 		return err
 	}
-	if old != nil && (old.Routing || old.DNSMethod != "") {
+	if old != nil && (old.DNSGuard || old.Routing || old.DNSMethod != "") {
 		return fmt.Errorf("Bimeron network recovery is pending")
 	}
 	present, err := m.guardPresent(ctx)
@@ -363,6 +365,22 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 	}
 	resolved := strings.HasPrefix(path, "/run/systemd/resolve/") || bytes.Contains(original, []byte("nameserver 127.0.0.53")) || bytes.Contains(original, []byte("nameserver 127.0.0.54"))
 	if resolved {
+		if !s.Guard {
+			present, err := m.guardPresent(ctx)
+			if err != nil {
+				return err
+			}
+			if present {
+				return fmt.Errorf("nftables table %s is already in use", FirewallTable)
+			}
+			s.DNSGuard = true
+			if err := m.save(s); err != nil {
+				return err
+			}
+			if _, err := m.Run(ctx, "nft", dnsFirewall(s.Name), "-f", "-"); err != nil {
+				return fmt.Errorf("cannot install nftables DNS guard: %w", err)
+			}
+		}
 		s.DNSMethod = "resolved"
 		if err = m.save(s); err != nil {
 			return err
@@ -501,7 +519,7 @@ func (m *Manager) Recover(ctx context.Context, preserveGuard bool) error {
 		}
 	}
 	// Keep protection if another cleanup operation failed.
-	if s.Guard && !preserveGuard && len(failures) == 0 {
+	if (s.DNSGuard || s.Guard && !preserveGuard) && len(failures) == 0 {
 		present, e := m.guardPresent(ctx)
 		if e == nil && present {
 			_, e = m.command(ctx, "nft", "delete", "table", "inet", FirewallTable)
@@ -510,6 +528,7 @@ func (m *Manager) Recover(ctx context.Context, preserveGuard bool) error {
 			failures = append(failures, e)
 		} else {
 			s.Guard = false
+			s.DNSGuard = false
 		}
 	}
 	if e := m.save(s); e != nil {
