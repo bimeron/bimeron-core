@@ -19,11 +19,9 @@ It also amends the CONTROL.MD statement that a maintenance seal releases
 protection, and parts of [ADR 0040](0040-signed-core-store.md) listed under
 Interactions. It builds on the service update hold of
 [ADR 0041](0041-kill-switch-across-service-updates.md), which is recorded
-separately and must land first or together with this record. For bundle
-sessions, the ADR 0041 update record holds only the profile identifier,
-because a bundle start has no configuration path. It takes over both items
-that ADR 0040 lists under "Related decisions recorded separately": always-on
-VPN at boot and the service reading of profile files.
+separately and must land first or together with this record. It takes over
+both items that ADR 0040 lists under "Related decisions recorded separately":
+always-on VPN at boot and the service reading of profile files.
 
 ## Context
 
@@ -350,10 +348,10 @@ from the moment the session closes until the next instance connects.
 With a record, the ADR 0041 `prepare_update` request is harmless and
 updaters on Windows can send it unconditionally: the stop is a retained exit
 in any case, the new service restores the session itself, and the ADR 0041
-update record, if written, is deleted when the restored run starts, so
-Desktop sees an active session instead of residual protection and does not
-restart the profile. Without a record, exits behave exactly as today (ADR 0039),
-including the ADR 0041 one-shot hold.
+update record, if written, is removed when the restored run arms its own
+protection, so Desktop sees an active session instead of residual protection
+and does not restart the profile. Without a record, exits behave exactly as
+today (ADR 0039), including the ADR 0041 one-shot hold.
 
 ### Service start at boot
 
