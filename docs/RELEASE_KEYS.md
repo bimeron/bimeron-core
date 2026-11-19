@@ -50,8 +50,9 @@ vectors produced by both devices during the ceremony are kept in
 `internal/releasecard/testdata`.
 
 Sign over USB. Key B also works through an NFC reader, but over NFC presence in
-the field satisfies the touch policy, so NFC is only a fallback. Store key B
-apart from key A. Keep each device's OpenPGP PIN and admin PIN in a password
+the field satisfies the touch policy, so NFC is only a fallback and key B must
+not be left on a reader. OpenPGP over NFC stays enabled on key B by decision.
+Store key B apart from key A. Keep each device's OpenPGP PIN and admin PIN in a password
 manager, labelled with the device serial; three wrong admin PIN entries lock the
 OpenPGP application, and recovery means a reset that destroys the key.
 
