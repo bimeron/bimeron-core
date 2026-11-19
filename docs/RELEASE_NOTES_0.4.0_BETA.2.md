@@ -1,11 +1,10 @@
 # Bimeron Core v0.4.0-beta.2
 
-**Release notes — pre-publication.** This is a security patch release on top
-of v0.4.0-beta.1. Publication is pending candidate freeze, VM acceptance of the
-Desktop 0.3.1 candidate with this Core candidate, and explicit approval.
+This is a security patch release on top of v0.4.0-beta.1, published on
+2026-11-19 from tag `v0.4.0-beta.2` at commit `5251bd09`.
 
-The reviewed source range is `5fcadd71..1c9f30b3` on master. `5fcadd71` is the
-v0.4.0-beta.1 tag commit. The final candidate commit is recorded at freeze.
+The reviewed source range is `5fcadd71..5251bd09` on master. `5fcadd71` is the
+v0.4.0-beta.1 tag commit.
 
 For package capabilities, see the [README at the release tag](https://github.com/bimeron/bimeron-core/blob/v0.4.0-beta.2/README.md).
 
@@ -157,6 +156,11 @@ All fields are omitted when zero.
 - With the outbound path blocked, loss of a session is detected after about
   80 seconds (a health check every 30 seconds, 3 failures). This is unchanged.
 - `service update` releases kill switch protection while the service restarts.
+- A normal reboot or shutdown, and stopping the service, release kill switch
+  protection. After the system starts, traffic goes outside the VPN until the
+  user connects again. Leftover blocking (`KillSwitch: "residual"`) appears
+  only after a service crash or power loss. Keeping protection across a reboot
+  ("always-on VPN at boot") is planned for a later release.
 
 ## Hardening
 
@@ -318,7 +322,7 @@ The repair broker embeds the reviewed compatibility policy from
 `release/compatibility.json`, so signed acquisition of its own release accepts
 the same GUI window as the publisher.
 
-## Planned packages and verification
+## Packages and verification
 
 The asset layout matches v0.4.0-beta.1: six CLI ZIP packages for Windows,
 Linux and macOS on amd64 and arm64, plus one Android AAR package. Each package
@@ -331,7 +335,5 @@ verify `update-manifest.json` with `update-manifest.json.sig` and a separately
 trusted Ed25519 public key. The service manifest covers Windows/Linux amd64 and
 arm64, not macOS or Android.
 
-Before publication, freeze the candidate, complete VM acceptance of the Desktop
-0.3.1 candidate with the Core candidate and the Desktop 0.3.0 service update
-path, validate signed assets, and verify the tag-specific README link. These
-notes do not claim completed candidate acceptance or new benchmarks.
+The manifest is signed with the release key `7370a2d8cf890e5e`. These notes do
+not claim new benchmarks.
