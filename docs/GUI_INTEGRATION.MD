@@ -224,6 +224,7 @@ Example `hello` response from Windows (capability values vary by platform;
     "access_conversion": true,
     "reconnect_now": true,
     "kill_switch_hold": true,
+    "kill_switch_update_hold": true,
     "socks_auth": true,
     "default_dns": ["1.1.1.1", "1.0.0.1"],
     "wireguard": {"supported": true, "experimental": true, "protocols": ["wireguard", "amneziawg"], "awg_versions": ["1.0", "1.5", "2.0", "3.0", "3.1"], "uri_schemes": ["vpn", "wireguard", "wg"], "allowed_ips_modes": ["direct", "block", "ignore", "only"], "document_api": 1}
@@ -235,6 +236,12 @@ Example `hello` response from Windows (capability values vary by platform;
 `Type = ...` parameters (see [CONF.MD](CONF.MD)); `naive_quic` is `Type = naive`
 with `Network = quic`. Offer a parameter form only for listed protocols. An older
 core omits the field and supports only the first nine entries.
+
+`kill_switch_update_hold` (Windows) means the service accepts a request to keep
+kill switch protection across `service update -keep-kill-switch`; read it from
+the installed service before an update (see
+[Keeping kill switch protection across an update](#keeping-kill-switch-protection-across-an-update-windows)).
+Older cores omit it.
 
 `reconnect_now` and `kill_switch_hold` describe the recovery contract (see
 [Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold));
@@ -327,7 +334,7 @@ A typical GUI flow:
 1. Connect to IPC, send `hello`, and save `instance` and `capabilities`.
 2. Read `status`; do not impose a state the GUI saved earlier.
 3. When the user clicks "Connect", send `start` once and display the core state.
-4. Poll `events` about once per second, and `status` every 1–2 seconds or after
+4. Poll `events` about once per second, and `status` every 1вЂ“2 seconds or after
    `dropped` or an error. Poll `stats` about once per second while connected.
 5. To disconnect, send `stop` and wait for cleanup to finish. Do not use
    `shutdown` for a regular "Disconnect" button.
@@ -399,7 +406,9 @@ recovery. Progress codes in `Event.Code` (`state`, `retry`, `network_setup`, and
 similar) are not catalog codes.
 
 After a cleanup failure, do not run `start` or `recover` automatically without a
-user decision. `recover` removes remaining settings and protection, which can
+user decision. The exception is residual protection kept across an update
+(`ResidualReason: "update"`); see
+[Keeping kill switch protection across an update](#keeping-kill-switch-protection-across-an-update-windows). `recover` removes remaining settings and protection, which can
 allow direct network access. RPC has no `recover` command.
 
 ## Statistics and their limits
@@ -669,7 +678,7 @@ with `set_field` in `[Interface]`; offer them only when `socks_auth` is true.
 
 | Option | Contract |
 |---|---|
-| `ListenUsername` | 1–255 bytes of UTF-8 without control characters. |
+| `ListenUsername` | 1вЂ“255 bytes of UTF-8 without control characters. |
 | `ListenPassword` | Same limits. Secret: mask it in the editor and never log it. |
 
 - Set both or leave both empty. Empty means no authentication, exactly as
@@ -778,7 +787,7 @@ Request elevation only for explicitly selected administrative actions:
 bimeron.exe service install [-automatic]
 bimeron.exe service start
 bimeron.exe service stop
-bimeron.exe service update -source <absolute-path> -version <version> -sha256 <executable-sha256>
+bimeron.exe service update -source <absolute-path> -version <version> -sha256 <executable-sha256> [-keep-kill-switch]
 bimeron.exe service describe
 bimeron.exe service uninstall
 bimeron.exe recover
@@ -802,6 +811,47 @@ the service to its previous state. The Wintun DLL is not updated. On failure, it
 tries to restore the old executable; if that is impossible, it keeps a backup and
 reports an error. After an update or rollback, the VPN connects only on an
 explicit `start`. See [SERVICE.MD](SERVICE.MD) for details.
+
+### Keeping kill switch protection across an update (Windows)
+
+With `-keep-kill-switch`, the update keeps kill switch protection installed
+while the service is replaced, so no traffic leaves outside the tunnel during
+the update ([ADR 0041](adr/0041-kill-switch-across-service-updates.md)). A GUI
+that implements this:
+
+1. Before an update, reads `hello` capabilities from the installed service.
+   Pass `-keep-kill-switch` when the installed service reports
+   `kill_switch_update_hold` and the bundled core supports the flag (it was
+   built from the same release or later). Without the capability, the flag is
+   harmless: the update releases protection as before and prints a warning.
+   Tell the user beforehand that the VPN is interrupted.
+2. Passes the flag from every path that replaces the service: the in-app
+   update and the installer's update action. The installer action runs before
+   the installer's final dialog, so it passes the flag only when starting the
+   GUI afterwards is already certain at that point. Either the installer always
+   starts the GUI after an upgrade that passed the flag, or an
+   administrator-set installer property is used for an unattended deployment
+   that starts the GUI itself. A machine is never left blocked without the
+   GUI.
+3. After the update command has finished, or whenever it observes it without
+   running an update (after an installer upgrade or its own restart), checks
+   `Status`. `KillSwitch: "residual"` with `ResidualReason: "update"` means
+   protection was kept on purpose for the profile whose `profile_id` equals
+   `ResidualProfile` (the lowercase hex SHA-256 of the normalized absolute
+   profile path, see [Profiles and secrets](#profiles-and-secrets)). Start that profile at once, without
+   the recovery prompt; the new run replaces the kept filters without a gap.
+   This is the only case in which `start` may follow
+   `cleanup_failed_run_recover` without a user decision.
+4. Shows the usual residual recovery prompt when `ResidualProfile` is absent,
+   no profile matches it, the profile no longer enables the kill switch, or
+   the start fails. A failed start keeps the record, so status keeps reporting
+   the held profile; do not retry in a loop.
+
+Until the GUI restarts the profile, traffic stays blocked, also across a
+reboot (the filters are persistent). A user `stop` or `shutdown` before the
+service stop cancels the request. Installed services older than the first
+release with this contract, and GUIs that do not pass the flag, keep today's
+behavior: the update releases protection.
 
 Ship the CLI for the target architecture with `wintun.dll` for the same
 architecture, `WINTUN-LICENSE.txt`, and the dependency licenses. Installation
@@ -909,7 +959,7 @@ Status and every Event carry optional fields; zero values are omitted:
 
 | Field | Values |
 |---|---|
-| `ReconnectAttempt`, `ReconnectLimit` | 1–3 of 3 during initial retries, 1–10 of 10 within a cycle; omitted during `waiting`. `ReconnectAttempt` stays in `failed` after the initial attempts. |
+| `ReconnectAttempt`, `ReconnectLimit` | 1вЂ“3 of 3 during initial retries, 1вЂ“10 of 10 within a cycle; omitted during `waiting`. `ReconnectAttempt` stays in `failed` after the initial attempts. |
 | `ReconnectCycle` | Current or most recent cycle (1-based) after loss; omitted during initial attempts. During `waiting`, the cycle that just failed. |
 | `ReconnectPhase` | `attempting` (an attempt is scheduled, with `NextAttemptAt`, or running, without it) or `waiting` (pause between cycles); omitted outside `reconnecting`. |
 | `NextAttemptAt` | RFC 3339 UTC, whole seconds: start of the next scheduled attempt or cycle; omitted when nothing is scheduled. Core host clock. |
@@ -925,14 +975,14 @@ counter; do not infer a limit from it or count log messages.
 ### Desktop 0.3.0 compatibility
 
 Desktop 0.3.0 shows a counter only when the state is `reconnecting` and
-`1 ≤ ReconnectAttempt ≤ ReconnectLimit`. It ignores the new fields, events,
+`1 в‰¤ ReconnectAttempt в‰¤ ReconnectLimit`. It ignores the new fields, events,
 capabilities and command. With this Core it shows:
 
 | Core phase | Status fields 0.3.0 reads | Desktop 0.3.0 shows |
 |---|---|---|
-| Initial retries | `reconnecting`, `ReconnectAttempt` 1–3, `ReconnectLimit` 3 | "Reconnecting… (n/3)", unchanged |
-| Attempt in a cycle after loss | `reconnecting`, `ReconnectAttempt` 1–10, `ReconnectLimit` 10 | "Reconnecting… (n/10)" |
-| `waiting` between cycles | `reconnecting`, no `ReconnectAttempt` | "Reconnecting…" without a counter |
+| Initial retries | `reconnecting`, `ReconnectAttempt` 1вЂ“3, `ReconnectLimit` 3 | "ReconnectingвЂ¦ (n/3)", unchanged |
+| Attempt in a cycle after loss | `reconnecting`, `ReconnectAttempt` 1вЂ“10, `ReconnectLimit` 10 | "ReconnectingвЂ¦ (n/10)" |
+| `waiting` between cycles | `reconnecting`, no `ReconnectAttempt` | "ReconnectingвЂ¦" without a counter |
 | Failed, kill switch held | `failed`, `LastError` | The failure and `LastError`, as before. Connect sends `start`: a profile with the kill switch takes over without releasing protection; another profile gets `kill_switch_held`, shown as an unknown error code. Disconnect sends `stop`, which releases protection. |
 | Failed, kill switch disabled | `failed`, `LastError` | Unchanged |
 
@@ -942,9 +992,9 @@ The GUI range in `release/compatibility.json` is widened to include Desktop
 
 ### Guidance for Desktop 0.3.1
 
-- `ReconnectPhase: "waiting"`: show "Server unavailable · retry in m:ss",
+- `ReconnectPhase: "waiting"`: show "Server unavailable В· retry in m:ss",
   counting down to `NextAttemptAt`.
-- `attempting`: show "Reconnecting… (n/N)" from `ReconnectAttempt` and
+- `attempting`: show "ReconnectingвЂ¦ (n/N)" from `ReconnectAttempt` and
   `ReconnectLimit`.
 - `KillSwitch: "holding"`: show "Internet paused until VPN connects", including
   in `failed`. `active` needs no extra notice.

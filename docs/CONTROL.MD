@@ -206,7 +206,18 @@ version. Core does not show the version that an unverified endpoint claims.
 
 `CallServiceReadiness` requires `GetNamedPipeServerProcessId` to match the
 SCM-reported service process ID before writing. Only administrators can open
-this pipe.
+this pipe. It answers `hello`, `status` and `prepare_update`.
+
+`prepare_update` is sent by `service update -keep-kill-switch` immediately
+before it stops the service. It arms a one-shot hold for the next SCM stop
+within 60 seconds, bound to the requesting process (the pipe client). The hold
+lapses when that process has exited, and an IPC `stop` or `shutdown` or a
+newer request cancels it. An OS shutdown never uses it. The reply's
+`Status.KillSwitch` shows whether a run owns protection. On the stop, a run
+that owns protection is ended as an owner exit, so its filters stay installed;
+the service records the session's `profile_id` and exits cleanly. Older
+services answer `invalid_request`. See
+[ADR 0041](adr/0041-kill-switch-across-service-updates.md).
 
 ### Windows console daemon pipe
 
@@ -516,7 +527,11 @@ omitted.
   GUIs already route to network recovery (unless another failure is already
   shown), and `Session.active` is not `true`. Connecting a profile with the
   kill switch replaces the filters; `recover` removes them. Inspected at most
-  every 5 seconds while idle. Protection owned by another running session, such
+  every 5 seconds while idle. Protection kept on purpose across a service
+  update also reports `ResidualReason: "update"` and `ResidualProfile` (the
+  `profile_id` of the held session) until a run arms its own protection or no
+  Bimeron protection remains; clients start that profile again, see
+  [GUI_INTEGRATION.MD](GUI_INTEGRATION.MD#keeping-kill-switch-protection-across-an-update-windows). Protection owned by another running session, such
   as a foreground `bimeron connect` that holds the session lock or a live
   foreground owner that retains native protection, is not reported as
   residual, and protection removed by such a session while it stops is checked

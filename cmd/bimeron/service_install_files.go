@@ -12,12 +12,21 @@ import (
 // installation directory.
 var serviceInstallFiles = []string{"bimeron.exe", "wintun.dll", "WINTUN-LICENSE.txt"}
 
+// updateHoldFile is the record of kill switch protection kept across a
+// service update (ADR 0041), in the protected installation directory. The
+// service writes it; uninstall removes it with the installed files.
+const updateHoldFile = "kill-switch-update-hold.json"
+
+// serviceRecordFiles are files the running service may leave in the
+// installation directory.
+var serviceRecordFiles = []string{updateHoldFile, updateHoldFile + ".new"}
+
 // removeServiceFiles deletes installed service files from dir. Missing files
 // are tolerated so an interrupted uninstall can be resumed. Only regular files
 // are removed; links and other objects are reported instead of followed.
 func removeServiceFiles(dir string) error {
 	var errs []error
-	for _, name := range serviceInstallFiles {
+	for _, name := range append(append([]string(nil), serviceInstallFiles...), serviceRecordFiles...) {
 		path := filepath.Join(dir, name)
 		info, err := os.Lstat(path)
 		if errors.Is(err, fs.ErrNotExist) {

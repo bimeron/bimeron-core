@@ -65,7 +65,9 @@ For automatic startup when Windows boots, install using
 `dist\windows-amd64\bimeron.exe service install -automatic`. Startup is manual by default.
 Installation does not start the service. Starting the service does not connect
 the VPN. Keys and profiles are not copied to Program Files or retained by the
-service.
+service. The only session data the service keeps is the `profile_id` (a hash of
+the profile path) of a session whose kill switch protection was kept across an
+update, in a file readable only by SYSTEM and Administrators (see Updating).
 
 After startup, in a regular CMD under the same user:
 
@@ -147,6 +149,20 @@ architecture. Only then does the staged file take the directory's inherited
 ACL; the command stops the service, waits for cleanup, and replaces the EXE. If
 the service was running, it restarts, but the VPN remains disconnected;
 explicitly call start <config>. If it was stopped, it stays stopped.
+
+With `-keep-kill-switch`, the command asks the running service, just before
+stopping it, to keep kill switch protection on that stop
+([ADR 0041](adr/0041-kill-switch-across-service-updates.md)). The service then
+leaves the filters installed, records the held session's `profile_id` in
+`kill-switch-update-hold.json` in its installation directory, and exits
+cleanly; the updated service reports the protection as residual with
+`ResidualReason: "update"`. The command prints whether protection was kept.
+Start the same profile again to resume the VPN; until then, traffic stays
+blocked, also across a reboot. An installed service without
+`kill_switch_update_hold`, or one that cannot be reached, releases protection
+as before, and the command prints a warning. If the updated service fails its
+check, the command asks it for the same hold before the rollback stop. Linux
+rejects the flag. Uninstall removes the record.
 The owner, automatic-start setting, and recovery settings are preserved.
 Wintun DLL and its license are not replaced: this updates the core, not the driver.
 

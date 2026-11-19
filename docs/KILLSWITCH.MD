@@ -122,7 +122,10 @@ stop, not to a single connection attempt:
 5. **Stop.** `stop`, `shutdown`, Ctrl+C of a foreground session or a service
    stop removes the filters after the session is closed. If removal fails, the
    session reports `failed` with `cleanup_failed_run_recover` and the filters
-   stay until `recover`.
+   stay until `recover`. The exception is a service update requested with
+   `-keep-kill-switch`: the service stop for that update keeps the filters, and
+   the client starts the profile again on the new service, which replaces them
+   without a gap ([ADR 0041](adr/0041-kill-switch-across-service-updates.md)).
 
 ## Shutdown and crashes
 

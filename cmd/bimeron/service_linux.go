@@ -496,6 +496,9 @@ func serviceCommand(args []string) error {
 		if err != nil {
 			return err
 		}
+		if expect.keepKillSwitch {
+			return fmt.Errorf("-keep-kill-switch is supported only on Windows")
+		}
 		return updateLinuxService(expect)
 	}
 	if len(args) != 1 {

@@ -56,14 +56,20 @@ type Status struct {
 	NextAttemptAt time.Time `json:",omitzero"`
 	// KillSwitch is KillSwitchActive or KillSwitchHolding while the run owns
 	// kill switch protection; omitted otherwise.
-	KillSwitch string        `json:",omitempty"`
-	Native     *NativeStatus `json:"native,omitempty"`
-	Session    *SessionInfo  `json:"Session,omitempty"`
-	State      State
-	Attempt    int
-	Since      time.Time
-	LastError  string
-	ErrorStage string `json:",omitempty"`
+	KillSwitch string `json:",omitempty"`
+	// ResidualReason is ResidualUpdate when residual protection was kept on
+	// purpose across a service update (ADR 0041); omitted otherwise.
+	ResidualReason string `json:",omitempty"`
+	// ResidualProfile is the profile_id of the session whose protection was
+	// kept across the update; omitted otherwise.
+	ResidualProfile string        `json:",omitempty"`
+	Native          *NativeStatus `json:"native,omitempty"`
+	Session         *SessionInfo  `json:"Session,omitempty"`
+	State           State
+	Attempt         int
+	Since           time.Time
+	LastError       string
+	ErrorStage      string `json:",omitempty"`
 	// LastErrorPermanent marks a LastError that retrying alone does not fix,
 	// for example a rejected access key. It ends an initial connection at
 	// once; after loss of an established session Core still retries it.
@@ -84,9 +90,13 @@ type StatsSnapshot struct {
 //
 // ResidualProtection makes an idle engine report kill switch protection that
 // no run owns (Status.KillSwitch "residual"); daemons and services enable it.
+// UpdateHold, when set, is the record of protection kept across a service
+// update: residual protection then also reports the held profile, and a run
+// that starts consumes the record (ADR 0041).
 type Options struct {
 	RetryMin, RetryMax, CycleRetryMax, CyclePause time.Duration
 	ResidualProtection                            bool
+	UpdateHold                                    *UpdateHold
 }
 
 type session interface {
@@ -163,9 +173,15 @@ type Engine struct {
 	observe   func(tunnel string) string
 	network   func() string
 	// residual caches idle kill switch protection found by residualProbe.
-	residual        bool
+	residual bool
+	// residualProfile is the profile whose protection was kept across a
+	// service update, while that protection is residual.
+	residualProfile string
 	residualChecked time.Time
 	residualProbe   func() (bool, error)
+	// installedProbe reports whether any Bimeron protection is installed,
+	// owned or not; the update record is kept until it is gone.
+	installedProbe func() (bool, error)
 	// repanic rethrows a run panic after protection is retained; tests stub it.
 	repanic     func(any)
 	maintenance *maintenanceCoordinator
@@ -220,7 +236,7 @@ func New(options Options) *Engine {
 	if options.CyclePause <= 0 {
 		options.CyclePause = time.Minute
 	}
-	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, repanic: func(p any) { panic(p) }}
+	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, installedProbe: protectionInstalled, repanic: func(p any) { panic(p) }}
 }
 
 // StatsSnapshot returns detached session metadata and counters under one lock.
@@ -430,6 +446,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.active = true
 	e.holding, e.handover, e.protected, e.abandon, e.stopRequested = false, false, false, false, false
 	e.residual = false // the run owns or replaces any earlier protection
+	e.residualProfile = ""
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
 	observe, tunnel := e.observe, cfg.Name
@@ -660,6 +677,10 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	release = releaseRun
 	if o, ok := b.(protectionOwner); ok && o.Protected() {
 		owner = o
+		// This run's protection replaced any kept across an update.
+		if hold := e.opts.UpdateHold; hold != nil {
+			_ = hold.Clear()
+		}
 		e.mu.Lock()
 		e.protected = true
 		e.emitLocked("kill_switch_holding", "Kill switch active; traffic outside the tunnel is blocked until connection or stop")

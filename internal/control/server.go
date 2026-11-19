@@ -124,8 +124,16 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
-	authMu                sync.Mutex
-	pending               *pendingAuth
+	// hold is the prepare_update hold for the next service stop, if armed.
+	holdMu sync.Mutex
+	hold   *updateHold
+	// PeerProcess, when set, watches the process at the other end of a
+	// readiness connection; a hold then lasts only while that process lives.
+	PeerProcess func(net.Conn) ProcessWatch
+	// clock replaces time.Now in tests of the update hold window.
+	clock   func() time.Time
+	authMu  sync.Mutex
+	pending *pendingAuth
 }
 type pendingAuth struct {
 	challenge AuthChallenge
@@ -450,6 +458,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				answer.Error = "invalid_request"
 				break
 			}
+			// A user's stop wins over an update hold that has not applied yet.
+			s.cancelUpdateHold()
 			if err := s.engine.Stop(ctx); err != nil {
 				answer.Error = "session_stop_failed"
 			} else if r.Command == "shutdown" {
@@ -472,6 +482,13 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	answer.Status = s.engine.Status()
 	return answer
+}
+
+func (s *Server) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 // AbandonOnExit makes the current session keep kill switch protection when

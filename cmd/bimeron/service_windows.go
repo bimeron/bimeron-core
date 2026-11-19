@@ -31,6 +31,20 @@ const serviceName = "BimeronCore"
 type windowsService struct {
 	owner  string
 	listen func(string) (net.Listener, error)
+	// updateHold overrides the record of protection kept across an update;
+	// the installed service keeps it next to its executable.
+	updateHold *core.UpdateHold
+}
+
+func (h windowsService) holdRecord() *core.UpdateHold {
+	if h.updateHold != nil || h.listen != nil {
+		return h.updateHold
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	return &core.UpdateHold{Path: filepath.Join(filepath.Dir(exe), updateHoldFile)}
 }
 
 func serveServiceReadiness(ctx context.Context, server *control.Server, readiness net.Listener, cancel context.CancelFunc) {
@@ -61,7 +75,10 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	server := control.NewServer(core.New(core.Options{ResidualProtection: true}))
+	hold := h.holdRecord()
+	server := control.NewServer(core.New(core.Options{ResidualProtection: true, UpdateHold: hold}))
+	// An update hold lasts only while the updater that asked for it runs.
+	server.PeerProcess = control.PipePeerProcess
 	if h.listen == nil {
 		readiness, err := control.ListenServiceReadiness()
 		if err != nil {
@@ -91,6 +108,20 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			case svc.Interrogate:
 				changes <- status
 			case svc.Stop, svc.Shutdown:
+				// Only an SCM stop requested by an updater that asked first
+				// keeps kill switch protection; an OS shutdown never does.
+				if request.Cmd == svc.Stop {
+					record := func(string) error { return nil }
+					if hold != nil {
+						record = hold.Write
+					}
+					if kept, err := server.StopForUpdate(record); kept && log != nil {
+						if err != nil {
+							log.Warning(1, "service_update_hold_record_failed")
+						}
+						log.Info(1, "Service stopping for an update; kill switch protection kept")
+					}
+				}
 				cancel()
 				status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}
 				changes <- status

@@ -38,6 +38,10 @@ type Capabilities struct {
 	// until an explicit stop, including recovery waits and failed, and that
 	// Status.KillSwitch publishes it.
 	KillSwitchHold bool `json:"kill_switch_hold"`
+	// KillSwitchUpdateHold reports that the service accepts prepare_update and
+	// keeps kill switch protection across a client-requested service update
+	// (ADR 0041). Read it from the installed service before the update.
+	KillSwitchUpdateHold bool `json:"kill_switch_update_hold"`
 	// SOCKSAuth reports optional RFC 1929 username/password authentication
 	// on the proxy-mode listener ([Interface] ListenUsername/ListenPassword).
 	SOCKSAuth bool `json:"socks_auth"`
@@ -97,6 +101,7 @@ type IKEv2Capabilities struct {
 func PlatformCapabilities() Capabilities {
 	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport(), SOCKSAuth: true, DefaultDNS: slices.Clone(DefaultConfig().DNS)}
 	if runtime.GOOS == "windows" {
+		c.KillSwitchUpdateHold = true
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}
 	switch runtime.GOOS {

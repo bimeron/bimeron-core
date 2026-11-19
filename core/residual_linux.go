@@ -26,3 +26,6 @@ func journaledGuard() (bool, error) {
 	}
 	return s.Guard, nil
 }
+
+// protectionInstalled reports a journaled guard, owned or not.
+func protectionInstalled() (bool, error) { return journaledGuard() }

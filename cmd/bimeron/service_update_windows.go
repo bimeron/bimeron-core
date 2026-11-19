@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bimeron/core"
 	"bimeron/internal/control"
 	"context"
 	"debug/buildinfo"
@@ -185,7 +186,17 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	}
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
+	kept := false
 	err = runServiceUpdate(wasRunning, func() error {
+		// Ask right before the stop: the hold applies only to the next stop
+		// within control.UpdateHoldWindow.
+		if wasRunning && expect.keepKillSwitch {
+			var message string
+			kept, message = updateHoldMessage(requestUpdateHold(ctx, s))
+			if message != "" {
+				fmt.Println(message)
+			}
+		}
 		return stopUpdateServiceContext(ctx, s)
 	}, func() error {
 		return replaceServiceExecutable(target, staged, backup, func() error {
@@ -210,7 +221,16 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 				}
 				return waitUpdatedServiceContext(ctx, expect.version)
 			})
-		}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
+		}, func() error {
+			// A client may already have restarted the held profile on the
+			// new service; keep that protection across the rollback stop.
+			if kept {
+				if _, message := updateHoldMessage(requestUpdateHold(rollbackContext(), s)); message != "" {
+					fmt.Println("rollback: " + message)
+				}
+			}
+			return stopUpdateServiceContext(rollbackContext(), s)
+		})
 	}, func() error {
 		if err := rollbackContext().Err(); err != nil {
 			return err
@@ -236,6 +256,47 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	if err != nil {
 		return err
 	}
+	if kept {
+		fmt.Println("Service updated; owner and startup settings preserved. Kill switch protection was kept; start the profile again to reconnect.")
+		return nil
+	}
 	fmt.Println("Service updated; owner and startup settings preserved. VPN remains disconnected.")
 	return nil
+}
+
+// requestUpdateHold asks the running service, over the administrator-only
+// readiness pipe bound to the SCM-reported process, to keep kill switch
+// protection on the next stop (ADR 0041).
+func requestUpdateHold(ctx context.Context, s *mgr.Service) (control.Response, error) {
+	status, err := s.Query()
+	if err != nil {
+		return control.Response{}, err
+	}
+	if status.State != svc.Running {
+		return control.Response{}, fmt.Errorf("service not running")
+	}
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return control.CallServiceReadiness(probe, status.ProcessId, control.Request{Command: "prepare_update"})
+}
+
+// updateHoldMessage reports whether the installed service keeps kill switch
+// protection across the update and what to tell the caller. An installed
+// service without the capability rejects the request; the update then
+// continues with protection released, as before.
+func updateHoldMessage(a control.Response, err error) (bool, string) {
+	const released = "the kill switch protection is released while the service restarts"
+	if err != nil {
+		if a.Error == "invalid_request" {
+			return false, "warning: the installed service cannot keep kill switch protection during an update; " + released
+		}
+		return false, "warning: could not ask the installed service to keep kill switch protection; " + released
+	}
+	switch a.Status.KillSwitch {
+	case core.KillSwitchActive, core.KillSwitchHolding:
+		return true, "Kill switch protection is kept during the update."
+	case core.KillSwitchResidual:
+		return false, "Residual kill switch protection stays installed during the update."
+	}
+	return false, ""
 }
