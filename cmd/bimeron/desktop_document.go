@@ -45,6 +45,9 @@ type bridgeResponse struct {
 	// Problems lists structured failures; see docs/ERRORS.MD. Validation
 	// responses always include it, other bridge responses only on failure.
 	Problems *[]*problem.Error `json:"problems,omitempty"`
+	// TrustFiles lists the identity, known_hosts and CA files of a valid
+	// profile; see docs/DESKTOP_DOCUMENT_API.MD. Omitted when empty.
+	TrustFiles []config.TrustFile `json:"trust_files,omitempty"`
 }
 
 func writeBridge(w io.Writer, r bridgeResponse, err error) error {
@@ -178,7 +181,11 @@ func validateJSONBridge(path string, out io.Writer) error {
 	if !filepath.IsAbs(path) {
 		return writeBridge(out, bridgeResponse{}, problem.New("invalid_request", "absolute path required"))
 	}
-	_, err := config.Load(path)
+	c, err := config.Load(path)
 	problems := problem.List(err)
-	return writeBridge(out, bridgeResponse{Problems: &problems}, err)
+	r := bridgeResponse{Problems: &problems}
+	if err == nil {
+		r.TrustFiles = c.TrustFiles()
+	}
+	return writeBridge(out, r, err)
 }

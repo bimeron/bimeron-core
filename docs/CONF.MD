@@ -840,6 +840,16 @@ A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
 has the code `geodata_unreadable` or `geodata_limit`. SSH and MASQUE files are
 read when a connection starts. A failure there is reported as an unavailable
 identity, `known_hosts`, or CA file, or as a file that exceeds its size limit.
+On Windows, a network or device path in `IdentityFile`, `KnownHostsFile`,
+`CAFile` or the `identity`, `known_hosts` and `ca` URI options is already
+refused when the profile is loaded or validated, with `file_path_not_local`
+and the option as the problem field.
+
+Identity, `known_hosts` and CA files decide which servers Bimeron trusts and
+which key it uses, so a profile from someone else can choose them.
+`bimeron validate --json` lists them as `trust_files`; a GUI shows them and
+asks the user to confirm before it saves an imported profile (see
+[DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD#trust-files)).
 
 ## Commands
 

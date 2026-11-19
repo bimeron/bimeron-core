@@ -96,7 +96,12 @@ characters in their paths. For example, `/` becomes `%2F` and a space becomes
 paths refer to files on the device that connects. A selected GUI key path can
 also be saved as `IdentityFile` beside an `SSH = ssh://...` line, and it takes
 precedence over `identity=`. `KnownHostsFile` similarly overrides
-`known_hosts=`. Unknown or duplicate query options are rejected. URI passwords
+`known_hosts=`. On Windows, network and device paths (`\\server\share`,
+WebDAV `\\host@SSL\...`, `\\?\`, `\\.\`) in these options are rejected with
+`file_path_not_local`. Because a shared URI can choose the trust store,
+a GUI must show these files and get the user's confirmation on import; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files). Unknown or duplicate query
+options are rejected. URI passwords
 are rejected; do not put a password or private-key content in a URI or `.conf`.
 
 ## Identity selection and prompts

@@ -508,6 +508,11 @@ The GUI can import `ssh://user@host:22` as `SSH = ...` or write explicit
 the identity and `known_hosts`; save absolute paths as `IdentityFile` and
 `KnownHostsFile`. The service account may have a different home directory, so do
 not rely on its `~/.ssh` defaults. Save the `.conf` atomically before `start`.
+An imported `ssh://` URI or `.conf` file can name its own identity and
+`known_hosts` files, and a `masque://` URI or MASQUE profile its own CA file.
+Before saving an import, run `bimeron validate --json` and confirm every
+`trust_files` entry with the user, and confirm again when the set changes; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files).
 
 While connecting, poll the protected local control socket with
 `{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
