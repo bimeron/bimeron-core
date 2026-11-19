@@ -357,15 +357,15 @@ Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
 
 ## Compatibility matrix
 
-| Server | Client profile | Loopback CI test | Live check |
-|---|---|---|---|
-| upstream `wireguard-go` | plain WireGuard | yes: TCP, UDP, IPv6, fragmented UDP | pending |
-| `amneziawg-go` without options | plain WireGuard | yes | pending |
-| `amneziawg-go` 1.0 options | AWG 1.0 | yes | pending |
-| `amneziawg-go` with client-side I1–I5 | AWG 1.5 | yes | pending |
-| `amneziawg-go` 2.0 options (S3/S4, H ranges) | AWG 2.0 | yes | pending |
-| `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | pending |
-| mismatched AWG options or keys | — | yes: handshake fails | — |
+| Server | Client profile | Loopback CI test | Container CI test | Live check |
+|---|---|---|---|---|
+| upstream `wireguard-go` | plain WireGuard | yes: TCP, UDP, IPv6, fragmented UDP | yes: TCP, UDP, IPv6, fragmented UDP | pending |
+| `amneziawg-go` without options | plain WireGuard | yes | yes | pending |
+| `amneziawg-go` 1.0 options | AWG 1.0 | yes | yes | pending |
+| `amneziawg-go` with client-side I1–I5 | AWG 1.5 | yes | yes | pending |
+| `amneziawg-go` 2.0 options (S3/S4, H ranges) | AWG 2.0 | yes | yes | pending |
+| `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | yes | pending |
+| mismatched AWG options or keys | — | yes: handshake fails | yes: a plain client and a wrong header protection key fail | — |
 
 Platforms: Windows and Linux will be checked live. Android (AAR) and Apple
 builds compile and their unit tests pass, but they have **not been
@@ -383,6 +383,40 @@ depends on an installed Bimeron:
 ```sh
 go test ./internal/wgconf ./internal/wireguard/... ./internal/config ./cmd/bimeron ./core -run 'WireGuard|AWG|AmneziaWG|Upstream|Import|Edit|Parse|Coverage|Detect'
 go test ./internal/wgconf -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s
+```
+
+### Reference servers in containers
+
+`TestReferenceContainers` runs the same client against real server
+processes with kernel TUN devices, one Docker container per server:
+upstream `wireguard-go` (plain WireGuard) and `amneziawg-go` without
+options and in AWG 1.0, 1.5, 2.0 and 3.1 modes. Both servers are built from
+the module cache at the versions pinned in `go.mod`, as static binaries.
+The container entry point is `internal/wireguard/wgtest/refserver`. It
+starts the server in the foreground, writes the device configuration to the
+server's UAPI socket (`/var/run/wireguard/wg0.sock` or
+`/var/run/amneziawg/wg0.sock`), gives `wg0` the addresses `10.77.0.1/24`
+and `fd77::1/64` over rtnetlink, and runs TCP and UDP echo on port 7. No
+`wg` or `awg` tools are used. Keys are generated for each run.
+
+For every server, the test checks the handshake and TCP and UDP echo over
+IPv4 and IPv6, plus a UDP datagram larger than the tunnel MTU. For every AWG
+server it also checks that a plain WireGuard client cannot complete a
+handshake, and for AWG 3.1 that a wrong header protection key cannot. The
+test is skipped unless `BIMERON_WG_REFERENCE_IMAGE` is set. It needs Linux,
+the `docker` CLI and a test process that can reach the containers' bridge
+addresses. The `test` CI job runs it; to repeat it on a disposable Linux
+machine:
+
+```sh
+dir="$(mktemp -d)"
+go mod download golang.zx2c4.com/wireguard github.com/amnezia-vpn/amneziawg-go/v3
+for pair in golang.zx2c4.com/wireguard:wireguard-go github.com/amnezia-vpn/amneziawg-go/v3:amneziawg-go; do
+  GOWORK=off CGO_ENABLED=0 go -C "$(go list -m -f '{{.Dir}}' "${pair%%:*}")" build -mod=readonly -trimpath -o "$dir/${pair##*:}" .
+done
+CGO_ENABLED=0 go build -trimpath -o "$dir/refserver" ./internal/wireguard/wgtest/refserver
+tar -C "$dir" -c . | docker import -c 'ENTRYPOINT ["/refserver"]' - bimeron-wireguard-reference:local
+BIMERON_WG_REFERENCE_IMAGE=bimeron-wireguard-reference:local go test ./internal/wireguard -run '^TestReferenceContainers$' -count=1 -v
 ```
 
 ## Benchmarks

@@ -149,6 +149,22 @@ jobs:
           for target in FuzzParse FuzzEdit FuzzImportURI; do
             go test ./internal/wgconf -run '^$' -fuzz "^${target}\$" -fuzztime=20s
           done
+      - name: WireGuard and AmneziaWG reference servers in containers
+        # Upstream wireguard-go and amneziawg-go, at the versions pinned in
+        # go.mod, as separate processes with kernel TUN devices, one Docker
+        # container per server; see docs/WIREGUARD.MD.
+        run: |
+          image_dir="$RUNNER_TEMP/wireguard-reference"
+          mkdir -p "$image_dir"
+          go mod download golang.zx2c4.com/wireguard github.com/amnezia-vpn/amneziawg-go/v3
+          for pair in golang.zx2c4.com/wireguard:wireguard-go github.com/amnezia-vpn/amneziawg-go/v3:amneziawg-go; do
+            module_dir="$(go list -m -f '{{.Dir}}' "${pair%%:*}")"
+            GOWORK=off CGO_ENABLED=0 go -C "$module_dir" build -mod=readonly -trimpath -o "$image_dir/${pair##*:}" .
+          done
+          CGO_ENABLED=0 go build -trimpath -o "$image_dir/refserver" ./internal/wireguard/wgtest/refserver
+          tar -C "$image_dir" -c . | docker import -c 'ENTRYPOINT ["/refserver"]' - bimeron-wireguard-reference:ci
+          BIMERON_WG_REFERENCE_IMAGE=bimeron-wireguard-reference:ci CGO_ENABLED=1 go test -race ./internal/wireguard -run '^TestReferenceContainers$' -count=1 -v
+          docker image rm bimeron-wireguard-reference:ci
       - name: VLESS and VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
