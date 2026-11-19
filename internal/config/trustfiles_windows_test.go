@@ -11,6 +11,8 @@ func TestTrustFileOptionsMustBeLocal(t *testing.T) {
 		{"Type = masque\nServer = proxy.example\nPort = 443\n" + `CAFile = \\server\share\ca.pem`, "CAFile"},
 		{`SSH = ssh://alice@example.com?known_hosts=%5C%5Cserver%5Cshare%5Ckh`, "KnownHostsFile"},
 		{`MASQUE = masque://proxy.example?ca=%5C%5Cserver%5Cshare%5Cca.pem`, "CAFile"},
+		{"SSH = ssh://alice@example.com\nKnownHostsFile = D:known_hosts", "KnownHostsFile"},
+		{"SSH = ssh://alice@example.com?identity=C:id", "IdentityFile"},
 	} {
 		p := loadProblem(t, dir, "[Profile]\nVersion = 1\n\n[AccessKey]\n"+tc.access+"\n")
 		if p.Code != "file_path_not_local" || p.Section != "AccessKey" || p.Field != tc.field {

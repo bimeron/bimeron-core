@@ -606,6 +606,7 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 	if _, err := loadBaseBytes(c, path, geoIP, geoSite); err != nil {
 		return nil, c.locate(err)
 	}
+	c.normalizeTrustPaths()
 	if c.ShadowTLS != nil {
 		if err := c.ShadowTLS.Validate(); err != nil {
 			return nil, c.locate(shadowTLSProblem(err))

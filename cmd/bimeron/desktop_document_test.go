@@ -138,7 +138,7 @@ func TestValidateJSONBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := validateJSONBridge(path, &out); err != nil || out.String() != "{\"version\":1,\"problems\":[]}\n" {
+	if err := validateJSONBridge(path, &out); err != nil || out.String() != "{\"version\":1,\"problems\":[],\"trust_files\":[]}\n" {
 		t.Fatalf("%s %v", out.String(), err)
 	}
 	profile += "[GeoData]\nGeoIPFile=missing.dat\n[Rule]\nGeoIP=zz\nAction=direct\n"

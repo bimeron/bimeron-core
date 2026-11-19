@@ -807,6 +807,8 @@ On Windows, Bimeron also rejects these paths before opening them:
 
 - network shares (`\\server\share`, `//server/share`);
 - device-namespace paths (`\\?\`, `\\.\`, `\??\`);
+- drive-relative paths such as `C:file.key`, which depend on the current
+  directory of that drive;
 - reserved device names such as `NUL`, `CON`, or `COM1.txt` in any path element;
 - alternate data streams (`file.txt:stream`).
 
