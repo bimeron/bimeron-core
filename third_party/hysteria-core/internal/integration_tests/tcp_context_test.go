@@ -2,7 +2,14 @@ package integration_tests
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -36,6 +43,28 @@ func (o *stallingOutbound) UDP(string) (server.UDPConn, error) {
 
 func (o *stallingOutbound) CheckUDP(string) error { return nil }
 
+// ephemeralTLSConfig avoids the upstream key fixture, which this snapshot
+// does not ship.
+func ephemeralTLSConfig(t *testing.T) server.TLSConfig {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.TLSConfig{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+}
+
 // Bimeron patch: cancelled TCPContext dials must reset their streams, so more
 // abandoned dials than the server's stream limit never exhaust the connection.
 func TestClientServerTCPContextReleasesStreams(t *testing.T) {
@@ -43,12 +72,15 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 	ob := &stallingOutbound{stalled: "203.0.113.1:9", release: make(chan struct{})}
 	defer close(ob.release)
 
-	udpConn, udpAddr, err := serverConn()
-	assert.NoError(t, err)
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpAddr := udpConn.LocalAddr()
 	auth := mocks.NewMockAuthenticator(t)
 	auth.EXPECT().Authenticate(mock.Anything, mock.Anything, mock.Anything).Return(true, "nobody")
 	s, err := server.NewServer(&server.Config{
-		TLSConfig:     serverTLSConfig(),
+		TLSConfig:     ephemeralTLSConfig(t),
 		Conn:          udpConn,
 		Authenticator: auth,
 		Outbound:      ob,
