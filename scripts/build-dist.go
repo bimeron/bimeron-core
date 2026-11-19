@@ -43,7 +43,7 @@ func run() error {
 	// The release gate (scripts/check-release-provenance.go) refuses binaries
 	// with extra build settings, and some GOFLAGS are not recorded at all. Check
 	// the effective values, which include go env -w settings.
-	effective, err := exec.Command("go", "env", "GOFLAGS", "GOEXPERIMENT").Output()
+	effective, err := exec.Command("go", "env", "-u=false", "-w=false", "-json=false", "-changed=false", "-n=false", "-x=false", "GOFLAGS", "GOEXPERIMENT").Output()
 	if err != nil {
 		return fmt.Errorf("go env: %w", err)
 	}
