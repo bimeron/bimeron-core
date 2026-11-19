@@ -2,9 +2,18 @@ package wireguard
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"io"
+	"math/big"
 	"net"
 	"net/netip"
+	"os"
 	"runtime"
 	"strconv"
 	"testing"
@@ -12,6 +21,8 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
+	"bimeron/internal/testutil"
+	"bimeron/internal/vless"
 	"bimeron/internal/wgconf"
 	"bimeron/internal/wireguard/wgtest"
 	awgconn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
@@ -114,6 +125,77 @@ func BenchmarkTCPBulk(b *testing.B) {
 			return conn
 		})
 	})
+	b.Run("bimeron/vless-reality-vision", func(b *testing.B) {
+		echo := loopbackEcho(b)
+		d := startVLESS(b)
+		measure(b, func() net.Conn {
+			conn, err := d.DialStream(context.Background(), echo)
+			if err != nil {
+				b.Fatal(err)
+			}
+			return conn
+		})
+	})
+}
+
+// startVLESS runs an independent Xray VLESS server (TCP, REALITY, Vision)
+// on loopback and returns Bimeron's VLESS client for it. The row is skipped
+// without BIMERON_XRAY_BIN.
+func startVLESS(b *testing.B) *vless.Client {
+	const id = "123e4567-e89b-12d3-a456-426614174000"
+	if os.Getenv("BIMERON_XRAY_BIN") == "" {
+		b.Skip("set BIMERON_XRAY_BIN for the VLESS row")
+	}
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		b.Fatal(err)
+	}
+	server := testutil.StartXray(b, "vless",
+		map[string]any{"decryption": "none", "clients": []any{map[string]any{"id": id, "flow": "xtls-rprx-vision"}}},
+		map[string]any{"network": "tcp", "security": "reality", "realitySettings": map[string]any{
+			"dest": startDecoyTLS(b), "serverNames": []string{"localhost"}, "shortIds": []string{"abcd"},
+			"privateKey": base64.RawURLEncoding.EncodeToString(key.Bytes()),
+		}})
+	host, portText, _ := net.SplitHostPort(server)
+	port, _ := strconv.Atoi(portText)
+	c, err := vless.New(accesskey.Profile{Type: "vless", TCP: accesskey.Endpoint{Host: host, Port: port}, VLESS: accesskey.VLESS{
+		ID: id, Encryption: "none", Flow: "xtls-rprx-vision", Network: "tcp", Security: "reality",
+		ServerName: "localhost", Fingerprint: "chrome", ShortID: "abcd",
+		PublicKey: base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()),
+	}}, net.Dialer{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// startDecoyTLS is the TLS 1.3 target that REALITY borrows its handshake from.
+func startDecoyTLS(b *testing.B) string {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		b.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	l, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer c.Close(); _, _ = io.Copy(io.Discard, c) }()
+		}
+	}()
+	return l.Addr().String()
 }
 
 // nativeClient is amneziawg-go as its own examples use it: the standard

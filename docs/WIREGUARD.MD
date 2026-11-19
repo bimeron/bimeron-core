@@ -422,31 +422,45 @@ BIMERON_WG_REFERENCE_IMAGE=bimeron-wireguard-reference:local go test ./internal/
 ## Benchmarks
 
 `BenchmarkTCPBulk` in `internal/wireguard` moves 1 MiB per operation through
-one TCP connection and back over loopback. Every server runs in the same
-process, so CPU time includes the server and both WireGuard netstacks. Use
-the rows to compare implementations, not to estimate link speed. "native"
-is amneziawg-go as its own examples use it: its batched standard bind and
-netstack, without Bimeron's bind, scope or resource tracking.
+one TCP connection and back over loopback. The WireGuard and Shadowsocks
+servers run in the same process, so CPU time includes the server and both
+WireGuard netstacks. Use the rows to compare implementations, not to
+estimate link speed. "native" is amneziawg-go as its own examples use it:
+its batched standard bind and netstack, without Bimeron's bind, scope or
+resource tracking. It gets the same engine configuration as the Bimeron
+client, built from the same client text, including client-side AWG options
+such as `Jc`, I1–I5, timers and content padding.
 
-Linux test VM, 10 vCPU, median of three 3-second runs (2026-11-20):
+The VLESS row uses Bimeron's VLESS client (TCP, REALITY, Vision) against an
+independent Xray server, a separate process on loopback. Its CPU column
+covers only the client and the echo server, not Xray. The row is skipped
+unless `BIMERON_XRAY_BIN` points to an Xray binary; CI builds Xray
+`v1.260327.0` for its interoperability tests.
+
+Linux test VM, 10 vCPU, median of three 3-second runs in one benchmark run
+(2026-11-20):
 
 | Path | MB/s | CPU µs per MiB | Heap in use |
 |---|---:|---:|---:|
-| Bimeron, plain WireGuard | 98 | 50,900 | 19 MiB |
-| native amneziawg-go, plain WireGuard | 101 | 48,900 | 66 MiB |
-| Bimeron, AWG 1.0 | 105 | 47,200 | 22 MiB |
-| native amneziawg-go, AWG 1.0 | 113 | 45,100 | 55 MiB |
-| Bimeron, AWG 2.0 | 89 | 59,100 | 16 MiB |
-| native amneziawg-go, AWG 2.0 | 79 | 67,400 | 66 MiB |
-| Bimeron, AWG 3.1 | 84 | 63,600 | 18 MiB |
-| native amneziawg-go, AWG 3.1 | 84 | 64,700 | 71 MiB |
-| Bimeron, Shadowsocks chacha20-ietf-poly1305 (no netstack on either side) | 509 | 5,900 | 13 MiB |
+| Bimeron, plain WireGuard | 74 | 62,800 | 20 MiB |
+| native amneziawg-go, plain WireGuard | 80 | 60,500 | 67 MiB |
+| Bimeron, AWG 1.0 | 82 | 62,800 | 20 MiB |
+| native amneziawg-go, AWG 1.0 | 90 | 60,800 | 65 MiB |
+| Bimeron, AWG 2.0 | 81 | 65,400 | 20 MiB |
+| native amneziawg-go, AWG 2.0 | 87 | 60,600 | 73 MiB |
+| Bimeron, AWG 3.1 | 79 | 63,900 | 20 MiB |
+| native amneziawg-go, AWG 3.1 | 82 | 66,500 | 69 MiB |
+| Bimeron, Shadowsocks chacha20-ietf-poly1305 (no netstack on either side) | 586 | 5,200 | 15 MiB |
+| Bimeron, VLESS REALITY Vision to Xray (no netstack; Xray CPU not counted) | 496 | 3,900 | 12 MiB |
 
-Within the noise of a shared VM, Bimeron's single-socket bind matches the
-engine's own batched bind. The memory difference comes from the standard
-bind's preallocated batches. The Shadowsocks row is not a like-for-like
-comparison: the WireGuard rows include two userspace TCP stacks, which a
-real deployment also has (Bimeron's TUN stack plus the tunnel netstack).
+The VM shared its host with other workloads during the run, and single
+3-second runs varied by up to a factor of seven, so compare medians only.
+Bimeron's single-socket bind stays within 10% of the engine's own batched
+bind in every WireGuard row. The memory difference comes from the standard
+bind's preallocated batches. The Shadowsocks and VLESS rows are not a
+like-for-like comparison: the WireGuard rows include two userspace TCP
+stacks, which a real deployment also has (Bimeron's TUN stack plus the
+tunnel netstack).
 Threshold for regressions: Bimeron within 20% of native amneziawg-go
 throughput on the same run. If a live comparison with a kernel-level
 WireGuard client shows a larger gap, it is tracked separately (ADR 0043).
@@ -454,5 +468,5 @@ WireGuard client shows a larger gap, it is tracked separately (ADR 0043).
 Run:
 
 ```sh
-go test ./internal/wireguard -run '^$' -bench TCPBulk -benchtime 3s -count 3
+BIMERON_XRAY_BIN=/absolute/path/to/xray go test ./internal/wireguard -run '^$' -bench TCPBulk -benchtime 3s -count 3
 ```
