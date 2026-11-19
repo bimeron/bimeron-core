@@ -26,7 +26,8 @@ type datagram struct {
 
 // scopedPacket routes datagrams per destination: tunnel destinations get a
 // connected netstack socket each, direct ones share one outbound socket per
-// family. Replies are merged into one bounded queue.
+// family. Replies are merged into one bounded queue. The owning Client
+// closes it with its generation.
 type scopedPacket struct {
 	client   *Client
 	mu       sync.Mutex
@@ -37,19 +38,30 @@ type scopedPacket struct {
 	done     bool
 	once     sync.Once
 	wg       sync.WaitGroup
-	deadline time.Time
-	wake     chan struct{}
+	// readDeadline and its change channel: SetReadDeadline closes changed
+	// and replaces it, so every blocked ReadFrom re-evaluates.
+	readDeadline  time.Time
+	changed       chan struct{}
+	writeDeadline time.Time
 }
 
 func newScopedPacket(c *Client) *scopedPacket {
-	return &scopedPacket{client: c, tunnel: map[netip.AddrPort]net.Conn{}, direct: map[bool]net.PacketConn{}, incoming: make(chan datagram, maxQueued), closed: make(chan struct{}), wake: make(chan struct{}, 1)}
+	return &scopedPacket{client: c, tunnel: map[netip.AddrPort]net.Conn{}, direct: map[bool]net.PacketConn{}, incoming: make(chan datagram, maxQueued), closed: make(chan struct{}), changed: make(chan struct{})}
+}
+
+// usable reports whether new sockets may be opened. Callers hold p.mu.
+func (p *scopedPacket) usable() error {
+	if p.done || p.client.isClosed() {
+		return net.ErrClosed
+	}
+	return nil
 }
 
 func (p *scopedPacket) tunnelSocket(to netip.AddrPort) (net.Conn, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.done {
-		return nil, net.ErrClosed
+	if err := p.usable(); err != nil {
+		return nil, err
 	}
 	if s := p.tunnel[to]; s != nil {
 		return s, nil
@@ -57,9 +69,15 @@ func (p *scopedPacket) tunnelSocket(to netip.AddrPort) (net.Conn, error) {
 	if len(p.tunnel) >= maxTunnelPeers {
 		return nil, errTooManyPeers
 	}
+	if !p.client.families[boolIndex(to.Addr().Is6())] {
+		return nil, errTunnel
+	}
 	s, err := p.client.tunnel.DialUDP(to)
 	if err != nil {
 		return nil, errTunnel
+	}
+	if !p.writeDeadline.IsZero() {
+		_ = s.SetWriteDeadline(p.writeDeadline)
 	}
 	p.tunnel[to] = s
 	from := net.UDPAddrFromAddrPort(to)
@@ -71,8 +89,8 @@ func (p *scopedPacket) tunnelSocket(to netip.AddrPort) (net.Conn, error) {
 func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.done {
-		return nil, net.ErrClosed
+	if err := p.usable(); err != nil {
+		return nil, err
 	}
 	if s := p.direct[v6]; s != nil {
 		return s, nil
@@ -81,10 +99,13 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	if v6 {
 		network, local = "udp6", "[::]:0"
 	}
-	lc := net.ListenConfig{Control: p.client.outbound.Control}
+	lc := net.ListenConfig{Control: p.client.control}
 	s, err := lc.ListenPacket(context.Background(), network, local)
 	if err != nil {
 		return nil, err
+	}
+	if !p.writeDeadline.IsZero() {
+		_ = s.SetWriteDeadline(p.writeDeadline)
 	}
 	p.direct[v6] = s
 	p.wg.Add(1)
@@ -144,7 +165,7 @@ func (p *scopedPacket) WriteTo(b []byte, addr net.Addr) (int, error) {
 func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
 	for {
 		p.mu.Lock()
-		deadline := p.deadline
+		deadline, changed := p.readDeadline, p.changed
 		p.mu.Unlock()
 		var timer *time.Timer
 		var expired <-chan time.Time
@@ -157,10 +178,9 @@ func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
 			expired = timer.C
 		}
 		var (
-			d    datagram
-			got  bool
-			err  error
-			wake bool
+			d   datagram
+			got bool
+			err error
 		)
 		select {
 		case d = <-p.incoming:
@@ -171,19 +191,17 @@ func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
 			err = net.ErrClosed
 		case <-expired:
 			err = os.ErrDeadlineExceeded
-		case <-p.wake:
-			wake = true
+		case <-changed:
+			// The deadline changed; evaluate it again.
 		}
 		if timer != nil {
 			timer.Stop()
 		}
-		switch {
-		case got:
+		if got {
 			return copy(b, d.data), d.from, nil
-		case err != nil:
+		}
+		if err != nil {
 			return 0, nil, err
-		case wake:
-			// The deadline changed; evaluate it again.
 		}
 	}
 }
@@ -201,6 +219,7 @@ func (p *scopedPacket) Close() error {
 		}
 		p.mu.Unlock()
 		p.wg.Wait()
+		p.client.disown(p)
 	})
 	return nil
 }
@@ -214,18 +233,18 @@ func (p *scopedPacket) SetDeadline(t time.Time) error {
 
 func (p *scopedPacket) SetReadDeadline(t time.Time) error {
 	p.mu.Lock()
-	p.deadline = t
+	p.readDeadline = t
+	close(p.changed)
+	p.changed = make(chan struct{})
 	p.mu.Unlock()
-	select {
-	case p.wake <- struct{}{}:
-	default:
-	}
 	return nil
 }
 
+// SetWriteDeadline applies to existing sockets and to sockets opened later.
 func (p *scopedPacket) SetWriteDeadline(t time.Time) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.writeDeadline = t
 	var err error
 	for _, s := range p.tunnel {
 		err = errors.Join(err, s.SetWriteDeadline(t))

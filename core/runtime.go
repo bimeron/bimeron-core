@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -257,12 +258,20 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			}
 		}
 	}
-	if p.TCPOnly() {
+	check := func() error { _, err := vpn.Check(ctx, tcp, udp, c.DNS); return err }
+	switch {
+	case p.Type == "wireguard":
+		// The handshake already proved the peer. A public HTTPS target may be
+		// outside AllowedIPs and blocked by AllowedIPsMode, so only DNS,
+		// which every session needs, is checked.
+		report("transport_check", "Checking DNS through the WireGuard scope")
+		check = func() error { return vpn.CheckDNS(ctx, tcp, udp, c.DNS) }
+	case p.TCPOnly():
 		report("transport_check", "Checking TCP/TLS and DNS over TCP-only upstream")
-	} else {
+	default:
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	}
-	if _, err := vpn.Check(ctx, tcp, udp, c.DNS); err != nil {
+	if err := check(); err != nil {
 		if closeTransport != nil {
 			_ = closeTransport()
 		}
@@ -312,6 +321,13 @@ func (s *vpnSession) Reconnect(ctx context.Context) error {
 	path, err := s.platform.Inspect(attempt, s.cfg.Name, false)
 	if err != nil {
 		return err
+	}
+	// A WireGuard generation with a fixed ListenPort holds the port the
+	// replacement needs. The session is suspended to direct handling here,
+	// so release it first.
+	if p, ok := s.tcp.(interface{ ExclusivePort() bool }); ok && p.ExclusivePort() && s.closeTransport != nil {
+		_ = s.closeTransport()
+		s.closeTransport = nil
 	}
 	if path.identity != s.path.identity {
 		s.router.replace(directHandler(s.ctx, s.cfg, path, s.report, s.metadata))
@@ -560,6 +576,13 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		endpoints := sessionEndpoints{tcp: net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))}
 		if p.Type == "masque" {
 			endpoints.udp = endpoints.tcp
+		}
+		if wg, ok := d.(interface{ Endpoint() netip.AddrPort }); ok && p.Type == "wireguard" {
+			// Publish the physical UDP peer the device actually uses.
+			endpoints = sessionEndpoints{tcp: wg.Endpoint().String(), udp: wg.Endpoint().String()}
+			if _, err := netip.ParseAddr(p.UDP.Host); err != nil {
+				endpoints.tcpName, endpoints.udpName = p.UDP.Host, p.UDP.Host
+			}
 		}
 		c.endpointChanged(endpoints)
 	}

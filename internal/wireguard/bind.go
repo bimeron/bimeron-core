@@ -26,7 +26,12 @@ type Bind struct {
 	socket   *net.UDPConn
 	sent     atomic.Uint64
 	received atomic.Uint64
+	// failed records the last Open result so start errors can tell socket
+	// failures from invalid configuration.
+	failed atomic.Bool
 }
+
+func (b *Bind) openFailed() bool { return b.failed.Load() }
 
 var _ conn.Bind = (*Bind)(nil)
 
@@ -50,13 +55,16 @@ func (b *Bind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	}
 	pc, err := b.listen(context.Background(), network, net.JoinHostPort(local, strconv.Itoa(int(port))))
 	if err != nil {
+		b.failed.Store(true)
 		return nil, 0, errBind
 	}
 	socket, ok := pc.(*net.UDPConn)
 	if !ok {
 		_ = pc.Close()
+		b.failed.Store(true)
 		return nil, 0, errBind
 	}
+	b.failed.Store(false)
 	b.socket = socket
 	actual := uint16(0)
 	if addr, ok := socket.LocalAddr().(*net.UDPAddr); ok {

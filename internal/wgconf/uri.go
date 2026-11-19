@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"bimeron/internal/problem"
 )
@@ -107,6 +108,9 @@ func importWireGuardURI(raw string) (Imported, error) {
 		return Imported{}, invalid()
 	}
 	host, port := u.Hostname(), u.Port()
+	if !utf8.ValidString(host) || !utf8.ValidString(u.Fragment) {
+		return Imported{}, invalid()
+	}
 	if host == "" || port == "" {
 		return Imported{}, problem.New("wireguard_endpoint_invalid", "WireGuard Endpoint must be host:port")
 	}
@@ -119,6 +123,9 @@ func importWireGuardURI(raw string) (Imported, error) {
 		if _, hasPassword := u.User.Password(); hasPassword {
 			return Imported{}, problem.New("uri_credentials_invalid", "WireGuard share link must carry only the private key before @")
 		}
+		if !utf8.ValidString(u.User.Username()) {
+			return Imported{}, invalid()
+		}
 		fields["Interface/PrivateKey"] = u.User.Username()
 	}
 	amnezia := ""
@@ -130,6 +137,9 @@ func importWireGuardURI(raw string) (Imported, error) {
 		}
 		seen[normalized] = true
 		value := strings.TrimSpace(values[0])
+		if !utf8.ValidString(value) {
+			return Imported{}, invalid()
+		}
 		switch normalized {
 		case "reserved":
 			if !zeroReserved(value) {

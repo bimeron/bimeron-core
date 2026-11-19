@@ -6,6 +6,16 @@
       "en": "The WireGuard tunnel could not be started from this profile. Check the WireGuard configuration.",
       "ru": "Не удалось запустить туннель WireGuard по этому профилю. Проверьте конфигурацию WireGuard."
     },
+    "wireguard_socket_failed": {
+      "kind": "connection",
+      "en": "Bimeron could not open the network socket for WireGuard. Check the network connection; if ListenPort is set, make sure no other program uses that port.",
+      "ru": "Bimeron не смог открыть сетевой сокет для WireGuard. Проверьте подключение к сети; если задан ListenPort, убедитесь, что этот порт не занят другой программой."
+    },
+    "wireguard_platform_limit": {
+      "kind": "connection",
+      "en": "The AmneziaWG packet sizes in this profile (S1–S4, Jmax, I1–I5 or MTU) are too large for this platform. Lower them.",
+      "ru": "Размеры пакетов AmneziaWG в этом профиле (S1–S4, Jmax, I1–I5 или MTU) слишком велики для этой платформы. Уменьшите их."
+    },
     "wireguard_handshake_timeout": {
       "kind": "connection",
       "en": "The WireGuard server did not answer the handshake. Check the server address, keys and AmneziaWG settings, or the network.",

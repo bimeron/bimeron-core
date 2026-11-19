@@ -518,7 +518,16 @@ var tagKinds = map[string]bool{"b": true, "t": true, "r": true, "rc": true, "rd"
 
 // validateTags checks the I1-I5 tag grammar: a sequence of <tag [arg]>.
 func validateTags(value string) error {
-	bad := func() error { return problem.New("awg_tag_invalid", "invalid AmneziaWG signature packet tags") }
+	_, err := signatureSize(value)
+	return err
+}
+
+// signatureSize validates I1-I5 tags and returns the fixed bytes they add;
+// data tags count only their size fields.
+func signatureSize(value string) (int, error) {
+	bad := func() (int, error) {
+		return 0, problem.New("awg_tag_invalid", "invalid AmneziaWG signature packet tags")
+	}
 	total := 0
 	rest := value
 	for strings.TrimSpace(rest) != "" {
@@ -574,7 +583,28 @@ func validateTags(value string) error {
 			return bad()
 		}
 	}
-	return nil
+	return total, nil
+}
+
+// PacketSizes reports the largest datagrams this configuration makes the
+// engine build: a padded handshake message, a padded transport message at
+// the tunnel MTU, a junk packet and a signature packet. Engines with smaller
+// message buffers than the UDP limit must refuse larger sizes.
+func (c *Config) PacketSizes() (handshake, transport, junk, signature int) {
+	number := func(key string) int { n, _ := strconv.Atoi(c.AWG[key]); return n }
+	for key, size := range map[string]int{"S1": 148, "S2": 92, "S3": 64} {
+		handshake = max(handshake, size+number(key))
+	}
+	padding, _ := parseRange(c.AWG["ContentPaddingAddition"], 0, maxPadding)
+	// Content is padded to a multiple of 16 before the 16-byte tag.
+	transport = int(messageSizes["S4"]) + number("S4") + c.TunnelMTU() + 15 + int(padding.Hi)
+	junk = number("Jmax")
+	for i := 1; i <= 5; i++ {
+		if n, err := signatureSize(c.AWG["I"+strconv.Itoa(i)]); err == nil {
+			signature = max(signature, n)
+		}
+	}
+	return handshake, transport, junk, signature
 }
 
 // defaultHeaders are the WireGuard message types used when H1-H4 are unset.

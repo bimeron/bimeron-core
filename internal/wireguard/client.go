@@ -3,11 +3,12 @@ package wireguard
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"strconv"
-	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"bimeron/internal/wgconf"
@@ -39,7 +40,8 @@ type Options struct {
 	// Mode is an AllowedIPsMode value; empty means direct.
 	Mode string
 	// Outbound opens sockets on the physical path: the WireGuard socket and
-	// direct connections for destinations outside AllowedIPs.
+	// direct connections for destinations outside AllowedIPs. Its Control
+	// or ControlContext hook must keep those sockets out of the tunnel.
 	Outbound net.Dialer
 	// DNS lists resolver IPs (port 53) for names given to DialStream. The
 	// queries follow the same scope as other traffic.
@@ -47,16 +49,24 @@ type Options struct {
 }
 
 // Client is one WireGuard device generation. It is safe for concurrent use.
+// Close ends every socket and stream the generation opened, including
+// direct ones outside the tunnel.
 type Client struct {
-	tunnel   tunnel
-	bind     *Bind
-	outbound net.Dialer
-	allowed  []netip.Prefix
-	mode     string
-	guardV6  bool
-	dns      []netip.AddrPort
-	closed   chan struct{}
-	once     sync.Once
+	tunnel    tunnel
+	bind      *Bind
+	outbound  net.Dialer
+	control   func(network, address string, c syscall.RawConn) error
+	endpoint  netip.AddrPort
+	fixedPort bool
+	allowed   []netip.Prefix
+	families  [2]bool // local tunnel address families: [IPv4, IPv6]
+	mode      string
+	guardV6   bool
+	dns       []netip.AddrPort
+	closed    chan struct{}
+	once      sync.Once
+	mu        sync.Mutex
+	owned     map[io.Closer]struct{}
 }
 
 var _ transport.StreamDialer = (*Client)(nil)
@@ -72,9 +82,21 @@ var (
 )
 
 // New starts a device. It does not wait for the handshake; use
-// WaitHandshake before reporting the session as connected.
+// WaitHandshake before reporting the session as connected. Errors are
+// ErrPlatformLimit, ErrSocket or a generic engine failure.
 func New(o Options) (*Client, error) {
 	return newWithEngine(o, startAWG)
+}
+
+// listenControl adapts the dialer's socket hook to net.ListenConfig, with
+// ControlContext taking precedence as it does for net.Dialer.
+func listenControl(d net.Dialer) func(network, address string, c syscall.RawConn) error {
+	if d.ControlContext != nil {
+		return func(network, address string, c syscall.RawConn) error {
+			return d.ControlContext(context.Background(), network, address, c)
+		}
+	}
+	return d.Control
 }
 
 func newWithEngine(o Options, start engine) (*Client, error) {
@@ -96,34 +118,60 @@ func newWithEngine(o Options, start engine) (*Client, error) {
 	if mode == ModeIgnore {
 		peerAllowed = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
 	}
-	summary := wgconf.Summarize(allowed)
+	endpoint := netip.AddrPortFrom(o.Endpoint.Addr().Unmap(), o.Endpoint.Port())
 	client := &Client{
-		outbound: o.Outbound,
-		allowed:  allowed,
-		mode:     mode,
-		guardV6:  summary.Coverage == wgconf.CoverageIPv4Only,
-		closed:   make(chan struct{}),
+		outbound:  o.Outbound,
+		control:   listenControl(o.Outbound),
+		endpoint:  endpoint,
+		fixedPort: c.ListenPort != 0,
+		allowed:   allowed,
+		mode:      mode,
+		guardV6:   wgconf.Summarize(allowed).Coverage == wgconf.CoverageIPv4Only,
+		closed:    make(chan struct{}),
+		owned:     map[io.Closer]struct{}{},
+	}
+	for _, a := range c.LocalAddresses() {
+		client.families[boolIndex(a.Is6())] = true
 	}
 	for _, s := range o.DNS {
 		if a, err := netip.ParseAddr(s); err == nil {
 			client.dns = append(client.dns, netip.AddrPortFrom(a.Unmap(), 53))
 		}
 	}
-	lc := net.ListenConfig{Control: o.Outbound.Control}
-	client.bind = NewBind(lc.ListenPacket, o.Endpoint)
+	lc := net.ListenConfig{Control: client.control}
+	client.bind = NewBind(lc.ListenPacket, endpoint)
+	handshake, transportSize, junk, signature := c.PacketSizes()
 	t, err := start(tunnelConfig{
 		Addresses: c.LocalAddresses(),
 		MTU:       c.TunnelMTU(),
-		UAPI:      c.UAPI(o.Endpoint, peerAllowed),
+		UAPI:      c.UAPI(endpoint, peerAllowed),
 		PublicKey: c.Peer.PublicKey,
 		Bind:      client.bind,
+		Sizes:     [4]int{handshake, transportSize, junk, signature},
 	})
 	if err != nil {
+		if errors.Is(err, ErrPlatformLimit) || errors.Is(err, ErrSocket) {
+			return nil, err
+		}
 		return nil, errEngine
 	}
 	client.tunnel = t
 	return client, nil
 }
+
+func boolIndex(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// Endpoint is the physical peer address this generation uses.
+func (c *Client) Endpoint() netip.AddrPort { return c.endpoint }
+
+// ExclusivePort reports a fixed ListenPort: a replacement generation can
+// open its socket only after this one is closed.
+func (c *Client) ExclusivePort() bool { return c.fixedPort }
 
 // scope decides where traffic that Bimeron's policy sent to the upstream
 // goes. Bimeron block and direct rules were already applied by the caller.
@@ -143,15 +191,23 @@ func (c *Client) scope(ip netip.Addr) route {
 	return viaDirect
 }
 
-// WaitHandshake starts a handshake and waits until it completes or ctx ends.
+// WaitHandshake waits for the first handshake of this generation. A new
+// device has none, so any completed handshake counts, including one that
+// a persistent keepalive started before the wait began.
 func (c *Client) WaitHandshake(ctx context.Context) error {
-	since := time.Now()
+	return c.waitHandshakeAfter(ctx, time.Time{})
+}
+
+// waitHandshakeAfter starts a handshake and waits until the reported time
+// differs from previous. Comparing for change, not order, tolerates wall
+// clock adjustments.
+func (c *Client) waitHandshakeAfter(ctx context.Context, previous time.Time) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	nudge := time.Now()
 	c.tunnel.Initiate()
 	for {
-		if !c.tunnel.LastHandshake().Before(since) {
+		if last := c.tunnel.LastHandshake(); !last.IsZero() && !last.Equal(previous) {
 			return nil
 		}
 		select {
@@ -161,7 +217,7 @@ func (c *Client) WaitHandshake(ctx context.Context) error {
 			return ErrClosed
 		case now := <-ticker.C:
 			// The engine retries on its own; a periodic nudge covers a
-			// dropped first keepalive before any session exists.
+			// dropped initiation.
 			if now.Sub(nudge) >= 5*time.Second {
 				nudge = now
 				c.tunnel.Initiate()
@@ -173,22 +229,51 @@ func (c *Client) WaitHandshake(ctx context.Context) error {
 // LastHandshake reports the most recent completed handshake.
 func (c *Client) LastHandshake() time.Time { return c.tunnel.LastHandshake() }
 
-// Probe checks that the peer still answers. A handshake within the session
-// lifetime is enough; otherwise it forces one.
+// probeFreshness is how recent a handshake must be for Probe to pass
+// without a new one.
+const probeFreshness = 150 * time.Second
+
+// Probe checks that the peer still answers. A recent handshake is enough;
+// otherwise it forces a new one and waits for it to complete.
 func (c *Client) Probe(ctx context.Context) error {
-	if time.Since(c.tunnel.LastHandshake()) < 150*time.Second {
+	last := c.tunnel.LastHandshake()
+	if age := time.Since(last); !last.IsZero() && age >= 0 && age < probeFreshness {
 		return nil
 	}
-	return c.WaitHandshake(ctx)
+	return c.waitHandshakeAfter(ctx, last)
 }
 
 // Traffic reports encrypted bytes on the wire.
 func (c *Client) Traffic() (sent, received uint64) { return c.bind.Traffic() }
 
-// Close stops the device. Connections opened through it fail afterwards.
+// own registers a resource of this generation. It fails after Close.
+func (c *Client) own(r io.Closer) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.isClosed() {
+		return false
+	}
+	c.owned[r] = struct{}{}
+	return true
+}
+
+func (c *Client) disown(r io.Closer) {
+	c.mu.Lock()
+	delete(c.owned, r)
+	c.mu.Unlock()
+}
+
+// Close stops the device and closes every socket and stream it opened.
 func (c *Client) Close() error {
 	c.once.Do(func() {
+		c.mu.Lock()
 		close(c.closed)
+		owned := c.owned
+		c.owned = map[io.Closer]struct{}{}
+		c.mu.Unlock()
+		for r := range owned {
+			_ = r.Close()
+		}
 		_ = c.tunnel.Close()
 	})
 	return nil
@@ -203,16 +288,42 @@ func (c *Client) isClosed() bool {
 	}
 }
 
+// ownedTCP closes itself from the generation's resource set.
+type ownedTCP struct {
+	*net.TCPConn
+	client *Client
+}
+
+func (t *ownedTCP) Close() error {
+	t.client.disown(t)
+	return t.TCPConn.Close()
+}
+
 // DialStream connects to an IP or name. Names are resolved through the
-// configured resolvers, routed by scope.
+// configured resolvers, routed by scope; usable answers are tried in order.
 func (c *Client) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {
 	if c.isClosed() {
 		return nil, ErrClosed
 	}
-	to, err := c.resolve(ctx, address)
+	candidates, err := c.resolve(ctx, address)
 	if err != nil {
 		return nil, err
 	}
+	last := error(ErrBlocked)
+	for _, to := range candidates {
+		stream, err := c.dialOne(ctx, to)
+		if err == nil {
+			return stream, nil
+		}
+		last = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	return nil, last
+}
+
+func (c *Client) dialOne(ctx context.Context, to netip.AddrPort) (transport.StreamConn, error) {
 	switch c.scope(to.Addr()) {
 	case blocked:
 		return nil, ErrBlocked
@@ -221,10 +332,20 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 		if err != nil {
 			return nil, err
 		}
-		if tcp, ok := conn.(*net.TCPConn); ok {
-			return tcp, nil
+		tcp, ok := conn.(*net.TCPConn)
+		if !ok {
+			_ = conn.Close()
+			return nil, errTunnel
 		}
-		_ = conn.Close()
+		owned := &ownedTCP{TCPConn: tcp, client: c}
+		if !c.own(owned) {
+			_ = tcp.Close()
+			return nil, ErrClosed
+		}
+		return owned, nil
+	}
+	if !c.families[boolIndex(to.Addr().Is6())] {
+		// The tunnel has no address of this family.
 		return nil, errTunnel
 	}
 	conn, err := c.tunnel.DialTCP(ctx, to)
@@ -242,96 +363,53 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	return stream, nil
 }
 
-func (c *Client) resolve(ctx context.Context, address string) (netip.AddrPort, error) {
+// resolve returns the destinations to try: the IP itself, or the answers
+// for a name that the scope permits and the tunnel can reach, IPv4 first.
+func (c *Client) resolve(ctx context.Context, address string) ([]netip.AddrPort, error) {
 	host, portText, err := net.SplitHostPort(address)
-	if err != nil {
-		return netip.AddrPort{}, err
-	}
-	port, err := strconv.ParseUint(portText, 10, 16)
-	if err != nil {
-		return netip.AddrPort{}, errors.New("invalid port")
-	}
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return netip.AddrPortFrom(ip.Unmap(), uint16(port)), nil
-	}
-	if len(c.dns) == 0 {
-		return netip.AddrPort{}, errResolve
-	}
-	resolver := &net.Resolver{PreferGo: true, Dial: c.dialDNS}
-	ips, err := resolver.LookupNetIP(ctx, "ip", strings.TrimSuffix(host, "."))
-	if err != nil || len(ips) == 0 {
-		return netip.AddrPort{}, errResolve
-	}
-	// Prefer an address the scope does not block, IPv4 first.
-	best := netip.Addr{}
-	for _, ip := range ips {
-		ip = ip.Unmap()
-		if c.scope(ip) == blocked {
-			continue
-		}
-		if !best.IsValid() || (ip.Is4() && !best.Is4()) {
-			best = ip
-		}
-	}
-	if !best.IsValid() {
-		best = ips[0].Unmap()
-	}
-	return netip.AddrPortFrom(best, uint16(port)), nil
-}
-
-// dialDNS ignores the system resolver address and uses Bimeron's servers.
-func (c *Client) dialDNS(ctx context.Context, network, _ string) (net.Conn, error) {
-	var last error = errResolve
-	for _, server := range c.dns {
-		var conn net.Conn
-		var err error
-		if strings.HasPrefix(network, "tcp") {
-			conn, err = c.DialStream(ctx, server.String())
-		} else {
-			conn, err = c.dialUDP(ctx, server)
-		}
-		if err == nil {
-			return conn, nil
-		}
-		last = err
-	}
-	return nil, last
-}
-
-// dialUDP returns a connected datagram conn to one destination.
-func (c *Client) dialUDP(ctx context.Context, to netip.AddrPort) (net.Conn, error) {
-	pc, err := c.ListenPacket(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &connectedPacket{PacketConn: pc, to: net.UDPAddrFromAddrPort(to)}, nil
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		return nil, errors.New("invalid port")
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return []netip.AddrPort{netip.AddrPortFrom(ip.Unmap(), uint16(port))}, nil
+	}
+	ips, err := c.lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var v4, v6 []netip.AddrPort
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		switch c.scope(ip) {
+		case blocked:
+			continue
+		case viaTunnel:
+			if !c.families[boolIndex(ip.Is6())] {
+				continue
+			}
+		}
+		if ip.Is4() {
+			v4 = append(v4, netip.AddrPortFrom(ip, uint16(port)))
+		} else {
+			v6 = append(v6, netip.AddrPortFrom(ip, uint16(port)))
+		}
+	}
+	if len(v4)+len(v6) == 0 {
+		return nil, ErrBlocked
+	}
+	return append(v4, v6...), nil
 }
 
 // ListenPacket returns an unconnected socket whose datagrams are routed per
 // destination: into the tunnel, direct, or dropped.
 func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
-	if c.isClosed() {
+	p := newScopedPacket(c)
+	if !c.own(p) {
 		return nil, ErrClosed
 	}
-	return newScopedPacket(c), nil
+	return p, nil
 }
-
-// connectedPacket adapts a PacketConn to net.Conn for the Go resolver.
-type connectedPacket struct {
-	net.PacketConn
-	to *net.UDPAddr
-}
-
-func (p *connectedPacket) Read(b []byte) (int, error) {
-	for {
-		n, from, err := p.ReadFrom(b)
-		if err != nil {
-			return n, err
-		}
-		if u, ok := from.(*net.UDPAddr); ok && u.AddrPort() == p.to.AddrPort() {
-			return n, nil
-		}
-	}
-}
-func (p *connectedPacket) Write(b []byte) (int, error) { return p.WriteTo(b, p.to) }
-func (p *connectedPacket) RemoteAddr() net.Addr        { return p.to }

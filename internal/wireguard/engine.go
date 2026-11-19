@@ -22,8 +22,8 @@ type tunnel interface {
 	DialUDP(to netip.AddrPort) (net.Conn, error)
 	// LastHandshake reports the last completed handshake, zero if none.
 	LastHandshake() time.Time
-	// Initiate asks the engine to send a keepalive, which starts a
-	// handshake when no session key exists.
+	// Initiate asks the engine to start a new handshake now, even when a
+	// session key exists.
 	Initiate()
 	// Close stops the device and releases its socket and goroutines. It is
 	// safe to call more than once.
@@ -41,6 +41,9 @@ type tunnelConfig struct {
 	PublicKey [32]byte
 	// Bind sends and receives the encrypted datagrams.
 	Bind *Bind
+	// Sizes are the largest datagrams the configuration builds; an engine
+	// refuses sizes beyond its message buffers with ErrPlatformLimit.
+	Sizes [4]int
 }
 
 // engine starts a tunnel. Tests replace it to inject failures.

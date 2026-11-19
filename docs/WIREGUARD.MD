@@ -257,19 +257,33 @@ Design record: [ADR 0041](adr/0041-wireguard-amneziawg-client.md).
   (desktop interface binding, Android protect, Apple host network), so it
   never loops into Bimeron's TUN. The kill switch already permits the core's
   own sockets. Datagrams from other sources are dropped.
-- The endpoint name is resolved on the outbound path for each session
-  generation. Every reconnect, including one after a network change, starts
-  a new device and resolves the name again.
+- The endpoint name is resolved once on the outbound path for each session
+  generation, and status reports that physical UDP endpoint. Every
+  reconnect, including one after a network change, starts a new device and
+  resolves the name again. With a fixed `ListenPort`, the old device is
+  closed before the new one opens the port. The socket hook may be
+  `Control` or `ControlContext` of the outbound dialer.
 - The session reports connected only after a completed handshake (up to 20
-  seconds), followed by the usual transport check. A missing handshake fails
-  with the retryable `wireguard_handshake_timeout`. Health checks force a
-  handshake when the last one is older than 150 seconds.
+  seconds), followed by a DNS check through the AllowedIPs scope. There is no
+  public HTTPS check, because its target may lie outside AllowedIPs. A
+  missing handshake fails with the retryable `wireguard_handshake_timeout`.
+  Health checks force a new handshake when the last one is older than 150
+  seconds and wait until the handshake time changes.
+- Start failures: `wireguard_socket_failed` (retryable; the outbound UDP
+  socket or a fixed `ListenPort` could not be opened),
+  `wireguard_platform_limit` (packet sizes from S1–S4, `Jmax`, I1–I5 or MTU
+  exceed the engine buffers of this platform; Windows and iOS use about
+  2 KB and 1.7 KB, other platforms 64 KB) and `invalid_wireguard_transport`.
 - AllowedIPs scope applies to all upstream traffic, including DNS queries
   and checks. Names given to the SOCKS5 server are resolved through Bimeron's
-  DNS servers, and those queries follow the scope too.
+  DNS servers (A and AAAA, one bounded exchange per server, then the next
+  server), and those queries follow the scope too. Answers outside the scope
+  or of a family the tunnel has no address for are skipped; the rest are
+  tried in order, IPv4 first.
 - UDP datagrams larger than the tunnel MTU are fragmented by the inner
   stack. Each UDP socket is limited to 64 tunnel destinations and 64 queued
-  replies.
+  replies. Closing a generation closes every socket and stream it opened,
+  including direct ones outside the tunnel.
 - The engine logger is silent. Keys never appear in logs, status, problems or
   diagnostics.
 

@@ -46,7 +46,13 @@ func startWireGuard(ctx context.Context, c SessionConfig, p Profile, outbound ne
 		Outbound: outbound,
 		DNS:      c.DNS,
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, wireguard.ErrSocket):
+		// The outbound path may recover, for example after a network change.
+		return nil, fault("wireguard_socket_failed", true)
+	case errors.Is(err, wireguard.ErrPlatformLimit):
+		return nil, fault("wireguard_platform_limit", false)
+	case err != nil:
 		return nil, fault("invalid_wireguard_transport", false)
 	}
 	report("wireguard_handshake", "Waiting for the WireGuard handshake")
