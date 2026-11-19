@@ -521,6 +521,13 @@ Before saving an import, run `bimeron validate --json` and confirm every
 While connecting, poll the protected local control socket with
 `{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
 each `prompts` entry with masking controlled by its matching `echo` value.
+Keyboard-interactive prompts come from the SSH server. Render them as plain
+text, never as markup, and keep them visually separate from GUI-owned text so
+that a server cannot imitate it. Core already removes control characters:
+a prompt contains no C0 control other than LF (a line break) and TAB, no DEL,
+no C1 control and no bidirectional formatting character; replaced characters
+appear as U+FFFD. Cores before this guarantee pass the server's text
+unchanged, so a GUI that also supports them should apply the same filter.
 Send `{"version":1,"command":"auth_reply","challenge_id":"...","answers":["..."]}`.
 The supported challenge kinds are `key_passphrase`, `password`, and
 `keyboard_interactive`. An answer is used once and is never stored in the

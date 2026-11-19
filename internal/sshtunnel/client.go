@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/displaytext"
 	"bimeron/internal/safefile"
 	"bimeron/internal/sshtunnel/knownhosts"
 	"bimeron/internal/streamtransport"
@@ -300,7 +301,13 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 			if len(questions) == 0 || len(questions) > 8 {
 				return nil, fmt.Errorf("unsupported SSH authentication challenge")
 			}
-			return prompt(ctx, Challenge{Kind: "keyboard_interactive", Prompts: questions, Echo: echoes})
+			// The server chooses the prompt text. Every consumer (terminal,
+			// GUI, embedded host) receives it without control characters.
+			prompts := make([]string, len(questions))
+			for i, q := range questions {
+				prompts[i] = displaytext.Text(q)
+			}
+			return prompt(ctx, Challenge{Kind: "keyboard_interactive", Prompts: prompts, Echo: echoes})
 		}))
 	}
 	if len(methods) == 0 {

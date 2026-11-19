@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
+	"bimeron/internal/displaytext"
 	"bimeron/internal/sshtunnel"
 )
 
@@ -32,5 +34,18 @@ func TestReadSSHAnswers(t *testing.T) {
 	answers, err = readSSHAnswers(ctx, sshtunnel.Challenge{Prompts: []string{"Password"}, Echo: []bool{false}}, io.Discard, line, func() (string, error) { cancel(); return "pw", nil })
 	if err == nil || answers != nil {
 		t.Fatalf("late secret %q err %v", answers, err)
+	}
+}
+
+// The terminal prompt shows server text without control characters but keeps
+// its line breaks.
+func TestReadSSHAnswersFiltersPrompt(t *testing.T) {
+	c := sshtunnel.Challenge{Kind: "keyboard_interactive", Prompts: []string{"\x1b]52;c;Zm9v\x07Code\r\nfor alice"}, Echo: []bool{true}}
+	var out strings.Builder
+	if _, err := readSSHAnswers(context.Background(), c, &out, func() (string, error) { return "1", nil }, nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := string(displaytext.Replacement) + "]52;c;Zm9v" + string(displaytext.Replacement) + "Code\nfor alice: "; out.String() != want {
+		t.Fatalf("prompt %q, want %q", out.String(), want)
 	}
 }
