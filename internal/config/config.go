@@ -850,6 +850,11 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 			return nil, problem.New("option_requires_type", "[AccessKey] SSH file options require an SSH profile").In("AccessKey").At(c.present("IdentityFile", "KnownHostsFile")).Arg("type", "SSH")
 		}
 	}
+	for _, f := range []struct{ field, value string }{{"IdentityFile", c.Access.IdentityFile}, {"KnownHostsFile", c.Access.KnownHostsFile}, {"CAFile", c.Access.CAFile}} {
+		if f.value != "" && !safefile.Local(f.value) {
+			return nil, accesskey.FilePathNotLocal(f.field).In("AccessKey")
+		}
+	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
 		if c.Access.Type == "" {
 			return nil, problem.New("value_required", "[AccessKey] Type is required when using explicit parameters").In("AccessKey").On("Type", "")

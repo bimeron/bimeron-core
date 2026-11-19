@@ -17,8 +17,8 @@
     },
     "file_path_not_local": {
       "kind": "config",
-      "en": "The profile or key file must be on a local drive. Network shares, mapped network drives, device paths and reserved device names are not supported.",
-      "ru": "Файл профиля или ключа должен находиться на локальном диске. Сетевые папки, подключённые сетевые диски, пути устройств и зарезервированные имена устройств не поддерживаются."
+      "en": "The file must be on a local drive. Network shares (including WebDAV), mapped network drives, device paths and reserved device names are not supported.",
+      "ru": "Файл должен находиться на локальном диске. Сетевые папки (включая WebDAV), подключённые сетевые диски, пути устройств и зарезервированные имена устройств не поддерживаются."
     },
     "file_not_utf8": {
       "kind": "config",
