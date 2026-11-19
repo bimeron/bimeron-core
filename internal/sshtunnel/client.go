@@ -95,23 +95,25 @@ var (
 	errKnownHostsTooLarge = errors.New("SSH known_hosts file exceeds the 1 MiB size limit")
 )
 
-// knownHostsError hides the file system error but keeps an oversized file
-// distinguishable, since that needs a different fix.
-func knownHostsError(err error) error {
+// knownHostsError hides the file system error but names the file that was
+// read, since the default ~/.ssh/known_hosts may be used, and keeps an
+// oversized file distinguishable, since that needs a different fix.
+func knownHostsError(path string, err error) error {
 	if errors.Is(err, safefile.ErrTooLarge) {
-		return errKnownHostsTooLarge
+		return fmt.Errorf("%w: %s", errKnownHostsTooLarge, path)
 	}
-	return errKnownHosts
+	return fmt.Errorf("%w: %s", errKnownHosts, path)
 }
 
 // knownHosts reads the known_hosts file at path once and returns its contents
-// with the callback parsed from them.
+// with the callback parsed from them. Parse errors and host key mismatches
+// name path.
 func knownHosts(path string) (ssh.HostKeyCallback, []byte, error) {
 	data, err := readFile(path, maxKnownHostsFile)
 	if err != nil {
 		return nil, nil, err
 	}
-	callback, err := knownhosts.Parse(data, "known_hosts")
+	callback, err := knownhosts.Parse(data, path)
 	return callback, data, err
 }
 
@@ -212,7 +214,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		if hostFile != "" {
 			var data []byte
 			if policy.file, data, err = knownHosts(hostFile); err != nil {
-				return nil, knownHostsError(err)
+				return nil, knownHostsError(hostFile, err)
 			}
 			policy.ca, policy.folds = inspectHosts(data)
 		}
@@ -237,7 +239,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	if policy == nil {
 		var data []byte
 		if verify, data, err = knownHosts(hostFile); err != nil {
-			return nil, knownHostsError(err)
+			return nil, knownHostsError(hostFile, err)
 		}
 		order = &verifier{keys: &HostKeys{}, file: verify}
 		order.ca, _ = inspectHosts(data)
