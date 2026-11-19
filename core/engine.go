@@ -99,11 +99,13 @@ type backend interface {
 	Open(context.Context, SessionConfig, func(string, string)) (session, error)
 }
 type stageError struct {
+	cause error // Only sanitized sentinels may be exposed to callers.
 	code  string
 	retry bool
 	stage string
 }
 
+func (e *stageError) Unwrap() error       { return e.cause }
 func (e *stageError) Error() string       { return e.code }
 func fault(code string, retry bool) error { return &stageError{code: code, retry: retry} }
 func retryable(err error) bool            { var e *stageError; return errors.As(err, &e) && e.retry }

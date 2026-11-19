@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/hysteria2"
@@ -23,6 +24,12 @@ import (
 )
 
 func check(args []string) error {
+	ctx, stop := notifyShutdown(context.Background())
+	defer stop()
+	return checkWithResolver(ctx, args, accesskey.NewResolver())
+}
+
+func checkWithResolver(ctx context.Context, args []string, resolver *accesskey.Resolver) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	dns := flags.String("dns", "1.1.1.1", "Comma-separated IPv4 DNS resolvers to test through the upstream proxy")
 	configPath := flags.String("config", "", "Bimeron config file")
@@ -46,9 +53,7 @@ func check(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := notifyShutdown(context.Background())
-	defer stop()
-	p, err := resolveInput(ctx, flags.Arg(0), cfg)
+	p, err := resolveInput(ctx, flags.Arg(0), cfg, resolver)
 	if err != nil {
 		return err
 	}

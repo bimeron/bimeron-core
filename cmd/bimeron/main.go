@@ -91,13 +91,13 @@ func run(args []string) error {
 	case "errors":
 		return errorCatalog(args[1:], os.Stdout)
 	case "check":
-		return check(args[1:])
+		return killSwitchHint(check(args[1:]))
 	case "connect":
 		return connect(args[1:])
 	case "recover":
 		return recoverVPN(args[1:])
 	case "proxy":
-		return serve(args[1:])
+		return killSwitchHint(serve(args[1:]))
 	case "inspect":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: bimeron inspect <key-file>")

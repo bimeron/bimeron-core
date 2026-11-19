@@ -36,7 +36,9 @@ function Add-DnsClientNrptRule {
  param($Namespace,$NameServers,$Comment)
  $global:rules += [pscustomobject]@{Name='our-rule';Comment=$Comment}
 }
+function Get-DnsClientNrptPolicy { param([switch]$Effective) [pscustomobject]@{Namespace=@('.');NameServers='198.18.0.2'} }
 function Get-DnsClientNrptRule { $global:rules }
+function Test-Path { param($LiteralPath) [bool]$global:gpoNrptKey }
 function Remove-DnsClientNrptRule {
  param($Name,[switch]$Force)
  $global:removedDns += $Name
@@ -88,6 +90,25 @@ func TestSetupFailureRollsBackOwnedDNS(t *testing.T) {
 		t.Fatalf("rollback did not remove owned DNS: %v", result)
 	}
 }
+func TestIneffectiveSetupRollsBackOwnedDNS(t *testing.T) {
+	body := `$global:reads=0
+function Start-Sleep { param($Milliseconds) }
+function Get-DnsClientNrptPolicy {
+ param([switch]$Effective)
+ if (-not $Effective -or $global:rules.Name -notcontains 'our-rule') { throw 'unexpected policy read' }
+ $global:reads++
+ [pscustomobject]@{Namespace=@('.');NameServers='192.0.2.1'}
+}
+$message=''
+try { $null = & {` + script + `} } catch { $message=$_.Exception.Message }
+@{message=$message;reads=$global:reads;removed=@($global:removedDns)} | ConvertTo-Json -Compress`
+	result := mocked(t, Config{Action: "setup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
+	removed := result["removed"].([]any)
+	if !strings.Contains(result["message"].(string), "effective NRPT policy") || result["reads"].(float64) < 2 || len(removed) != 1 || removed[0] != "our-rule" {
+		t.Fatalf("ineffective policy rollback: %v", result)
+	}
+}
+
 func TestCleanupPreservesOtherDnsRules(t *testing.T) {
 	body := `$global:rules += [pscustomobject]@{Name='our-rule';Comment='BimeronCore:test'}
  $null = & {` + script + `}
@@ -166,5 +187,39 @@ func TestInspectKeepsForeignDnsPolicy(t *testing.T) {
 	r := mocked(t, Config{Action: "inspect", Name: "Bimeron"}, body)
 	if r["caught"] != true || len(r["removed"].([]any)) != 1 || r["removed"].([]any)[0] != "stale-rule" {
 		t.Fatalf("inspect changed foreign DNS policy: %v", r)
+	}
+}
+
+// Setup selects the adapter by index and changes nothing when the adapter at
+// that index does not hold the tunnel name.
+func TestSetupRejectsAdapterNameMismatchBeforeMutation(t *testing.T) {
+	body := `function Get-NetAdapter { param($Name,$InterfaceIndex) if ($Name) { throw 'selected by name' }; [pscustomobject]@{ifIndex=$InterfaceIndex;Name='Other'} }
+ $global:changes = 0
+ function Set-NetIPInterface { $global:changes++ }
+ function Set-DnsClient { $global:changes++ }
+ function Set-DnsClientServerAddress { $global:changes++ }
+ $caught = $false
+ try { $null = & {` + script + `} } catch { $caught = $_.Exception.Message -like 'Tunnel adapter identity changed*' }
+ @{caught=$caught;changes=$global:changes;dns=@($global:rules).Count} | ConvertTo-Json -Compress`
+	r := mocked(t, Config{Action: "setup", Name: "Bimeron", Tag: "BimeronCore:test", Index: 42}, body)
+	if r["caught"] != true || r["changes"] != float64(0) || r["dns"] != float64(1) {
+		t.Fatalf("setup changed a foreign adapter: %v", r)
+	}
+}
+
+// The Group Policy NRPT key, even without rules, makes Windows ignore the
+// session's local rule: inspect refuses to start, after recovering stale
+// Bimeron rules.
+func TestInspectRefusesGroupPolicyNrpt(t *testing.T) {
+	body := `
+ $global:rules = @([pscustomobject]@{Name='stale-rule';Comment='BimeronCore:stale'})
+ $global:gpoNrptKey = $true
+ function Get-NetAdapter { $null }
+ $caught = $false
+ try { $null = & {` + script + `} } catch { $caught = $_.Exception.Message -like 'Existing NRPT rules detected from Group Policy*' }
+ @{caught=$caught;removed=@($global:removedDns)} | ConvertTo-Json -Compress`
+	r := mocked(t, Config{Action: "inspect", Name: "Bimeron"}, body)
+	if r["caught"] != true || len(r["removed"].([]any)) != 1 {
+		t.Fatalf("inspect accepted Group Policy NRPT: %v", r)
 	}
 }

@@ -405,3 +405,14 @@ func TestDNSPortsBlockedAboveDirectRules(t *testing.T) {
 		}
 	}
 }
+
+func TestImagePermittedMatchesProtectingExecutable(t *testing.T) {
+	conditions, err := coreConditions("installed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := []*wf.Rule{{Action: wf.ActionPermit, Layer: wf.LayerALEAuthConnectV4, Conditions: conditions}}
+	if !imagePermitted(rules, "installed") || imagePermitted(rules, "portable") {
+		t.Fatal("core permit must match the installed app ID")
+	}
+}

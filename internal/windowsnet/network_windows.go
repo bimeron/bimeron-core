@@ -38,6 +38,9 @@ type Config struct {
 	Index  int      `json:"index"`
 	MTU    int      `json:"mtu"`
 	DNS    []string `json:"dns,omitempty"`
+	// GUID, when set, is the interface GUID of the created tunnel adapter;
+	// setup refuses an Index that belongs to another interface.
+	GUID windows.GUID `json:"-"`
 }
 type SetupTiming struct {
 	InterfaceMs int64 `json:"interfaceMs"`

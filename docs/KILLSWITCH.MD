@@ -32,10 +32,28 @@ and removal use atomic WFP transactions.
 - The core executable itself is allowed to operate the upstream transport
   (including the WireGuard UDP socket), `ssconf`, service DNS, and direct
   forwarding according to core policy.
-  This exception applies only to processes of the core image that run as
+  This exemption applies only to processes of the core image that run as
   `SYSTEM` or with an elevated administrator token. Other instances of the same
   executable, such as CLI commands started by a standard user or from a
   non-elevated terminal, are subject to the same rules as other applications.
+  The token must have the Administrators group enabled: an elevated token of
+  another privileged group, such as Backup Operators, does not match, so such
+  a process is blocked like any other application (fail closed). An elevated
+  copy at a different path also falls outside the exemption.
+- Name lookups through the Windows DNS Client service are blocked outside the
+  tunnel for every process, because that service is not exempt. The core
+  session resolves its own names through its network path and is not
+  affected, but `bimeron check` and `bimeron proxy` fail to resolve host names
+  while protection is installed, even from the exempt image; use IP addresses
+  or stop the protecting session.
+- When `bimeron check` or `bimeron proxy` fails while the daemon or service
+  reports protection, or while the command can inspect the filters itself
+  (elevated), the error ends with a hint: a failed name lookup gets the DNS
+  hint above; an upstream network failure outside the exemption gets a hint to
+  run the protecting core executable from an elevated administrator terminal
+  or to stop the protecting session. A non-elevated command cannot see
+  protection held by a foreground `bimeron connect` or `bimeron run` and shows
+  no hint then.
 - Other applications may access destinations outside the tunnel only through
   `direct`. `proxy` and `block` deny such access. First-match order is
   retained, including multiple CIDRs in one section. `Default = direct` allows

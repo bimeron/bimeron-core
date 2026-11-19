@@ -966,6 +966,34 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	return p, err
 }
 
+// ErrSSConfNetwork identifies a failed network operation without retaining the request URL.
+var ErrSSConfNetwork = errors.New("could not fetch dynamic config")
+
+// ErrSSConfDNS identifies an ssconf host name that could not be resolved. It
+// is also an ErrSSConfNetwork and keeps the same message.
+var ErrSSConfDNS error = ssconfDNSError{}
+
+type ssconfDNSError struct{}
+
+func (ssconfDNSError) Error() string        { return ErrSSConfNetwork.Error() }
+func (ssconfDNSError) Is(target error) bool { return target == ErrSSConfNetwork }
+
+type ssconfReadNetworkError struct{}
+
+func (ssconfReadNetworkError) Error() string        { return "could not read config" }
+func (ssconfReadNetworkError) Is(target error) bool { return target == ErrSSConfNetwork }
+
+func ssconfNetworkFailure(err error) bool {
+	var op *net.OpError
+	var dns *net.DNSError
+	var address *net.AddrError
+	// net.Error timeouts include the TLS handshake timeout of net/http.
+	var timeout net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &dns) ||
+		(errors.As(err, &timeout) && timeout.Timeout()) ||
+		(errors.As(err, &op) && !errors.As(err, &address) && (op.Op == "dial" || op.Op == "read" || op.Op == "write"))
+}
+
 // FetchSSConf returns validated bytes and their parsed profile.
 func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile, error) {
 	key = strings.TrimSpace(key)
@@ -984,6 +1012,13 @@ func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {
+		var dns *net.DNSError
+		if errors.As(err, &dns) {
+			return nil, Profile{}, ErrSSConfDNS
+		}
+		if ssconfNetworkFailure(err) {
+			return nil, Profile{}, ErrSSConfNetwork
+		}
 		return nil, Profile{}, fmt.Errorf("could not fetch dynamic config")
 	}
 	defer resp.Body.Close()
@@ -996,6 +1031,9 @@ func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
+		if ssconfNetworkFailure(err) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, Profile{}, ssconfReadNetworkError{}
+		}
 		return nil, Profile{}, fmt.Errorf("could not read config")
 	}
 	p, err := ParseConfig(b)

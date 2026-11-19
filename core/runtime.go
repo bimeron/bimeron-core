@@ -480,6 +480,12 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 		if accesskey.IsUnavailable(err) {
 			return nil, fault("access_key_unavailable", false)
 		}
+		if errors.Is(err, accesskey.ErrSSConfDNS) {
+			return nil, &stageError{code: "access_key_resolve_failed", retry: true, cause: accesskey.ErrSSConfDNS}
+		}
+		if errors.Is(err, accesskey.ErrSSConfNetwork) {
+			return nil, &stageError{code: "access_key_resolve_failed", retry: true, cause: accesskey.ErrSSConfNetwork}
+		}
 		return nil, fault("access_key_resolve_failed", true)
 	}
 	var d transport.StreamDialer
