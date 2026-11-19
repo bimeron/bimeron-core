@@ -300,6 +300,11 @@ when the service is not ready. Install the update again afterwards, or upgrade
 to Desktop 0.3.1, which bundles v0.4.0-beta.2. Reinstalling Desktop 0.3.0 does
 not downgrade a newer installed service.
 
+After publication, this path was checked on a Windows 10 VM with Desktop 0.3.0
+and service v0.4.0-beta.1. The in-app update installed the published
+v0.4.0-beta.2 service, and the active profile reconnected on its own. Running
+Repair afterwards restored the service to v0.4.0-beta.1, as described above.
+
 Desktop 0.3.0 with this service shows reconnection as follows. It shows a
 counter only while `reconnecting` with an attempt within the limit.
 
