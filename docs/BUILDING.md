@@ -50,7 +50,13 @@ The CLI build does not build Android artifacts. Install the Android SDK, NDK, JD
 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1`.
 
 The output in `dist/android/` is an AAR and sources JAR, with `LICENSE` and
-`THIRD_PARTY_NOTICES.txt`, not an installable Android app. See
+`THIRD_PARTY_NOTICES.txt`, not an installable Android app. The scripts build with `-trimpath`
+and map the NDK path. gomobile records the absolute directory of the module in each library, so
+`build-android.sh` builds through a link at the fixed path `/tmp/bimeron-core-android/src`, and
+`build-android.ps1` from the root of a temporary drive letter created with `subst`. The native
+libraries therefore name no directory of the build machine; CI and the release gate check this.
+`GOFLAGS` and `GOEXPERIMENT` must be empty, also in `go env -w`. If `build-android.sh` reports
+that `/tmp/bimeron-core-android` exists while no other Android build runs, remove that directory. See
 [Android packet core](ANDROID_VPN_SERVICE.MD) for the host application contract and validation
 requirements.
 

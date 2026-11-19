@@ -18,9 +18,9 @@ GUI fetches release metadata from the public `bimeron/bimeron-core` repository, 
 
 For a running service, success requires an IPC `hello` response from the service endpoint, with matching expected core version and protocol, within a bounded deadline. A started process alone is insufficient. On failure, stop the new service, restore the old executable, and restore the prior running state. If the service was stopped, preserve that state and check the staged executable before replacement; the next start remains explicit. Owner and boot/recovery settings must be preserved. The core updater leaves VPN disconnected; after verified success, GUI 0.1.2 reconnects the same profile if a VPN connection was active before the update. It does not reconnect after failure or rollback. A failed rollback keeps the backup and reports its location.
 
-## Backfill
+## Existing releases
 
-An operator command reads each existing release's original ZIPs and SHA256SUMS, builds and signs only the two new metadata assets, and compares them against existing assets. Dry-run is the default. Identical existing metadata is a no-op; divergent metadata is an error. Upload requires a separate explicit flag and authorization. Existing ZIPs and SHA256SUMS are never uploaded, replaced, or deleted.
+Metadata is signed only before publication, over ZIPs prepared locally from the reviewed release commit. Nothing signs metadata for an already published release from its downloaded assets; releases without a manifest (`v0.1.0-beta.1`, `v0.1.0-beta.2`) are not offered as service updates.
 
 ## Acceptance criteria
 
@@ -28,6 +28,6 @@ An operator command reads each existing release's original ZIPs and SHA256SUMS, 
 2. Tests cover deterministic manifest bytes, tag/channel parsing, compatibility configuration, missing/duplicate archives, signature tampering, and key rotation verification.
 3. Tests cover IPC version mismatch, wrong core version, unreachable service, successful update, and rollback to both prior running and stopped states.
 4. Service update rechecks staged executable identity and digest under elevation before stopping the old service. Existing owner and startup configuration is unchanged; VPN remains disconnected.
-5. Backfill dry-run inspects real release assets without writing to GitHub; repeat execution is idempotent. Upload cannot replace existing ZIPs or SHA256SUMS.
+5. The publisher refuses packaged binaries whose Go build information does not show a clean build of the release commit with the release build settings.
 6. `go test ./...`, Windows and Linux amd64/arm64 builds, and distribution checks pass in CI or any failure is diagnosed and reported.
 7. Tests replace the unprivileged source after GUI-side verification and confirm that elevated staging rejects a digest mismatch before service stop. Migration from an old installed service uses a new trusted core bundled by a GUI package upgrade; if no trusted updater is present, the GUI offers that package upgrade and does not elevate the downloaded executable.

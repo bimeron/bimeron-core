@@ -22,7 +22,7 @@ an existing VPN connection, the trusted `service update -source` helper,
 IPC health after update, profile validation and reconnection through the Core CLI, and rejection of
 a wrong digest before service stop. The GUI's signed release discovery and
 installation of `beta.5` remains a post-publication check.
-The prepared-release publisher and backfill uploads refuse to publish if the review flag is `false`.
+The prepared-release publisher refuses to publish if the review flag is `false`.
 These are explicit product
 rules; do not derive them from SemVer. `schema` is the manifest format revision.
 The tag supplies `core_version` and stable/beta channel. File names, sizes, and
@@ -60,16 +60,15 @@ that bound.
 
 Without `BIMERON_RELEASE_CARD_SERIAL`, the signing step reads
 `BIMERON_RELEASE_ED25519_KEY`, standard base64 of the 64-byte software private
-key, and checks it against `BIMERON_RELEASE_ED25519_PUBLIC_KEY` when set. This
-path remains for tooling and backfills of releases signed by the retiring
-software key `7370a2d8cf890e5e`; do not use it for new releases, commit the key,
-or place it in shell history or logs. The publisher verifies using only the
-public key. A key ID alone does not establish trust. Protect release tags with
+key, and checks it against `BIMERON_RELEASE_ED25519_PUBLIC_KEY` when set. Only
+tests use this path, with an unpinned key: it refuses every pinned key, and the
+retired software key `7370a2d8cf890e5e` only verifies. The publisher verifies
+using only the public key. A key ID alone does not establish trust. Protect release tags with
 GitHub rulesets.
 
 Signing and `-verify` (also used by the prepared-release publisher) accept a key
 only for its release range, so a release that Desktop or Core repair would
-reject cannot be published: `7370a2d8cf890e5e` only to re-verify or backfill
+reject cannot be published: `7370a2d8cf890e5e` only to verify
 the published releases up to `v0.4.0-beta.2`, the hardware keys for every new
 tag, which must sort after `v0.4.0-beta.2`. The release scripts refuse to run
 while the test-only `BIMERON_RELEASE_TEST_UNPINNED_KEY` is set. A hardware-signed
@@ -116,9 +115,29 @@ scripts/publish-prepared-release.sh v0.1.0-beta.3 /absolute/path/to/release
 ```
 
 The command checks the exact asset set, all seven ZIP checksums and ZIP
-structure, executable build revisions, signed manifest, archive sizes, and
-compatibility policy. After approval, push the reviewed commit and its tag,
-wait for successful tag CI, and run the same command with `--publish`. It
+structure, build provenance, signed manifest, archive sizes, and compatibility
+policy. `scripts/check-release-provenance.go` reads the Go build information of
+every packaged binary. Each CLI executable must record the release commit as
+`vcs.revision`, `vcs.modified=false`, `-trimpath`, `CGO_ENABLED=0`, the GOOS and
+GOARCH of its ZIP and the default architecture level, with no other build
+settings such as `-tags`, `-gcflags` or `GOEXPERIMENT`, and its executable
+format must match the target. The Android ZIP must hold
+`android/bimeron-core.aar`, whose `libgojni.so` for each of the four ABIs must
+be a `-trimpath` gomobile build for that ABI without extra settings, built from
+the fixed source path of `scripts/build-android.sh` or a drive root
+(`scripts/build-android.ps1`); see [BUILDING.md](BUILDING.md#android-aar).
+gomobile builds from a generated module, so Go records no revision for the
+libraries. The allow-list is strict on purpose: if a new Go release records a
+new default setting, the gate refuses the build until the list is reviewed.
+
+Go does not record every build input. With `-trimpath` it omits `-ldflags`, so
+the embedded Core version is not checked, and options such as `-toolexec`,
+`-overlay` or `-modfile` leave no trace. Build and publish with an empty
+`GOFLAGS`, including values set with `go env -w`: `build-dist.go`, the Android
+scripts and the publisher check the effective value and refuse to run otherwise.
+CI applies the same gate to its distribution builds.
+
+After approval, push the reviewed commit and its tag, wait for successful tag CI, and run the same command with `--publish`. It
 requires both local and remote tags to point to the prepared commit. It creates
 a draft release, uploads the prepared files without rebuilding, compares every
 remote asset's size and SHA-256 with the local file, and publishes the draft
@@ -183,20 +202,10 @@ the trusted updater is the new core bundled by an updated GUI package. If that
 package still bundles a core without `-source`, update the GUI package first;
 do not elevate a downloaded release executable as a bootstrap shortcut.
 
-## Backfill existing releases
 
-With `gh` authenticated and both `BIMERON_RELEASE_ED25519_KEY` and
-`BIMERON_RELEASE_ED25519_PUBLIC_KEY` in the environment, run:
+## Existing releases without metadata
 
-```sh
-scripts/backfill-update-manifest.sh v0.1.0-beta.2
-```
-
-The command downloads existing ZIPs and SHA256SUMS, verifies checksums, builds
-and checks metadata locally, and reports what it would add. Repeat runs compare
-existing metadata byte-for-byte. The `--upload` flag uploads only the two missing
-metadata assets; obtain project approval before using it. It never replaces ZIPs
-or SHA256SUMS. A partial or divergent existing metadata pair is an error.
-
-The GUI must not accept backfilled metadata until the signing public key is pinned
-in a released GUI. Keep the private key out of shell history and logs.
+`v0.1.0-beta.1` and `v0.1.0-beta.2` have no update manifest and stay that way.
+Metadata is never signed afterwards from the assets of a published release: those
+assets cannot prove which commit built them. Every later release carries the
+manifest that was signed before publication.

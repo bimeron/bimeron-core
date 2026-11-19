@@ -421,9 +421,60 @@ jobs:
           unzip -Z1 dist/android/bimeron-core.aar | grep 'libgojni.so$' | sort > /tmp/bimeron-abis.txt
           printf '%s\n' 'jni/arm64-v8a/libgojni.so' 'jni/armeabi-v7a/libgojni.so' 'jni/x86/libgojni.so' 'jni/x86_64/libgojni.so' > /tmp/bimeron-expected-abis.txt
           diff -u /tmp/bimeron-expected-abis.txt /tmp/bimeron-abis.txt
+      - name: Check Android libraries contain no build machine paths
+        run: |
+          work="$RUNNER_TEMP/aar"
+          mkdir -p "$work"
+          unzip -q dist/android/bimeron-core.aar 'jni/*' -d "$work"
+          status=0
+          for lib in "$work"/jni/*/libgojni.so; do
+            strings -a "$lib" > "$lib.strings"
+            for path in "$GITHUB_WORKSPACE" "$HOME" "$(go env GOPATH)" "$(go env GOMODCACHE)" "$(go env GOROOT)" "$ANDROID_NDK_HOME" /tmp/gomobile-work; do
+              if grep -Fq "$path" "$lib.strings"; then
+                echo "$lib contains $path" >&2
+                status=1
+              fi
+            done
+          done
+          exit "$status"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-dist
           path: dist/android/
           retention-days: 14
           if-no-files-found: error
+  release-provenance:
+    # Package the CI distributions like a prepared release and run the
+    # publisher's build provenance gate on them.
+    needs: [cli-dist, android-dist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-dist
+          path: ${{ runner.temp }}/dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android-dist
+          path: ${{ runner.temp }}/dist/android
+      - name: Check build provenance of every packaged binary
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          release="$RUNNER_TEMP/release"
+          mkdir -p "$release"
+          cd "$RUNNER_TEMP/dist"
+          for target in android linux-amd64 linux-arm64 macos-amd64 macos-arm64 windows-amd64 windows-arm64; do
+            zip -qr "$release/bimeron-v0.0.0-ci-$target.zip" "$target"
+          done
+          cd "$GITHUB_WORKSPACE"
+          go run scripts/check-release-provenance.go -tag v0.0.0-ci -dir "$release" -commit "$EXPECTED_SHA"

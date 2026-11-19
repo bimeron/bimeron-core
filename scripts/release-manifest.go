@@ -3,11 +3,12 @@
 // Usage: go run scripts/release-manifest.go -tag vX.Y.Z -dir release [-verify]
 //
 // Signing uses BIMERON_RELEASE_CARD_SERIAL (an OpenPGP hardware token such as
-// a YubiKey, with BIMERON_RELEASE_ED25519_PUBLIC_KEY naming its pinned key) or,
-// for legacy tooling, the software key in BIMERON_RELEASE_ED25519_KEY. Signing
-// and -verify accept only the keys allowed for the tag (release.SigningKeyUse);
-// tests set BIMERON_RELEASE_TEST_UNPINNED_KEY=1 to use a key no verifier pins.
-// Card PIN entry needs a real console (PowerShell or cmd), not mintty.
+// a YubiKey, with BIMERON_RELEASE_ED25519_PUBLIC_KEY naming its pinned key).
+// Signing and -verify accept only the keys allowed for the tag
+// (release.SigningKeyUse); the retired software key only verifies. Tests set
+// BIMERON_RELEASE_TEST_UNPINNED_KEY=1 to sign with an unpinned software key in
+// BIMERON_RELEASE_ED25519_KEY. Card PIN entry needs a real console (PowerShell
+// or cmd), not mintty.
 package main
 
 import (
@@ -131,6 +132,11 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	}
 	if use == release.KeyUnpinned && os.Getenv("BIMERON_RELEASE_TEST_UNPINNED_KEY") != "1" {
 		return fmt.Errorf("key %s is not a release signing key (docs/RELEASE_KEYS.md)", release.KeyID(pub))
+	}
+	// Published legacy manifests stay verifiable, but nothing new is signed with
+	// the retired key: a signature must only cover locally prepared bytes.
+	if use == release.KeyLegacy && !verify {
+		return fmt.Errorf("key %s is retired and only verifies published releases; it signs nothing new (docs/RELEASE_KEYS.md)", release.KeyID(pub))
 	}
 	var c compatibility
 	data, err := os.ReadFile(compatPath)

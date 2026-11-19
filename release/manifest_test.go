@@ -255,6 +255,7 @@ func TestManifestKeyPolicy(t *testing.T) {
 	}{
 		{"legacy key after beta.2", "v0.4.0-beta.3", hardwareCompat, "is retired", []string{legacy}},
 		{"legacy key on a card", "v0.4.0", hardwareCompat, "is retired", []string{legacy, card}},
+		{"legacy key signing a legacy tag", "v0.4.0-beta.2", "compatibility.json", "signs nothing new", []string{legacy, card}},
 		{"hardware key on a legacy tag", "v0.4.0-beta.2", "compatibility.json", "only releases after v0.4.0-beta.2", []string{hardware}},
 		{"hardware gui_min below 0.3.1", "v0.4.0-beta.3", "compatibility.json", "gui_min must be at least 0.3.1", []string{hardware}},
 		{"unpinned key outside tests", "v0.4.0-beta.3", hardwareCompat, "not a release signing key", []string{"BIMERON_RELEASE_ED25519_PUBLIC_KEY=" + base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)), "BIMERON_RELEASE_TEST_UNPINNED_KEY="}},
@@ -273,8 +274,8 @@ func TestManifestKeyPolicy(t *testing.T) {
 	}
 }
 
-// The release scripts refuse the test-only key escape hatch before doing
-// anything else.
+// The publisher refuses the test-only key escape hatch and GOFLAGS before
+// doing anything else.
 func TestReleaseScriptsRefuseTestKey(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("release scripts run under bash on the release host")
@@ -283,15 +284,15 @@ func TestReleaseScriptsRefuseTestKey(t *testing.T) {
 	if err != nil {
 		t.Skip("bash not available")
 	}
-	for _, args := range [][]string{
-		{"../scripts/publish-prepared-release.sh", "v0.5.0", t.TempDir()},
-		{"../scripts/backfill-update-manifest.sh", "v0.1.0-beta.2"},
+	for _, tc := range []struct{ env, want string }{
+		{"BIMERON_RELEASE_TEST_UNPINNED_KEY=1", "unset BIMERON_RELEASE_TEST_UNPINNED_KEY"},
+		{"GOFLAGS=-tags=extra", "unset GOFLAGS"},
 	} {
-		cmd := exec.Command(bash, args...)
-		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_TEST_UNPINNED_KEY=1")
+		cmd := exec.Command(bash, "../scripts/publish-prepared-release.sh", "v0.5.0", t.TempDir())
+		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_TEST_UNPINNED_KEY=", "GOFLAGS=", tc.env)
 		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "unset BIMERON_RELEASE_TEST_UNPINNED_KEY") {
-			t.Fatalf("%s ran with the test key hatch: %v %s", args[0], err, out)
+		if err == nil || !strings.Contains(string(out), tc.want) {
+			t.Fatalf("publisher ran with %s: %v %s", tc.env, err, out)
 		}
 	}
 }

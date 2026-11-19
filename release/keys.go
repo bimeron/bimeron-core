@@ -20,8 +20,8 @@ var HardwareReleaseKeys = []string{
 	"6K8uY/1qIogN2j3ZdpEr4PuTqXzH7EseTd6kzHxpIr4=", // 095d295f5fe9a4e2, YubiKey B (backup)
 }
 
-// LegacyReleaseKey is the retiring software key 7370a2d8cf890e5e. It may sign
-// or verify only LegacyReleaseTags.
+// LegacyReleaseKey is the retiring software key 7370a2d8cf890e5e. It only
+// verifies LegacyReleaseTags; the publisher never signs with it again.
 const LegacyReleaseKey = "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
 
 // LastLegacyTag is the last release signed by LegacyReleaseKey. Every new tag
@@ -29,8 +29,8 @@ const LegacyReleaseKey = "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
 const LastLegacyTag = "v0.4.0-beta.2"
 
 // LegacyReleaseTags are the published releases (and the frozen v0.4.0-beta.2
-// candidate) whose manifests LegacyReleaseKey signed or may backfill. The key
-// never signs any other tag, so no new release can depend on it.
+// candidate) whose manifests LegacyReleaseKey may verify. The key is never
+// accepted for any other tag, so no new release can depend on it.
 var LegacyReleaseTags = []string{
 	"v0.1.0-beta.1", "v0.1.0-beta.2", "v0.1.0-beta.3", "v0.1.0-beta.4", "v0.1.0-beta.5",
 	"v0.2.0-beta.1", "v0.3.0-beta.2", "v0.4.0-beta.1", LastLegacyTag,
@@ -113,7 +113,7 @@ func SigningKeyUse(tag string, pub []byte) (KeyUse, error) {
 	case hardware && after:
 		return KeyHardware, nil
 	case legacy:
-		return KeyRefused, fmt.Errorf("key %s is retired: it may only verify or backfill published releases up to %s, not %s; use a hardware key (docs/RELEASE_KEYS.md)", KeyID(pub), LastLegacyTag, tag)
+		return KeyRefused, fmt.Errorf("key %s is retired: it may only verify published releases up to %s, not %s; use a hardware key (docs/RELEASE_KEYS.md)", KeyID(pub), LastLegacyTag, tag)
 	case hardware:
 		return KeyRefused, fmt.Errorf("hardware key %s may sign only releases after %s, not %s", KeyID(pub), LastLegacyTag, tag)
 	}
