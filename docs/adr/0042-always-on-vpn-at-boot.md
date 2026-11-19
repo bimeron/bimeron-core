@@ -18,10 +18,12 @@ persistent sessions:
 It also amends the CONTROL.MD statement that a maintenance seal releases
 protection, and parts of [ADR 0040](0040-signed-core-store.md) listed under
 Interactions. It builds on the service update hold of
-[ADR 0041](0041-kill-switch-across-service-updates.md), which is proposed
-separately and must land first or together with this record. It
-takes over both items that ADR 0040 lists under "Related decisions recorded
-separately": always-on VPN at boot and the service reading of profile files.
+[ADR 0041](0041-kill-switch-across-service-updates.md), which is recorded
+separately and must land first or together with this record. For bundle
+sessions, the ADR 0041 update record holds only the profile identifier,
+because a bundle start has no configuration path. It takes over both items
+that ADR 0040 lists under "Related decisions recorded separately": always-on
+VPN at boot and the service reading of profile files.
 
 ## Context
 
@@ -38,7 +40,8 @@ installed as the first step of a run and held through every attempt, wait and
 | `stop`, `shutdown`, Desktop Disconnect | Released (intended) | Released (intended) |
 | Service stop (SCM, `systemctl stop`) | Released | Released |
 | Normal OS shutdown or restart | Released, then traffic leaves outside the VPN after boot until the user connects | Same |
-| Core update or repair | Released (the proposed ADR 0041 keeps it for clients that request it) | Released (ADR 0041 is Windows only) |
+| Core update | Released (ADR 0041 keeps it for clients that request it) | Released (ADR 0041 is Windows only) |
+| Repair | Released | Released |
 | Crash, forced termination, failed listener | Filters stay, `KillSwitch: "residual"` | nft table stays until reboot |
 | Power loss, or crash followed by reboot | Persistent WFP filters stay, `residual` after boot | **Released**: nftables rules are not persisted |
 | Early boot before the filtering engine starts | Not covered | Not covered |
@@ -196,11 +199,11 @@ session that owns protection, or the session the owner last asked for.
      `session_already_running`, a maintenance seal,
      `kill_switch_pending_run_recover` and the others), so a start that will
      be rejected never writes anything;
-  2. the new bundle, and, for a kill switch profile when no record exists yet,
-     the boot guard (`guard.nft`, boot-time filters). Without a record they
-     are nearly harmless: the guard unit requires the record, and
-     reconciliation removes boot-time filters at the next service start; at
-     worst they block the few seconds before BFE on the next boot;
+  2. the new bundle, and, for a kill switch profile when no kill switch
+     record exists yet, the boot guard (`guard.nft`, boot-time filters).
+     Without a record they are nearly harmless: the guard unit requires the
+     record, and reconciliation removes boot-time filters at the next service
+     start; at worst they block the few seconds before BFE on the next boot;
   3. the record (atomic replace, the commit point). When a record already
      existed, the boot guard is rewritten for the new profile right after
      this step, so the guard always matches the record that survives;
@@ -229,11 +232,11 @@ session that owns protection, or the session the owner last asked for.
   opt-in and never makes a session persistent by inheritance. A `start` of
   the running profile with the same bundle digest and a different explicit
   value writes or removes the record in place and leaves the session
-  untouched; the change follows the Connect or
-  Disconnect order above for the bundle and the boot guard. This covers
-  toggling the control for a profile without the kill switch. A kill switch
-  session that an older client started by path has no bundle digest, so after
-  a Desktop upgrade it becomes persistent through a handover to a bundle start
+  untouched; the change follows the Connect or Disconnect order above for
+  the bundle and the boot guard. This covers toggling the control for a
+  profile without the kill switch. A kill switch session that an older
+  client started by path has no bundle digest, so after a Desktop upgrade it
+  becomes persistent through a handover to a bundle start
   of the same profile ID, which leaves no gap.
 - **Reconciliation at service start**:
   - No record: delete boot-time filters, `guard.nft`, the public copy and
@@ -345,11 +348,11 @@ keeps the record. No filters are involved, and traffic leaves outside the VPN
 from the moment the session closes until the next instance connects.
 
 With a record, the ADR 0041 `prepare_update` request is harmless and
-updaters can send it unconditionally: the stop is a retained exit in any
-case, the new service restores the session itself, and the ADR 0041 update
-record, if written, is deleted when the restored run starts, so Desktop sees
-an active session instead of residual protection and does not restart the
-profile. Without a record, exits behave exactly as today (ADR 0039),
+updaters on Windows can send it unconditionally: the stop is a retained exit
+in any case, the new service restores the session itself, and the ADR 0041
+update record, if written, is deleted when the restored run starts, so
+Desktop sees an active session instead of residual protection and does not
+restart the profile. Without a record, exits behave exactly as today (ADR 0039),
 including the ADR 0041 one-shot hold.
 
 ### Service start at boot
@@ -578,9 +581,9 @@ WantedBy=sysinit.target
 - **Switching profiles** follows ADR 0039: a `start` with another kill switch
   profile hands over without a gap and replaces the record atomically. The
   record follows the running session: a handover with `persist: true` writes
-  the new record, and any other handover removes the record once the new run
-  has armed, followed by the boot guard, as in the Disconnect order. Without
-  the kill
+  the new record; a handover of the same profile ID with `persist` absent
+  keeps it; any other handover removes the record once the new run has armed,
+  followed by the boot guard, as in the Disconnect order. Without the kill
   switch there is no handover: Desktop sends `stop`, which clears the record,
   then `start` with `persist`, which writes a new one, as it switches such
   profiles today.
@@ -870,9 +873,9 @@ persistent; `bimeron start -persist <profile.conf>` and
   switch profiles, showing the "keep connected after restart" control on and
   locked (Q1); for a profile without the kill switch, `true` only when the
   user has explicitly enabled that control and `false` otherwise (Q5); it is
-  off by default. Send a new
-  `start` after saving the active kill switch profile, and after toggling the
-  control for the running profile (the record changes in place).
+  off by default. Send a new `start` after saving the active kill switch
+  profile, and after toggling the control for the running profile (the record
+  changes in place).
 - Explain persistence once at the first persistent Connect. Show the
   persistent state with the profile name, the blocked state during restore of
   a kill switch record and the Q3 captive portal hint. For a record without
@@ -1108,7 +1111,8 @@ Decided by the user on November 20, 2026:
   ends for persistent sessions; KILLSWITCH.MD, LINUX.MD and the Desktop release
   notes change accordingly.
 - `residual` keeps its meaning (unowned leftovers after a crash without a
-  record, or after a failed cleanup); a persistent session never reports it.
+  record, after a failed cleanup, or held by an ADR 0041 update); a
+  persistent session never reports it.
 - The service gains durable state, privileged data directories and boot-time
   registration. Uninstall, package removal, `recover` and the ADR 0040 switch
   must handle them.
