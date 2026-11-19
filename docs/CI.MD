@@ -3,7 +3,15 @@
 `.github/workflows/go.yml` runs `go test ./...` and builds distribution
 artifacts on pushes and pull requests. Go is selected from `go.mod`. The jobs
 are `lint`, `test` (Linux), `test-windows`, `test-apple-unsigned`,
-`test-fingerprint-dependencies`, `cli-dist`, and `android-dist`.
+`test-fingerprint-dependencies`, `cli-dist`, `android-dist`, and
+`release-provenance`.
+
+`release-provenance` packages the `cli-dist` and `android-dist` artifacts like
+a prepared release and runs the publisher's build provenance gate
+(`scripts/check-release-provenance.go`, see
+[RELEASE_UPDATES.md](RELEASE_UPDATES.md#publish-prepared-bytes)) against the
+tested commit. `android-dist` also checks that no native library in the AAR
+contains the workspace, home, Go, module cache or NDK path of the runner.
 
 The `lint` job checks `gofmt`, runs `go mod tidy -diff`, `go vet ./...`, and a
 pinned `staticcheck`. It then runs a pinned `govulncheck` for `linux/amd64`,
