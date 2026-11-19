@@ -4,6 +4,9 @@ Status: proposed, November 19, 2026. All design questions (Q1–Q6) were decided
 by the user on November 20, 2026 (see Decisions). The record becomes accepted
 when it is merged. Not accepted yet. This record authorizes no implementation.
 
+Core v0.4.0-beta.3 and Desktop 0.3.2 ship first. Implementation of VPN
+protection across reboot is scheduled for the following release.
+
 It amends [ADR 0039](0039-reconnect-cycles-and-held-kill-switch.md) for
 persistent sessions:
 
