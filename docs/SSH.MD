@@ -130,7 +130,9 @@ authentication-attempt limit; select a specific identity when that happens.
 
 The control daemon and the service do not search the service account's
 standard identity files and never use an SSH agent: the account's files and
-the agent reachable from a privileged process are not the GUI user's. They
+the agent reachable from a privileged process are not reliably the GUI
+user's. This also applies to an elevated console daemon that runs as the user;
+use a foreground CLI command for agent sign-in. The daemon and the service
 can use an explicit `IdentityFile` or a password supplied through the local
 control challenge described below. An unavailable GUI means an interactive
 challenge times out after two minutes. There is no unattended password cache.

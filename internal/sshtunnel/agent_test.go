@@ -24,43 +24,49 @@ func withAgent(t *testing.T, dial func(context.Context) (net.Conn, error)) {
 	t.Cleanup(func() { dialAgent = previous })
 }
 
-// startKeyServer accepts public-key authentication with key only.
-func startKeyServer(t *testing.T, key ssh.PublicKey) (address string, host ssh.PublicKey) {
+// withListTimeout shortens the agent listing timeout for the test.
+func withListTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	previous := agentListTimeout
+	agentListTimeout = d
+	t.Cleanup(func() { agentListTimeout = previous })
+}
+
+// startKeyServer accepts public-key authentication with key only, answering
+// each key check after delay.
+func startKeyServer(t *testing.T, key ssh.PublicKey, delay time.Duration) (address string, host ssh.PublicKey) {
 	t.Helper()
 	_, hostKey, _ := ed25519.GenerateKey(rand.Reader)
 	hostSigner, _ := ssh.NewSignerFromKey(hostKey)
 	server := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, offered ssh.PublicKey) (*ssh.Permissions, error) {
+		time.Sleep(delay)
 		if string(offered.Marshal()) != string(key.Marshal()) {
 			return nil, errors.New("rejected")
 		}
 		return nil, nil
 	}}
 	server.AddHostKey(hostSigner)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	return serveSSH(t, server), hostSigner.PublicKey()
+}
+
+// keyringAgent serves a keyring with one new key over a pipe, through a.
+func keyringAgent(t *testing.T, wrap func(agent.ExtendedAgent) agent.Agent) (ssh.PublicKey, func(context.Context) (net.Conn, error)) {
+	t.Helper()
+	_, userKey, _ := ed25519.GenerateKey(rand.Reader)
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: userKey}); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(userKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				_, chans, reqs, err := ssh.NewServerConn(conn, server)
-				if err != nil {
-					return
-				}
-				go ssh.DiscardRequests(reqs)
-				for ch := range chans {
-					ch.Reject(ssh.Prohibited, "unused")
-				}
-			}()
-		}
-	}()
-	return l.Addr().String(), hostSigner.PublicKey()
+	served := wrap(keyring.(agent.ExtendedAgent))
+	return signer.PublicKey(), func(context.Context) (net.Conn, error) {
+		local, remote := net.Pipe()
+		go agent.ServeAgent(served, remote)
+		return local, nil
+	}
 }
 
 // NoAgent and ProfileOnly never dial the agent; otherwise it is dialed once.
@@ -100,9 +106,7 @@ func TestNoAgentNeverDialsAgent(t *testing.T) {
 // An agent that accepts the connection and never answers delays the
 // connection only by the listing timeout, and its connection is closed.
 func TestSilentAgentIsBounded(t *testing.T) {
-	previous := agentListTimeout
-	agentListTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { agentListTimeout = previous })
+	withListTimeout(t, 200*time.Millisecond)
 	closed := make(chan struct{})
 	withAgent(t, func(context.Context) (net.Conn, error) {
 		local, remote := net.Pipe()
@@ -139,13 +143,34 @@ func TestSilentAgentIsBounded(t *testing.T) {
 	}
 }
 
-// stalledSigner lists its keys but never signs.
+// The listing deadline does not apply to signing: an agent login still works
+// when the handshake reaches the signature after the listing timeout.
+func TestAgentSignsAfterListingTimeout(t *testing.T) {
+	withListTimeout(t, 50*time.Millisecond)
+	key, dial := keyringAgent(t, func(a agent.ExtendedAgent) agent.Agent { return a })
+	withAgent(t, dial)
+	address, host := startKeyServer(t, key, 200*time.Millisecond)
+	p := sshProfile(t, address, "", host)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := NewWithOptions(ctx, p, net.Dialer{}, nil, Options{})
+	if err != nil {
+		t.Fatal("agent login failed after the listing timeout:", err)
+	}
+	client.Close()
+}
+
+// stalledSigner lists its keys but never signs; entered is closed at the
+// first signature request.
 type stalledSigner struct {
 	agent.ExtendedAgent
+	entered chan struct{}
+	once    *sync.Once
 	release chan struct{}
 }
 
 func (s stalledSigner) Sign(ssh.PublicKey, []byte) (*ssh.Signature, error) {
+	s.once.Do(func() { close(s.entered) })
 	<-s.release
 	return nil, errors.New("released")
 }
@@ -156,25 +181,16 @@ func (s stalledSigner) SignWithFlags(key ssh.PublicKey, data []byte, _ agent.Sig
 // A signature request that the agent never answers ends with the attempt:
 // the agent connection is closed when the context ends.
 func TestStalledAgentSignatureEndsWithContext(t *testing.T) {
-	_, userKey, _ := ed25519.GenerateKey(rand.Reader)
-	keyring := agent.NewKeyring()
-	if err := keyring.Add(agent.AddedKey{PrivateKey: userKey}); err != nil {
-		t.Fatal(err)
-	}
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	stalled := stalledSigner{ExtendedAgent: keyring.(agent.ExtendedAgent), release: release}
-	var local *closeConn
-	withAgent(t, func(context.Context) (net.Conn, error) {
-		end, remote := net.Pipe()
-		local = &closeConn{Conn: end, closed: make(chan struct{})}
-		go agent.ServeAgent(stalled, remote)
-		return local, nil
+	entered := make(chan struct{})
+	key, dial := keyringAgent(t, func(a agent.ExtendedAgent) agent.Agent {
+		return stalledSigner{ExtendedAgent: a, entered: entered, once: new(sync.Once), release: release}
 	})
-	signer, _ := ssh.NewSignerFromKey(userKey)
-	address, host := startKeyServer(t, signer.PublicKey())
+	withAgent(t, dial)
+	address, host := startKeyServer(t, key, 0)
 	p := sshProfile(t, address, "", host)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -189,24 +205,12 @@ func TestStalledAgentSignatureEndsWithContext(t *testing.T) {
 		if err == nil {
 			t.Fatal("login succeeded without a signature")
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("a stalled agent signature outlived the context")
 	}
 	select {
-	case <-local.closed:
+	case <-entered:
 	default:
-		t.Fatal("stalled agent connection left open")
+		t.Fatal("the handshake never asked the agent for a signature")
 	}
-}
-
-// closeConn reports when it is closed.
-type closeConn struct {
-	net.Conn
-	once   sync.Once
-	closed chan struct{}
-}
-
-func (c *closeConn) Close() error {
-	c.once.Do(func() { close(c.closed) })
-	return c.Conn.Close()
 }

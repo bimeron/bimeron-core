@@ -343,3 +343,15 @@ func TestHysteria2FailureRetryability(t *testing.T) {
 		}
 	}
 }
+
+// Session SSH settings reach the tunnel options unchanged.
+func TestSSHOptionsMapsSessionSettings(t *testing.T) {
+	keys := &sshtunnel.HostKeys{}
+	c := SessionConfig{SSHDefaultKeys: true, SSHHostKeys: keys, SSHProfileOnly: true, SSHNoAgent: true}
+	if got := sshOptions(c); !got.DefaultKeys || got.HostKeys != keys || !got.ProfileOnly || !got.NoAgent {
+		t.Fatalf("sshOptions = %+v", got)
+	}
+	if got := sshOptions(SessionConfig{}); got.DefaultKeys || got.HostKeys != nil || got.ProfileOnly || got.NoAgent {
+		t.Fatalf("zero sshOptions = %+v", got)
+	}
+}

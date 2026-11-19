@@ -194,38 +194,47 @@ type Options struct {
 	// embedding always sets it.
 	ProfileOnly bool
 	// NoAgent never consults an SSH agent. The control daemon and the service
-	// set it: the agent reachable from a privileged process is not the GUI
-	// user's agent. ProfileOnly implies it.
+	// set it: the agent reachable from a privileged process may not be the
+	// GUI user's agent. ProfileOnly implies it.
 	NoAgent bool
 }
 
 // agentListTimeout bounds connecting to the SSH agent and listing its
-// identities. Signing during the handshake is bounded by the attempt budget.
+// identities together. Signing during the handshake is bounded by the
+// attempt budget.
 var agentListTimeout = 5 * time.Second
 
 // dialAgent connects to the platform SSH agent. Tests replace it.
 var dialAgent = dialPlatformAgent
 
-// agentSigners returns the agent's identities and the connection that signs
-// with them, or nil when no usable agent answers in time. The connection is
-// closed when ctx ends, so a stalled agent cannot block the handshake beyond
-// the attempt budget. The caller closes it after the handshake.
-func agentSigners(ctx context.Context) (net.Conn, []ssh.Signer) {
-	dialCtx, cancel := context.WithTimeout(ctx, agentListTimeout)
+// agentSigners returns the agent's identities and a function that releases
+// the agent connection, or no signers when no usable agent answers in time.
+// The connection is also closed when ctx ends, so a stalled agent cannot
+// block the handshake beyond the attempt budget. The caller releases it after
+// the handshake.
+func agentSigners(ctx context.Context) ([]ssh.Signer, func()) {
+	deadline := time.Now().Add(agentListTimeout)
+	dialCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	conn, err := dialAgent(dialCtx)
 	if err != nil {
-		return nil, nil
+		return nil, func() {}
 	}
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
-	_ = conn.SetDeadline(time.Now().Add(agentListTimeout))
+	var once sync.Once
+	release := func() { once.Do(func() { conn.Close() }) }
+	stop := context.AfterFunc(ctx, release)
+	if conn.SetDeadline(deadline) != nil {
+		stop()
+		release()
+		return nil, func() {}
+	}
 	signers, err := agent.NewClient(conn).Signers()
 	if err != nil || len(signers) == 0 || conn.SetDeadline(time.Time{}) != nil {
 		stop()
-		conn.Close()
-		return nil, nil
+		release()
+		return nil, func() {}
 	}
-	return conn, signers
+	return signers, func() { stop(); release() }
 }
 
 // NewWithOptions connects like New with explicit options.
@@ -296,9 +305,10 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		methods = append(methods, ssh.PublicKeys(s))
 	}
 	if !o.ProfileOnly && !o.NoAgent {
-		if agentConn, signers := agentSigners(ctx); agentConn != nil {
-			// The agent signs only during the handshake.
-			defer agentConn.Close()
+		signers, release := agentSigners(ctx)
+		// The agent signs only during the handshake.
+		defer release()
+		if len(signers) > 0 {
 			methods = append(methods, ssh.PublicKeys(signers...))
 		}
 	}

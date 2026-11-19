@@ -511,7 +511,9 @@ The GUI can import `ssh://user@host:22` as `SSH = ...` or write explicit
 `Type = ssh`, `Server`, `Port`, and `Username` fields. Provide file pickers for
 the identity and `known_hosts`; save absolute paths as `IdentityFile` and
 `KnownHostsFile`. The service account may have a different home directory, so do
-not rely on its `~/.ssh` defaults. Save the `.conf` atomically before `start`.
+not rely on its `~/.ssh` defaults. Sessions started through the service or the
+daemon never use an SSH agent, so offer an identity file or a password and do
+not offer agent sign-in. Save the `.conf` atomically before `start`.
 An imported `ssh://` URI or `.conf` file can name its own identity and
 `known_hosts` files, and a `masque://` URI or MASQUE profile its own CA file.
 Before saving an import, run `bimeron validate --json` and confirm every
