@@ -83,9 +83,9 @@ When the file holds wg-quick or AmneziaWG text (a `[Peer]` section or an
 WireGuard profile with exactly one `[Peer]`. The text is used as written,
 including whitespace, and Core never rewrites it. The same options may
 instead be written directly in `[AccessKey]` with `Type = wireguard`; this is
-the only form for in-memory profiles. `Address`, `DNS` and `MTU` in that text
-describe the tunnel, not the Bimeron TUN. WireGuard `DNS` is used only when
-`[Interface] DNS` is not set. `Mode = proxy` carries TCP only.
+the only form for in-memory profiles. For these profiles only the WireGuard
+`DNS` and `MTU` apply (the MTU also sets the adapter MTU); `[Interface] DNS`
+and `MTU` are ignored. `Mode = proxy` carries TCP only.
 `[Routing] AllowedIPsMode` controls how AllowedIPs combines with rules. See
 [WIREGUARD.MD](WIREGUARD.MD) for accepted keys, AmneziaWG versions, links and
 the desktop bridge.

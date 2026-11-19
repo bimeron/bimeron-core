@@ -66,8 +66,9 @@ and the AmneziaVPN client is GPL-3.0. Bimeron must not ship GPL code.
    stores it byte for byte, and explicit `Type = wireguard` options use the
    same key names. One peer only. Hooks, `Table`, `FwMark`, `SaveConfig`,
    unknown keys and several peers are rejected with structured problems. In
-   the text, `Address`, `DNS` and `MTU` describe the tunnel. WireGuard DNS
-   (its IPv4 entries) is used only when the profile has no `[Interface] DNS`.
+   the text, `Address` holds the tunnel addresses, and only its `DNS` (IPv4
+   entries) and `MTU` (also the adapter MTU) apply: Bimeron `[Interface]`
+   DNS and MTU are ignored for these profiles, also in older profiles.
 8. **Desktop API.** The desktop does not parse WireGuard text. The
    `bimeron wireguard` bridge provides detect, inspect, byte-preserving edit,
    AllowedIPs coverage and link import. Problems inside the text carry
