@@ -1,7 +1,7 @@
 package vpn
 
 import (
-	"math"
+	"container/heap"
 	"net/netip"
 	"sort"
 	"strings"
@@ -15,18 +15,64 @@ import (
 const defaultDNSMetadataEntries = 4096
 const maxDNSMetadataTTL = 24 * time.Hour
 
+// Per-response bounds. Real answers carry a handful of aliases and addresses;
+// records beyond these limits are ignored, which only means fewer associations.
+const (
+	maxMetadataCNAMEs    = 16
+	maxMetadataAddresses = 64
+)
+
 // DNSMetadata keeps bounded, session-local associations learned from validated
 // DNS answers. It never persists or reports domain names.
 type DNSMetadata struct {
 	mu         sync.Mutex
-	entries    map[netip.Addr]map[string]time.Time
+	entries    map[netip.Addr]map[string]*metadataEntry
+	expiry     metadataHeap
+	seq        uint64
 	count      int
 	maxEntries int
 	now        func() time.Time
 }
 
+// metadataEntry is one IP–domain association. Entries are ordered by expiry,
+// then by insertion sequence, so eviction is deterministic.
+type metadataEntry struct {
+	ip      netip.Addr
+	domain  string
+	expires time.Time
+	seq     uint64
+	index   int
+}
+
+type metadataHeap []*metadataEntry
+
+func (h metadataHeap) Len() int { return len(h) }
+func (h metadataHeap) Less(i, j int) bool {
+	if !h[i].expires.Equal(h[j].expires) {
+		return h[i].expires.Before(h[j].expires)
+	}
+	return h[i].seq < h[j].seq
+}
+func (h metadataHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index, h[j].index = i, j
+}
+func (h *metadataHeap) Push(x any) {
+	e := x.(*metadataEntry)
+	e.index = len(*h)
+	*h = append(*h, e)
+}
+func (h *metadataHeap) Pop() any {
+	old := *h
+	e := old[len(old)-1]
+	old[len(old)-1] = nil
+	*h = old[:len(old)-1]
+	e.index = -1
+	return e
+}
+
 func NewDNSMetadata() *DNSMetadata {
-	return &DNSMetadata{entries: make(map[netip.Addr]map[string]time.Time), maxEntries: defaultDNSMetadataEntries, now: time.Now}
+	return &DNSMetadata{entries: make(map[netip.Addr]map[string]*metadataEntry), maxEntries: defaultDNSMetadataEntries, now: time.Now}
 }
 
 func metadataDomain(name dnsmessage.Name) string {
@@ -44,6 +90,11 @@ type metadataAnswer struct {
 	ip     netip.Addr
 	domain string
 	ttl    uint32
+}
+
+type metadataAlias struct {
+	owner, target string
+	ttl           uint32
 }
 
 // Observe learns only a single relevant IN A/AAAA question and addresses
@@ -65,22 +116,32 @@ func (m *DNSMetadata) Observe(query, response []byte, policy *routing.Policy) {
 		return
 	}
 
-	reachable := map[string]uint32{domain: math.MaxUint32}
-	for range answer.Answers {
+	// Normalize each owner name once. Only the first maxMetadataCNAMEs aliases
+	// take part, so the closure below is bounded regardless of answer size.
+	var aliases []metadataAlias
+	for _, resource := range answer.Answers {
+		cname, ok := resource.Body.(*dnsmessage.CNAMEResource)
+		if !ok || resource.Header.Class != dnsmessage.ClassINET {
+			continue
+		}
+		if len(aliases) == maxMetadataCNAMEs {
+			break
+		}
+		aliases = append(aliases, metadataAlias{metadataDomain(resource.Header.Name), metadataDomain(cname.CNAME), resource.Header.TTL})
+	}
+	// Each pass either lowers a path TTL or stops; with at most
+	// maxMetadataCNAMEs aliases this is at most maxMetadataCNAMEs² steps.
+	reachable := map[string]uint32{domain: ^uint32(0)}
+	for range aliases {
 		changed := false
-		for _, resource := range answer.Answers {
-			cname, ok := resource.Body.(*dnsmessage.CNAMEResource)
-			if !ok || resource.Header.Class != dnsmessage.ClassINET {
-				continue
-			}
-			pathTTL, ok := reachable[metadataDomain(resource.Header.Name)]
+		for _, alias := range aliases {
+			pathTTL, ok := reachable[alias.owner]
 			if !ok {
 				continue
 			}
-			target := metadataDomain(cname.CNAME)
-			ttl := minTTL(pathTTL, resource.Header.TTL)
-			if current, exists := reachable[target]; !exists || ttl < current {
-				reachable[target] = ttl
+			ttl := minTTL(pathTTL, alias.ttl)
+			if current, exists := reachable[alias.target]; !exists || ttl < current {
+				reachable[alias.target] = ttl
 				changed = true
 			}
 		}
@@ -91,31 +152,39 @@ func (m *DNSMetadata) Observe(query, response []byte, policy *routing.Policy) {
 
 	var learned []metadataAnswer
 	for _, resource := range answer.Answers {
+		if len(learned) == maxMetadataAddresses {
+			break
+		}
 		if resource.Header.Class != dnsmessage.ClassINET {
+			continue
+		}
+		var ip netip.Addr
+		switch body := resource.Body.(type) {
+		case *dnsmessage.AResource:
+			if question.Type != dnsmessage.TypeA {
+				continue
+			}
+			ip = netip.AddrFrom4(body.A)
+		case *dnsmessage.AAAAResource:
+			if question.Type != dnsmessage.TypeAAAA {
+				continue
+			}
+			ip = netip.AddrFrom16(body.AAAA)
+		default:
 			continue
 		}
 		pathTTL, ok := reachable[metadataDomain(resource.Header.Name)]
 		if !ok {
 			continue
 		}
-		ttl := minTTL(pathTTL, resource.Header.TTL)
-		if ttl == 0 {
-			continue
-		}
-		switch body := resource.Body.(type) {
-		case *dnsmessage.AResource:
-			if question.Type == dnsmessage.TypeA {
-				learned = append(learned, metadataAnswer{netip.AddrFrom4(body.A), domain, ttl})
-			}
-		case *dnsmessage.AAAAResource:
-			if question.Type == dnsmessage.TypeAAAA {
-				learned = append(learned, metadataAnswer{netip.AddrFrom16(body.AAAA), domain, ttl})
-			}
+		if ttl := minTTL(pathTTL, resource.Header.TTL); ttl != 0 {
+			learned = append(learned, metadataAnswer{ip, domain, ttl})
 		}
 	}
 	m.remember(learned)
 }
 
+// remember costs O(len(answers) · log n) under the lock.
 func (m *DNSMetadata) remember(answers []metadataAnswer) {
 	if len(answers) == 0 {
 		return
@@ -134,67 +203,42 @@ func (m *DNSMetadata) remember(answers []metadataAnswer) {
 			duration = maxDNSMetadataTTL
 		}
 		expires := now.Add(duration)
-		if byDomain := m.entries[answer.ip]; byDomain != nil {
-			if _, exists := byDomain[answer.domain]; exists {
-				byDomain[answer.domain] = expires
-				continue
-			}
+		if existing := m.entries[answer.ip][answer.domain]; existing != nil {
+			existing.expires = expires
+			heap.Fix(&m.expiry, existing.index)
+			continue
 		}
 		for m.count >= limit {
-			if !m.evictSoonest() {
-				return
-			}
+			m.removeEntry(m.expiry[0])
 		}
 		byDomain := m.entries[answer.ip]
 		if byDomain == nil {
-			byDomain = make(map[string]time.Time)
+			byDomain = make(map[string]*metadataEntry)
 			m.entries[answer.ip] = byDomain
 		}
-		if _, exists := byDomain[answer.domain]; exists {
-			byDomain[answer.domain] = expires
-			continue
-		}
-		byDomain[answer.domain] = expires
+		m.seq++
+		entry := &metadataEntry{ip: answer.ip, domain: answer.domain, expires: expires, seq: m.seq}
+		byDomain[answer.domain] = entry
+		heap.Push(&m.expiry, entry)
 		m.count++
 	}
 }
 
+// purgeExpired removes only expired entries: O(expired · log n).
 func (m *DNSMetadata) purgeExpired(now time.Time) {
-	for ip, domains := range m.entries {
-		for domain, expires := range domains {
-			if !expires.After(now) {
-				delete(domains, domain)
-				m.count--
-			}
-		}
-		if len(domains) == 0 {
-			delete(m.entries, ip)
-		}
+	for len(m.expiry) > 0 && !m.expiry[0].expires.After(now) {
+		m.removeEntry(m.expiry[0])
 	}
 }
 
-func (m *DNSMetadata) evictSoonest() bool {
-	var selectedIP netip.Addr
-	var selectedDomain string
-	var selectedExpiry time.Time
-	found := false
-	for ip, domains := range m.entries {
-		for domain, expiry := range domains {
-			key, selectedKey := ip.String()+"\x00"+domain, selectedIP.String()+"\x00"+selectedDomain
-			if !found || expiry.Before(selectedExpiry) || (expiry.Equal(selectedExpiry) && key < selectedKey) {
-				selectedIP, selectedDomain, selectedExpiry, found = ip, domain, expiry, true
-			}
-		}
-	}
-	if !found {
-		return false
-	}
-	delete(m.entries[selectedIP], selectedDomain)
-	if len(m.entries[selectedIP]) == 0 {
-		delete(m.entries, selectedIP)
+func (m *DNSMetadata) removeEntry(e *metadataEntry) {
+	heap.Remove(&m.expiry, e.index)
+	domains := m.entries[e.ip]
+	delete(domains, e.domain)
+	if len(domains) == 0 {
+		delete(m.entries, e.ip)
 	}
 	m.count--
-	return true
 }
 
 // Domains returns a detached, sorted snapshot for deterministic policy input.
@@ -208,16 +252,16 @@ func (m *DNSMetadata) Domains(ip netip.Addr) []string {
 	domains := m.entries[ip]
 	now := m.now()
 	result := make([]string, 0, len(domains))
-	for domain, expires := range domains {
-		if !expires.After(now) {
-			delete(domains, domain)
-			m.count--
+	var expired []*metadataEntry
+	for domain, entry := range domains {
+		if !entry.expires.After(now) {
+			expired = append(expired, entry)
 			continue
 		}
 		result = append(result, domain)
 	}
-	if len(domains) == 0 {
-		delete(m.entries, ip)
+	for _, entry := range expired {
+		m.removeEntry(entry)
 	}
 	sort.Strings(result)
 	return result
