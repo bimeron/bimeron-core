@@ -417,7 +417,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 					break
 				}
 				cfg.SSHPrompt = s.prompt
-				cfg.SSHDefaultKeys = false // Service home is not the GUI user's home.
+				// The daemon's home and SSH agent are not the GUI user's.
+				cfg.SSHDefaultKeys, cfg.SSHNoAgent = false, true
 				if err = s.engine.Start(ctx, cfg); err != nil {
 					answer.Error = "session_start_failed"
 					if errors.Is(err, core.ErrSessionRunning) {

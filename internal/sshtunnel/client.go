@@ -36,9 +36,8 @@ type Challenge struct {
 type Prompt func(context.Context, Challenge) ([]string, error)
 
 type Client struct {
-	ssh   *ssh.Client
-	agent net.Conn
-	once  sync.Once
+	ssh  *ssh.Client
+	once sync.Once
 }
 type streamConn struct {
 	net.Conn
@@ -194,6 +193,39 @@ type Options struct {
 	// connection fails with HostKeyError KnownHostsMissing. The Android
 	// embedding always sets it.
 	ProfileOnly bool
+	// NoAgent never consults an SSH agent. The control daemon and the service
+	// set it: the agent reachable from a privileged process is not the GUI
+	// user's agent. ProfileOnly implies it.
+	NoAgent bool
+}
+
+// agentListTimeout bounds connecting to the SSH agent and listing its
+// identities. Signing during the handshake is bounded by the attempt budget.
+var agentListTimeout = 5 * time.Second
+
+// dialAgent connects to the platform SSH agent. Tests replace it.
+var dialAgent = dialPlatformAgent
+
+// agentSigners returns the agent's identities and the connection that signs
+// with them, or nil when no usable agent answers in time. The connection is
+// closed when ctx ends, so a stalled agent cannot block the handshake beyond
+// the attempt budget. The caller closes it after the handshake.
+func agentSigners(ctx context.Context) (net.Conn, []ssh.Signer) {
+	dialCtx, cancel := context.WithTimeout(ctx, agentListTimeout)
+	defer cancel()
+	conn, err := dialAgent(dialCtx)
+	if err != nil {
+		return nil, nil
+	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(agentListTimeout))
+	signers, err := agent.NewClient(conn).Signers()
+	if err != nil || len(signers) == 0 || conn.SetDeadline(time.Time{}) != nil {
+		stop()
+		conn.Close()
+		return nil, nil
+	}
+	return conn, signers
 }
 
 // NewWithOptions connects like New with explicit options.
@@ -263,16 +295,11 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		}
 		methods = append(methods, ssh.PublicKeys(s))
 	}
-	agentConn, err := net.Conn(nil), fmt.Errorf("SSH agent disabled")
-	if !o.ProfileOnly {
-		agentConn, err = dialAgent(ctx)
-	}
-	if err == nil {
-		if signers, e := agent.NewClient(agentConn).Signers(); e == nil && len(signers) > 0 {
+	if !o.ProfileOnly && !o.NoAgent {
+		if agentConn, signers := agentSigners(ctx); agentConn != nil {
+			// The agent signs only during the handshake.
+			defer agentConn.Close()
 			methods = append(methods, ssh.PublicKeys(signers...))
-		} else {
-			agentConn.Close()
-			agentConn = nil
 		}
 	}
 	if identity == "" && defaultKeys {
@@ -312,9 +339,6 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		}))
 	}
 	if len(methods) == 0 {
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		return nil, fmt.Errorf("SSH authentication method unavailable")
 	}
 	address := net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))
@@ -322,9 +346,6 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	dialCtx := ctx
 	conn, err := streamtransport.Dial(dialCtx, dialer, address, p.ShadowTLS, nil)
 	if err != nil {
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		if a.network(err) {
 			return nil, ErrNetwork
 		}
@@ -351,9 +372,6 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	stop()
 	if err != nil {
 		conn.Close()
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		if policy != nil {
 			if e := policy.result(); e != nil {
 				return nil, e
@@ -366,7 +384,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}
-	return &Client{ssh: ssh.NewClient(sshConn, chans, reqs), agent: agentConn}, nil
+	return &Client{ssh: ssh.NewClient(sshConn, chans, reqs)}, nil
 }
 
 func (c *Client) DialStream(ctx context.Context, target string) (transport.StreamConn, error) {
@@ -410,9 +428,6 @@ func (c *Client) Close() error {
 	var err error
 	c.once.Do(func() {
 		err = c.ssh.Close()
-		if c.agent != nil {
-			c.agent.Close()
-		}
 	})
 	return err
 }

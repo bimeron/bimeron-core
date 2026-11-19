@@ -111,7 +111,9 @@ order:
 
 1. The explicitly selected `IdentityFile`, if any.
 2. Available identities from SSH agent. The agent performs signatures without
-   sending private-key bytes to Bimeron.
+   sending private-key bytes to Bimeron. Connecting to the agent and listing
+   its identities must finish within 5 seconds, otherwise the agent is
+   skipped; a signature request ends with the connection attempt.
 3. When no identity file was selected, existing standard files named
    `id_ed25519`, `id_ecdsa`, and `id_rsa` under the current user's `~/.ssh`.
    Bimeron does not scan other filenames.
@@ -126,9 +128,10 @@ passphrases, or keyboard-interactive answers. Authentication can be requested
 again on a new connection. Multiple rejected keys may hit a server's
 authentication-attempt limit; select a specific identity when that happens.
 
-The control daemon does not search the service account's standard identity
-files: those are often unrelated to the GUI user. It can use an explicit
-`IdentityFile`, a reachable agent, or a password supplied through the local
+The control daemon and the service do not search the service account's
+standard identity files and never use an SSH agent: the account's files and
+the agent reachable from a privileged process are not the GUI user's. They
+can use an explicit `IdentityFile` or a password supplied through the local
 control challenge described below. An unavailable GUI means an interactive
 challenge times out after two minutes. There is no unattended password cache.
 

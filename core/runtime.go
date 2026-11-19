@@ -69,7 +69,7 @@ func hysteria2Fault(err error) error {
 
 // sshOptions maps the session's SSH settings to the tunnel options.
 func sshOptions(c SessionConfig) sshtunnel.Options {
-	return sshtunnel.Options{DefaultKeys: c.SSHDefaultKeys, HostKeys: c.SSHHostKeys, ProfileOnly: c.SSHProfileOnly}
+	return sshtunnel.Options{DefaultKeys: c.SSHDefaultKeys, HostKeys: c.SSHHostKeys, ProfileOnly: c.SSHProfileOnly, NoAgent: c.SSHNoAgent}
 }
 
 // sshFault maps a failed SSH connection to a fault. Failures on the network

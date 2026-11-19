@@ -256,3 +256,48 @@ func TestServePanicAbandonsSession(t *testing.T) {
 	}()
 	_ = NewServer(e).Serve(context.Background(), panickingListener{})
 }
+
+// configEngine records the configuration of the last Start.
+type configEngine struct {
+	fakeEngine
+	started chan core.SessionConfig
+}
+
+func (e *configEngine) Start(ctx context.Context, c core.SessionConfig) error {
+	e.started <- c
+	return e.fakeEngine.Start(ctx, c)
+}
+
+// Sessions started through the daemon never use the daemon account's home
+// keys or SSH agent, whatever the loaded configuration says.
+func TestStartDisablesDaemonSSHFallbacks(t *testing.T) {
+	e := &configEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}, started: make(chan core.SessionConfig, 1)}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) {
+		c := core.DefaultConfig()
+		c.SSHDefaultKeys = true
+		return c, nil
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Serve(ctx, l)
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	callCtx, end := context.WithTimeout(context.Background(), 3*time.Second)
+	defer end()
+	path, _ := filepath.Abs("test.conf")
+	if _, err := exchange(callCtx, c, Request{Command: "start", Config: path}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := <-e.started
+	if cfg.SSHDefaultKeys || !cfg.SSHNoAgent || cfg.SSHPrompt == nil {
+		t.Fatalf("daemon session SSH settings: default keys %t, no agent %t, prompt %t", cfg.SSHDefaultKeys, cfg.SSHNoAgent, cfg.SSHPrompt != nil)
+	}
+}

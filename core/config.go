@@ -63,6 +63,9 @@ type SessionConfig struct {
 	// SSHHostKeys the session fails with ssh_known_hosts_missing. The Android
 	// embedding always sets it.
 	SSHProfileOnly bool
+	// SSHNoAgent never consults an SSH agent. The control daemon and the
+	// service set it for every session they start.
+	SSHNoAgent bool
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters

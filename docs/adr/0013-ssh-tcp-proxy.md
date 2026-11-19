@@ -1,6 +1,8 @@
 # ADR 0013: Built-in SSH TCP upstream
 
-Status: accepted, October 27, 2026. Tracks issue #26.
+Status: accepted, October 27, 2026. Tracks issue #26. Amended November 19,
+2026 (#199): sessions started through the control daemon or the service never
+use an SSH agent, and agent requests are bounded in time.
 
 ## Context
 
