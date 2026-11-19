@@ -9,17 +9,19 @@ import (
 )
 
 // maxPolicyFile bounds a JSON routing policy file.
-const maxPolicyFile = 1 << 20
+const maxPolicyFile = 4 << 20
 
 // readPolicy decodes the JSON routing policy file at path into c. The file is
 // read like a profile-referenced file: a local data file of at most
 // maxPolicyFile bytes. name labels the policy in errors.
 func readPolicy(path, name string, c *routing.Config) error {
 	b, err := safefile.Read(path, maxPolicyFile)
-	if errors.Is(err, safefile.ErrTooLarge) {
-		return fmt.Errorf("%s file exceeds the 1 MiB size limit", name)
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, safefile.ErrTooLarge):
+		return fmt.Errorf("%s file exceeds the 4 MiB size limit", name)
+	case errors.Is(err, safefile.ErrNotLocal), errors.Is(err, safefile.ErrNotRegular):
+		return fmt.Errorf("%s file must be a local data file", name)
+	case err != nil:
 		return fmt.Errorf("could not read %s", name)
 	}
 	if err := json.Unmarshal(b, c); err != nil {

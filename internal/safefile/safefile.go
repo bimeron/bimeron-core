@@ -22,7 +22,9 @@ var (
 
 // Read returns the contents of the data file at path if it has at most limit
 // bytes. The path is checked with Stat before it is opened, so a device, FIFO
-// or named pipe found there is not opened. A file swapped in after that check
+// or named pipe found there is not opened for reading. (Stat itself may open a
+// symbolic link target to read its attributes.) A file swapped in after that
+// check
 // is opened (on Unix without blocking) and then rejected: the opened file must
 // be the same file and pass the same check before any data is read. A data
 // file is a regular file; on Windows it may also

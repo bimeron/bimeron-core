@@ -35,12 +35,15 @@ func TestPolicyFileReadIsBounded(t *testing.T) {
 	if err := os.WriteFile(large, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vpnPolicy(large); err == nil || err.Error() != "VPN policy file exceeds the 1 MiB size limit" {
+	if _, err := vpnPolicy(large); err == nil || err.Error() != "VPN policy file exceeds the 4 MiB size limit" {
 		t.Fatalf("oversized policy: %v", err)
 	}
 	var c routing.Config
-	if err := readPolicy(dir, "policy", &c); err == nil || err.Error() != "could not read policy" {
+	if err := readPolicy(dir, "policy", &c); err == nil || err.Error() != "policy file must be a local data file" {
 		t.Fatalf("directory policy: %v", err)
+	}
+	if err := readPolicy(filepath.Join(dir, "missing.json"), "policy", &c); err == nil || err.Error() != "could not read policy" {
+		t.Fatalf("missing policy: %v", err)
 	}
 	limit := filepath.Join(dir, "limit.json")
 	if err := os.WriteFile(limit, data[:maxPolicyFile], 0600); err != nil {

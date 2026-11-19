@@ -791,8 +791,10 @@ format, limits, and host APIs.
 The `.conf` file and every file it names must be data files on the local
 file system. This covers `File`, `CAFile` and the `ca` URI option,
 `IdentityFile`, `KnownHostsFile`, the `identity` and `known_hosts` URI options,
-`GeoIPFile`, and `GeoSiteFile`. Bimeron checks the path and rejects
-directories, devices, FIFOs, sockets, and named pipes without opening them.
+`GeoIPFile`, and `GeoSiteFile`, and also the JSON policy files that
+`bimeron route` and the `-policy` flag read. Bimeron checks the path and rejects
+directories, devices, FIFOs, sockets, and named pipes without opening them
+for reading.
 If the file is replaced after that check, Bimeron may open the replacement
 (on Unix without blocking), but it checks the opened file again and rejects it
 before reading any data. Symbolic links are followed; the target must pass the
@@ -831,7 +833,7 @@ Copy such a file to a local folder and reference the copy.
 | `KnownHostsFile`, `known_hosts` | 1 MiB |
 | `CAFile`, `ca` | 1 MiB |
 | `GeoIPFile`, `GeoSiteFile` | 64 MiB each |
-| JSON policy file (`-policy`, `bimeron route`) | 1 MiB |
+| JSON policy file (`-policy`, `bimeron route`) | 4 MiB |
 
 A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
 `file_not_regular`, `file_too_large`, or `file_unreadable`. A dataset problem
