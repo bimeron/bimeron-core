@@ -100,8 +100,10 @@ limit or a quarter of a per-expression limit. Re-evaluate the limits before
 shipping such a dataset, and update the figures above. The second command
 measures three inputs. Anchored Unicode classes exercise the endpoint budget.
 Anchored and unanchored counted repetitions exercise the instruction budget.
-On Go 1.26 and Windows 10, the Unicode case retained 2.9 MiB and the
-unanchored repetition retained 2.6 MiB.
+On Go 1.26.11 and Ubuntu 22.04 (amd64), 16 Unicode expressions retained
+2.9 MiB, 65 unanchored repetitions retained 2.6 MiB, and 72 anchored
+repetitions retained 8.3 MiB. The anchored repetition uses 900 characters
+so its compiled program fits below Go's 1,000-instruction one-pass cutoff.
 The 10 MiB instruction-budget figure came from other instruction-heavy inputs
 when the limits were set, so treat the second command as a regression check,
 not as a proof of the worst case.
