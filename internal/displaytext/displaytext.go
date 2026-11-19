@@ -64,15 +64,18 @@ func clean(s string, multiline bool) string {
 }
 
 // EscapeJSON writes every control character, bidirectional formatting
-// character and line or paragraph separator in encoded JSON as a \u escape.
-// encoding/json already escapes C0 controls and the separators, but writes
-// DEL, C1 controls and bidirectional formatting characters as they are. Such
-// characters only occur inside JSON strings, so the result is equivalent JSON.
+// character and line or paragraph separator inside the strings of encoded
+// JSON as a \u escape. encoding/json already escapes C0 controls and the
+// separators in strings, but writes DEL, C1 controls and bidirectional
+// formatting characters as they are. Tab, line feed and carriage return are
+// left alone: encoding/json never writes them raw inside a string, so raw ones
+// are whitespace between tokens, as in indented output. Every other escaped
+// character only occurs inside strings, so the result is equivalent JSON.
 func EscapeJSON(b []byte) []byte {
 	var out []byte
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
-		if !unsafeRune(r) && r != lineSeparator && r != paragraphSeparator {
+		if r == '\t' || r == '\n' || r == '\r' || !unsafeRune(r) && r != lineSeparator && r != paragraphSeparator {
 			if out != nil {
 				out = append(out, b[i:i+size]...)
 			}

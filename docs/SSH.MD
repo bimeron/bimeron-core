@@ -122,9 +122,9 @@ An encrypted key causes a **key passphrase** prompt. This is separate from the
 SSH account password. Foreground CLI prompts require an interactive terminal;
 secret input is hidden. Keyboard-interactive prompts are shown without control
 characters, as described for the GUI below. Bimeron does not save passwords,
-passphrases, or keyboard-interactive answers. Authentication can be requested again on a new
-connection. Multiple rejected keys may hit a server's authentication-attempt
-limit; select a specific identity when that happens.
+passphrases, or keyboard-interactive answers. Authentication can be requested
+again on a new connection. Multiple rejected keys may hit a server's
+authentication-attempt limit; select a specific identity when that happens.
 
 The control daemon does not search the service account's standard identity
 files: those are often unrelated to the GUI user. It can use an explicit
