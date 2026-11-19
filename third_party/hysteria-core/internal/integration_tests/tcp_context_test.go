@@ -66,6 +66,34 @@ func ephemeralTLSConfig(t *testing.T) server.TLSConfig {
 	return server.TLSConfig{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 }
 
+func countTCPResponseReaders() int {
+	const reader = "github.com/apernet/hysteria/core/v2/internal/protocol.ReadTCPResponse"
+	n, _ := runtime.GoroutineProfile(nil)
+	for {
+		stacks := make([]runtime.StackRecord, n)
+		var ok bool
+		n, ok = runtime.GoroutineProfile(stacks)
+		if !ok {
+			continue // More goroutines started since the size estimate.
+		}
+		count := 0
+		for _, stack := range stacks[:n] {
+			frames := runtime.CallersFrames(stack.Stack())
+			for {
+				frame, more := frames.Next()
+				if frame.Function == reader {
+					count++
+					break
+				}
+				if !more {
+					break
+				}
+			}
+		}
+		return count
+	}
+}
+
 // Bimeron patch: a cancelled TCPContext dial returns promptly and leaves no
 // goroutine waiting for the server's TCP response. (Stream credit returns
 // only when the server finishes with the reset stream, which this stalling
@@ -111,7 +139,7 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 		t.Fatal("client does not implement TCPContext")
 	}
 
-	baseline := runtime.NumGoroutine()
+	baseline := countTCPResponseReaders()
 	for i := 0; i < dials; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		start := time.Now()
@@ -124,12 +152,12 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 			t.Fatalf("dial %d ignored cancellation for %v", i, elapsed)
 		}
 	}
-	// Before the patch every abandoned call kept a goroutine in
-	// ReadTCPResponse; allow only scheduling noise.
+	// Give cancelled response readers time to exit. The server handlers
+	// stay blocked in stallingOutbound.TCP until cleanup.
 	deadline := time.Now().Add(2 * time.Second)
-	for runtime.NumGoroutine() > baseline+dials/4 {
+	for readers := countTCPResponseReaders(); readers > baseline; readers = countTCPResponseReaders() {
 		if time.Now().After(deadline) {
-			t.Fatalf("goroutines grew from %d to %d after %d cancelled dials", baseline, runtime.NumGoroutine(), dials)
+			t.Fatalf("ReadTCPResponse goroutines grew from %d to %d after %d cancelled dials", baseline, readers, dials)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
