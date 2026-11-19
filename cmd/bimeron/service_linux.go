@@ -217,11 +217,21 @@ func copyLinuxServiceFile(source, destination string) error {
 	return os.Rename(name, destination)
 }
 
+// finalSymlink reports whether the final component of path is a symbolic
+// link.
+func finalSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
 // copyLinuxUpdateSource stages the untrusted update source as a private file.
 // The source must be a regular file; a final symlink is not followed.
 func copyLinuxUpdateSource(source, staged string) error {
 	in, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if errors.Is(err, syscall.ELOOP) {
+	// O_NOFOLLOW fails with ELOOP for a final symlink, but resolving a
+	// directory in the path also fails with ELOOP when symlinks loop or nest
+	// too deeply; report only the former as a link.
+	if errors.Is(err, syscall.ELOOP) && finalSymlink(source) {
 		return errUpdateSourceLink
 	}
 	if err != nil {
