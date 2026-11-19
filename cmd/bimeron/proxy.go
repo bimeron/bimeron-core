@@ -3,10 +3,8 @@ package main
 import (
 	core "bimeron/core"
 	"bimeron/internal/routing"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 )
 
 func serve(args []string) error {
@@ -32,13 +30,9 @@ func serve(args []string) error {
 		session.Mode = "proxy"
 		session.Listen = *listen
 		if *policyFile != "" {
-			b, e := os.ReadFile(*policyFile)
-			if e != nil {
-				return fmt.Errorf("could not read policy")
-			}
 			var p routing.Config
-			if json.Unmarshal(b, &p) != nil {
-				return fmt.Errorf("invalid policy JSON")
+			if err := readPolicy(*policyFile, "policy", &p); err != nil {
+				return err
 			}
 			session.Policy, err = routing.Compile(p)
 		}

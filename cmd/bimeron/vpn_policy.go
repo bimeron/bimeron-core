@@ -2,20 +2,37 @@ package main
 
 import (
 	"bimeron/internal/routing"
+	"bimeron/internal/safefile"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 )
+
+// maxPolicyFile bounds a JSON routing policy file.
+const maxPolicyFile = 1 << 20
+
+// readPolicy decodes the JSON routing policy file at path into c. The file is
+// read like a profile-referenced file: a local data file of at most
+// maxPolicyFile bytes. name labels the policy in errors.
+func readPolicy(path, name string, c *routing.Config) error {
+	b, err := safefile.Read(path, maxPolicyFile)
+	if errors.Is(err, safefile.ErrTooLarge) {
+		return fmt.Errorf("%s file exceeds the 1 MiB size limit", name)
+	}
+	if err != nil {
+		return fmt.Errorf("could not read %s", name)
+	}
+	if err := json.Unmarshal(b, c); err != nil {
+		return fmt.Errorf("invalid %s JSON", name)
+	}
+	return nil
+}
 
 func vpnPolicy(path string) (*routing.Policy, error) {
 	c := routing.Config{Default: routing.Proxy}
 	if path != "" {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("could not read VPN policy")
-		}
-		if err := json.Unmarshal(b, &c); err != nil {
-			return nil, fmt.Errorf("invalid VPN policy JSON")
+		if err := readPolicy(path, "VPN policy", &c); err != nil {
+			return nil, err
 		}
 	}
 	return routing.Compile(c)
