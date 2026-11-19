@@ -1650,7 +1650,7 @@ and the test vectors.
 
 ## Acceptance plan
 
-Testing runs on a disposable clone of the Windows 10 STD VM and on an Ubuntu
+Testing runs on a disposable clone of the Windows test VM and on an Ubuntu
 22.04 VM, never on the host. Each case records binary hashes and the service
 and store state before and after.
 
