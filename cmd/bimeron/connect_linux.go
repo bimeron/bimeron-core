@@ -19,7 +19,7 @@ func recoverVPN(args []string) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("usage: bimeron recover [--keep-current-dns]")
 	}
-	release, err := linuxnet.Lock("vpn.lock")
+	release, err := linuxnet.LockSession()
 	if err != nil {
 		return err
 	}

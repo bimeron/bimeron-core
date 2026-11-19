@@ -36,7 +36,7 @@ func (p *linuxPlatform) Acquire(ctx context.Context) (func(), error) {
 	if err := linuxnet.Requirements(p.killSwitch); err != nil {
 		return nil, requirementsFault(err)
 	}
-	release, err := linuxnet.Lock("vpn.lock")
+	release, err := linuxnet.LockSession()
 	if err != nil {
 		return nil, fault("session_lock_failed", false)
 	}

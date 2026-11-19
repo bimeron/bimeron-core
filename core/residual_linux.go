@@ -6,16 +6,23 @@ import "bimeron/internal/linuxnet"
 
 // residualProtection reports a guard that no running session owns. The
 // session lock is taken only when a guard is journaled, and only for an
-// instant: a held lock means another process owns the session.
+// instant while the journal is read again: a held lock means another process
+// owns the session. Owners retry that lock briefly (linuxnet.LockSession), so
+// the probe does not fail them.
 func residualProtection() (bool, error) {
+	return probeResidual(journaledGuard, func() (func(), bool, error) {
+		release, err := linuxnet.Lock("vpn.lock")
+		if err != nil {
+			return nil, true, nil
+		}
+		return release, false, nil
+	})
+}
+
+func journaledGuard() (bool, error) {
 	s, err := linuxnet.NewManager().Load()
-	if err != nil || s == nil || !s.Guard {
+	if err != nil || s == nil {
 		return false, err
 	}
-	release, err := linuxnet.Lock("vpn.lock")
-	if err != nil {
-		return false, nil
-	}
-	release()
-	return true, nil
+	return s.Guard, nil
 }

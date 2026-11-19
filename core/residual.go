@@ -16,7 +16,7 @@ func (e *Engine) refreshResidual() {
 	if !e.opts.ResidualProtection {
 		return
 	}
-	// The probe briefly takes the session lock; never race a Start.
+	// The probe may take the session lock for an instant; never race a Start.
 	if !e.lifecycle.TryLock() {
 		return
 	}
@@ -33,6 +33,27 @@ func (e *Engine) refreshResidual() {
 	e.mu.Lock()
 	e.residual = found || err != nil && e.residual
 	e.mu.Unlock()
+}
+
+// probeResidual reports protection that no owner holds. installed reports
+// whether protection is installed; owner reports whether another owner holds
+// the session, and may return a release for a lock it took to find out.
+// Protection is checked again before that release: an owner that stopped in
+// between removed its protection before it released the session, and must
+// not be reported as residual. An unknown owner state is not residual.
+func probeResidual(installed func() (bool, error), owner func() (release func(), held bool, err error)) (bool, error) {
+	present, err := installed()
+	if err != nil || !present {
+		return false, err
+	}
+	release, held, err := owner()
+	if release != nil {
+		defer release()
+	}
+	if err != nil || held {
+		return false, nil
+	}
+	return installed()
 }
 
 // residualStatusLocked reports idle residual protection as failed with

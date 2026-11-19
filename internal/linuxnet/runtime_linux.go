@@ -32,6 +32,31 @@ func EnsureRuntimeDir() error {
 func Lock(name string) (func(), error) {
 	return unixutil.Lock(name)
 }
+
+// sessionLockAttempts and sessionLockDelay bound LockSession's retry: the
+// residual protection probe of an idle daemon holds the lock for an instant.
+const (
+	sessionLockAttempts = 5
+	sessionLockDelay    = 20 * time.Millisecond
+)
+
+// LockSession takes the VPN session lock for an owner (a run, recover or
+// repair). It retries briefly so that an idle daemon's momentary residual
+// protection probe does not make the owner fail; a real owner holds the lock
+// far longer than the retry window.
+func LockSession() (func(), error) {
+	return lockRetry(func() (func(), error) { return Lock("vpn.lock") }, sessionLockAttempts, sessionLockDelay)
+}
+
+func lockRetry(lock func() (func(), error), attempts int, delay time.Duration) (func(), error) {
+	for attempt := 1; ; attempt++ {
+		release, err := lock()
+		if err == nil || attempt >= attempts {
+			return release, err
+		}
+		time.Sleep(delay)
+	}
+}
 func lockFile(path string) (func(), error) {
 	return unixutil.LockFile(path)
 }

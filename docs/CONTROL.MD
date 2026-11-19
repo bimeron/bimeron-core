@@ -517,8 +517,13 @@ omitted.
   shown), and `Session.active` is not `true`. Connecting a profile with the
   kill switch replaces the filters; `recover` removes them. Inspected at most
   every 5 seconds while idle. Protection owned by another running session, such
-  as a foreground `bimeron connect` that holds the session lock, is not
-  reported as residual.
+  as a foreground `bimeron connect` that holds the session lock or a live
+  foreground owner that retains native protection, is not reported as
+  residual, and protection removed by such a session while it stops is checked
+  again before it is reported. On Windows the probe reads the
+  session lock state without taking the lock; on Linux it takes the lock for
+  an instant, and `run`, `connect`, `recover` and repair retry the lock briefly
+  instead of failing on it.
 - `LastErrorPermanent` (boolean): `LastError` is a failure that retrying alone
   does not fix, for example `access_key_unavailable` (a rejected or removed
   key) or a TLS rejection. It ends an initial connection at once; after loss of
