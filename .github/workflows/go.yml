@@ -249,6 +249,10 @@ jobs:
       # visible: serialization does not diagnose stalls before script entry.
       - run: go test -p 1 -v ./...
       - run: go vet ./...
+      - name: Read a real cloud-file placeholder
+        env:
+          BIMERON_REQUIRE_CLOUD_FILE: '1'
+        run: go test ./internal/safefile -run '^TestReadCloudFilePlaceholder$' -count=1 -v
       - name: Check protocol lifecycle races
         env:
           CGO_ENABLED: '1'
