@@ -59,3 +59,4 @@ number.
 | 0039 | [Reconnect cycles and a held kill switch](0039-reconnect-cycles-and-held-kill-switch.md) |
 | 0040 | [Signed versioned core store and anti-rollback floor](0040-signed-core-store.md) |
 | 0041 | [Keep kill switch protection across a client-requested service update](0041-kill-switch-across-service-updates.md) |
+| 0042 | [Always-on VPN at boot](0042-always-on-vpn-at-boot.md) |
