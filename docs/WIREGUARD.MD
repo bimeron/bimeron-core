@@ -303,10 +303,12 @@ section or field) instead of being read as a URI key.
 
 The values are static for the build and the same on every desktop platform.
 `explicit_access` also lists `wireguard`. Older daemons omit the object; treat
-absence as unsupported. An older CLI answers `bimeron wireguard` with an
-unknown-command error and a nonzero exit. The Android `Capabilities()` and
-Apple `RLCapabilities()` results currently omit the object, although their
-`explicit_access` lists `wireguard`.
+absence as unsupported, and a missing `key_operations` as no key operations.
+An older CLI answers `bimeron wireguard` with an unknown-command error and a
+nonzero exit. The Android `Capabilities()` and Apple `RLCapabilities()`
+results include the object with `document_api` 0 and no `key_operations`:
+there is no CLI bridge there, and profiles use explicit `Type = wireguard`
+options.
 
 ## Runtime
 
