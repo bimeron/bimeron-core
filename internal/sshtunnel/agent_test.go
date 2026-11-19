@@ -146,10 +146,10 @@ func TestSilentAgentIsBounded(t *testing.T) {
 // The listing deadline does not apply to signing: an agent login still works
 // when the handshake reaches the signature after the listing timeout.
 func TestAgentSignsAfterListingTimeout(t *testing.T) {
-	withListTimeout(t, 50*time.Millisecond)
+	withListTimeout(t, 500*time.Millisecond)
 	key, dial := keyringAgent(t, func(a agent.ExtendedAgent) agent.Agent { return a })
 	withAgent(t, dial)
-	address, host := startKeyServer(t, key, 200*time.Millisecond)
+	address, host := startKeyServer(t, key, time.Second)
 	p := sshProfile(t, address, "", host)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
