@@ -171,6 +171,13 @@ Administrators entry; the caller that launched it can only connect.
 Do not open the server process token. Standard users cannot open a LocalSystem
 token, so a check that requires it fails for a normal GUI.
 
+Unlike the console daemon and IKEv2 foreground clients, a service pipe client
+keeps no handle to the server process. A LocalSystem process grants standard
+users no access, so `OpenProcess` fails for a normal GUI, and the check does
+not need a handle: only SYSTEM can create instances of the service pipe, so
+every instance a client connects to is served by a SYSTEM process, and the
+SCM process ID binds that process to the BimeronCore service.
+
 A service built before explicit owners leaves the pipe owned by Administrators
 (`S-1-5-32-544`). Clients with this check reject it until the service is
 updated. `bimeron service update` is unaffected: it stops and starts the

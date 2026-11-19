@@ -145,7 +145,10 @@ func DialService(ctx context.Context) (net.Conn, error) {
 }
 
 // Standard users cannot open a LocalSystem token, so the service is identified
-// by the pipe owner and the SCM-reported service process ID.
+// by the pipe owner and the SCM-reported service process ID. Unlike the console
+// daemon client, no process handle is kept: a LocalSystem process grants
+// standard users no access, and none is needed because only SYSTEM can create
+// instances of this pipe, so every instance is served by a SYSTEM process.
 func dialServicePipe(ctx context.Context, path string, want pipeTrust) (net.Conn, error) {
 	conn, err := winio.DialPipeContext(ctx, path)
 	if err != nil {

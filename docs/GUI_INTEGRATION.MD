@@ -140,8 +140,12 @@ Verify the server before writing the first byte, as described in
 - The process ID binding does not identify the server of an individual pipe
   instance. Only the server principal may create instances: the user has
   `0x0012019B` (read and write without `FILE_CREATE_PIPE_INSTANCE`) on the
-  service, console daemon and IKEv2 foreground pipes. Open them with
+  service, console daemon and IKEv2 foreground pipes, and so do Administrators
+  on the readiness pipe and the caller on the repair pipe (see the DACL table in
+  [CONTROL.MD](CONTROL.MD#server-identity)). Open them with
   `GENERIC_READ | GENERIC_WRITE` as before.
+- Do not try to keep a handle to the service process: a standard user cannot
+  open a LocalSystem process, and the check above does not need one.
 - IKEv2 foreground and repair pipes: follow the checks in the same section.
 - Unix sockets: the peer credentials (`SO_PEERCRED`, `getpeereid` or
   `LOCAL_PEERCRED`) must report UID 0. Check the runtime directory with `lstat`
