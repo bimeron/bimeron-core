@@ -2,7 +2,6 @@ package wireguard
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -13,6 +12,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/proxy"
+	"bimeron/internal/wgconf"
 	"bimeron/internal/wireguard/wgtest"
 	awgconn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
 	awgdevice "github.com/amnezia-vpn/amneziawg-go/v3/device"
@@ -89,7 +89,7 @@ func BenchmarkTCPBulk(b *testing.B) {
 				p = wgtest.Profiles[name]
 			}
 			s := wgtest.StartAWG(b, client, p.Server)
-			tnet := nativeClient(b, client, s, p.Server)
+			tnet := nativeClient(b, s.ClientText(client, "0.0.0.0/0, ::/0", p.Client...))
 			measure(b, func() net.Conn {
 				conn, err := tnet.DialContextTCPAddrPort(context.Background(), netip.AddrPortFrom(wgtest.ServerV4, 7))
 				if err != nil {
@@ -117,16 +117,19 @@ func BenchmarkTCPBulk(b *testing.B) {
 }
 
 // nativeClient is amneziawg-go as its own examples use it: the standard
-// batched bind and the netstack, without Bimeron's bind or scope.
-func nativeClient(b *testing.B, client wgtest.KeyPair, s *wgtest.Server, awg []string) *awgnetstack.Net {
-	tun, tnet, err := awgnetstack.CreateNetTUN([]netip.Addr{wgtest.ClientV4}, nil, 1420)
+// batched bind and the netstack, without Bimeron's bind or scope. It gets
+// the same engine configuration as the Bimeron client for text.
+func nativeClient(b *testing.B, text string) *awgnetstack.Net {
+	cfg, err := wgconf.Parse(text)
+	if err != nil {
+		b.Fatal(err)
+	}
+	tun, tnet, err := awgnetstack.CreateNetTUN(cfg.LocalAddresses(), nil, cfg.TunnelMTU())
 	if err != nil {
 		b.Fatal(err)
 	}
 	dev := awgdevice.NewDevice(tun, awgconn.NewStdNetBind(), awgdevice.NewLogger(awgdevice.LogLevelSilent, ""))
-	uapi := fmt.Sprintf("private_key=%s\n%spublic_key=%s\npreshared_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=1\n",
-		wgtest.Hex(client.Private), wgtest.JoinLines(awg), wgtest.Hex(s.Key.Public), wgtest.Hex(s.PSK), s.Addr)
-	if err := dev.IpcSet(uapi); err != nil {
+	if err := dev.IpcSet(cfg.UAPI(netip.MustParseAddrPort(cfg.Endpoint()), cfg.Peer.AllowedIPs)); err != nil {
 		b.Fatal(err)
 	}
 	if err := dev.Up(); err != nil {
