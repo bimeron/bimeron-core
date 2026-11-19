@@ -69,8 +69,8 @@ func normalizeName(name string) string {
 // keyFields hold base64 keys, which query decoding may have damaged.
 var keyFields = map[string]bool{"Interface/PrivateKey": true, "Peer/PublicKey": true, "Peer/PresharedKey": true, "Interface/HeaderProtectionKey": true}
 
-// repairKey restores '+' turned into spaces, accepts base64url and, for the
-// header protection key, 64 hexadecimal digits.
+// repairKey restores '+' turned into spaces and converts base64url or 64
+// hexadecimal digits to standard base64. It applies to every key field.
 func repairKey(value string) string {
 	value = strings.ReplaceAll(value, " ", "+")
 	if len(value) == 64 {
