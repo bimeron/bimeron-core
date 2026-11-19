@@ -99,7 +99,7 @@ jobs:
       - name: Check MASQUE interoperability and transport races
         run: |
           CGO_ENABLED=1 go test -race ./internal/masque -count=1 -v
-          go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=5s
+          go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=100000x
           go test ./internal/masque -run '^$' -bench '^BenchmarkUDPEcho$' -benchtime=200ms -count=1
       - name: Check Windows IKEv2 session lifecycle races
         run: CGO_ENABLED=1 go test -race ./internal/systemvpn -count=1
@@ -137,7 +137,7 @@ jobs:
       - name: Check geodata host contracts and routing fuzz targets
         run: |
           go test ./androidcore ./core ./internal/config ./internal/routing -count=1
-          go test ./internal/routing -run '^$' -fuzz '^FuzzDecodeGeoData$' -fuzztime=5s
+          go test ./internal/routing -run '^$' -fuzz '^FuzzDecodeGeoData$' -fuzztime=100000x
           go test ./internal/routing -run '^$' -bench 'Geo' -benchtime=200ms -count=1
       - name: Check CLI, core, and control races
         run: CGO_ENABLED=1 go test -race ./cmd/bimeron ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
@@ -152,7 +152,7 @@ jobs:
         run: |
           test -x "$RUNNER_TEMP/xray"
           CGO_ENABLED=1 BIMERON_XRAY_BIN="$RUNNER_TEMP/xray" go test -race ./internal/ss2022 -count=1 -v
-          go test ./internal/accesskey -run '^$' -fuzz '^FuzzSS2022Keys$' -fuzztime=5s
+          go test ./internal/accesskey -run '^$' -fuzz '^FuzzSS2022Keys$' -fuzztime=100000x
           go test ./internal/ss2022 -run '^$' -bench '^BenchmarkTCPIdentityHeaders$' -benchtime=100ms -count=1
       - name: Install pinned original v2ray-plugin
         run: |

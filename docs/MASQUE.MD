@@ -111,7 +111,7 @@ automatically. The Go toolchain and module dependencies must be available:
 go test ./internal/masque -run '^TestReferenceServer$' -count=1 -v
 go test ./core -run 'Test(MASQUE|ResolveMASQUE)' -count=1 -v
 go test -race ./internal/masque ./internal/proxy ./core
-go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=5s
+go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=100000x
 go test ./internal/masque -run '^$' -bench '^BenchmarkUDPEcho$' -benchtime=200ms -count=1
 ```
 
