@@ -77,7 +77,7 @@ func (m *Manager) Load() (*State, error) {
 		return nil, err
 	}
 	var s State
-	if json.Unmarshal(b, &s) != nil || s.Version != 1 || !ValidName(s.Name) {
+	if json.Unmarshal(b, &s) != nil || (s.Version != 1 && s.Version != 2) || !ValidName(s.Name) {
 		return nil, fmt.Errorf("invalid Bimeron recovery journal")
 	}
 	return &s, nil
@@ -363,7 +363,7 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 	if err != nil {
 		return fmt.Errorf("cannot read resolv.conf")
 	}
-	resolved := strings.HasPrefix(path, "/run/systemd/resolve/") || bytes.Contains(original, []byte("nameserver 127.0.0.53")) || bytes.Contains(original, []byte("nameserver 127.0.0.54"))
+	resolved := strings.HasPrefix(path, "/run/systemd/resolve/") || usesResolvedStub(string(original))
 	if resolved {
 		if !s.Guard {
 			present, err := m.guardPresent(ctx)
@@ -373,6 +373,8 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 			if present {
 				return fmt.Errorf("nftables table %s is already in use", FirewallTable)
 			}
+			// Older recovery code cannot remove a DNS-only guard.
+			s.Version = 2
 			s.DNSGuard = true
 			if err := m.save(s); err != nil {
 				return err
@@ -558,15 +560,30 @@ func (m *Manager) BootstrapDNS(ctx context.Context, device string) []string {
 	}
 	return dns
 }
+func nameserverAddress(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) >= 2 && fields[0] == "nameserver" {
+		return fields[1]
+	}
+	return ""
+}
+
+func usesResolvedStub(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		switch nameserverAddress(line) {
+		case "127.0.0.53", "127.0.0.54":
+			return true
+		}
+	}
+	return false
+}
+
 func nameservers(text string) []string {
 	var result []string
 	for _, line := range strings.Split(text, "\n") {
-		f := strings.Fields(line)
-		if len(f) >= 2 && f[0] == "nameserver" {
-			a, e := netip.ParseAddr(f[1])
-			if e == nil && a.Is4() && !a.IsLoopback() && a.String() != "198.18.0.2" {
-				result = append(result, a.String())
-			}
+		a, err := netip.ParseAddr(nameserverAddress(line))
+		if err == nil && a.Is4() && !a.IsLoopback() && a.String() != "198.18.0.2" {
+			result = append(result, a.String())
 		}
 	}
 	return result

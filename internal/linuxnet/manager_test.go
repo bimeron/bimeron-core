@@ -469,6 +469,20 @@ func TestReservedRulesFailPreflight(t *testing.T) {
 	}
 }
 
+func TestUsesResolvedStub(t *testing.T) {
+	for input, want := range map[string]bool{
+		"  nameserver\t127.0.0.53 # stub":                                     true,
+		"# old settings\nnameserver   127.0.0.54":                             true,
+		"# nameserver 127.0.0.53\n;nameserver 127.0.0.54\nnameserver 1.1.1.1": false,
+		"nameserver 127.0.0.530":                                              false,
+		"search nameserver 127.0.0.54":                                        false,
+	} {
+		if got := usesResolvedStub(input); got != want {
+			t.Errorf("usesResolvedStub(%q) = %t, want %t", input, got, want)
+		}
+	}
+}
+
 func TestResolvedRevertDoesNotOverwriteResolverFile(t *testing.T) {
 	m, f, _ := testManager(t)
 	stub := []byte("nameserver 127.0.0.53\n")
@@ -531,7 +545,7 @@ func TestResolvedDNSGuardLifecycle(t *testing.T) {
 			t.Fatalf("missing %q in DNS guard", fragment)
 		}
 	}
-	if s := (*journals)[0]; s == nil || !s.DNSGuard || s.Guard || s.DNSMethod != "" {
+	if s := (*journals)[0]; s == nil || s.Version != 2 || !s.DNSGuard || s.Guard || s.DNSMethod != "" {
 		t.Fatalf("unexpected journal before DNS guard installation: %+v", s)
 	}
 	f.fail = "resolvectl revert"
