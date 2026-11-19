@@ -65,13 +65,14 @@ type PeerConfig struct {
 	EndpointPort int
 	AllowedIPs   []netip.Prefix
 	// Keepalive is zero when persistent keepalive is off.
-	Keepalive Range
+	Keepalive            Range
+	keepaliveRangeSyntax bool
 }
 
 // Protocol reports amneziawg when any AmneziaWG option or an AWG 3
 // keepalive range is set, matching Document.Protocol.
 func (c *Config) Protocol() string {
-	if len(c.AWG) > 0 || c.Peer.Keepalive.Lo != c.Peer.Keepalive.Hi {
+	if len(c.AWG) > 0 || c.Peer.keepaliveRangeSyntax || c.Peer.Keepalive.Lo != c.Peer.Keepalive.Hi {
 		return ProtocolAmneziaWG
 	}
 	return ProtocolWireGuard
@@ -431,6 +432,7 @@ func (c *Config) set(section, key, value string) error {
 		}
 		r, err := parseRange(value, 0, 65535)
 		c.Peer.Keepalive = r
+		c.Peer.keepaliveRangeSyntax = strings.Contains(value, "-")
 		return err
 	default:
 		canonical, err := awgValue(key, value)

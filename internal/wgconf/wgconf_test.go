@@ -99,9 +99,18 @@ func TestAWGVersions(t *testing.T) {
 			t.Fatal("AWG options must select amneziawg")
 		}
 	}
-	d, _ := ParseDocument(strings.Replace(sample(), "PersistentKeepalive = 25", "PersistentKeepalive = 20-30", 1))
-	if _, v := d.Protocol(); v != "3.0" {
-		t.Fatalf("keepalive range version %s", v)
+	for _, interval := range []string{"20-30", "25-25"} {
+		d, err := ParseDocument(strings.Replace(sample(), "PersistentKeepalive = 25", "PersistentKeepalive = "+interval, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := d.Config()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if protocol, version := d.Protocol(); version != "3.0" || protocol != ProtocolAmneziaWG || c.Protocol() != protocol {
+			t.Fatalf("keepalive %s: document %s %s, config %s", interval, protocol, version, c.Protocol())
+		}
 	}
 }
 
