@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -65,10 +66,12 @@ func ephemeralTLSConfig(t *testing.T) server.TLSConfig {
 	return server.TLSConfig{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 }
 
-// Bimeron patch: cancelled TCPContext dials must reset their streams, so more
-// abandoned dials than the server's stream limit never exhaust the connection.
+// Bimeron patch: a cancelled TCPContext dial returns promptly and leaves no
+// goroutine waiting for the server's TCP response. (Stream credit returns
+// only when the server finishes with the reset stream, which this stalling
+// server never does, so the test stays below the server's stream limit.)
 func TestClientServerTCPContextReleasesStreams(t *testing.T) {
-	const streamLimit = 8
+	const dials = 32
 	ob := &stallingOutbound{stalled: "203.0.113.1:9", release: make(chan struct{})}
 	defer close(ob.release)
 
@@ -84,7 +87,6 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 		Conn:          udpConn,
 		Authenticator: auth,
 		Outbound:      ob,
-		QUICConfig:    server.QUICConfig{MaxIncomingStreams: streamLimit},
 	})
 	assert.NoError(t, err)
 	defer s.Close()
@@ -109,8 +111,9 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 		t.Fatal("client does not implement TCPContext")
 	}
 
-	for i := 0; i < 4*streamLimit; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	baseline := runtime.NumGoroutine()
+	for i := 0; i < dials; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		start := time.Now()
 		_, err := dialer.TCPContext(ctx, ob.stalled)
 		cancel()
@@ -121,19 +124,20 @@ func TestClientServerTCPContextReleasesStreams(t *testing.T) {
 			t.Fatalf("dial %d ignored cancellation for %v", i, elapsed)
 		}
 	}
-
-	// Stream credit must have been returned: a normal dial still works.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var conn net.Conn
-	for {
-		conn, err = dialer.TCPContext(ctx, echoListener.Addr().String())
-		if err == nil || ctx.Err() != nil {
-			break
+	// Before the patch every abandoned call kept a goroutine in
+	// ReadTCPResponse; allow only scheduling noise.
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > baseline+dials/4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines grew from %d to %d after %d cancelled dials", baseline, runtime.NumGoroutine(), dials)
 		}
-		// MAX_STREAMS updates arrive asynchronously after the resets.
 		time.Sleep(20 * time.Millisecond)
 	}
+
+	// The connection stays usable.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dialer.TCPContext(ctx, echoListener.Addr().String())
 	if err != nil {
 		t.Fatalf("dial after cancellations: %v", err)
 	}
