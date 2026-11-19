@@ -147,11 +147,15 @@ Pass the extracted file itself. The updater refuses a file larger than 256 MiB
 and a symbolic link or junction as the final path component. On Windows the
 source must be a plain drive-letter path (`C:\...`) on a fixed local drive:
 UNC, device and `\\?\` paths are refused, and so is an opened file that
-resolves to a network share or another drive type, for example through a linked
-directory. Other reparse points, such as cloud-file placeholders, are read as
-data. Extract to a local directory: content that is not available locally may
-fail to read or be fetched on access, and the staged digest check rejects any
-mismatch.
+resolves to a network share or to a volume that is not a fixed drive, for
+example through a linked directory or a removable volume mounted in a folder.
+The drive type is the one the volume reports, so a RAM disk that reports a
+fixed drive is accepted. WSL FIFOs and device files are refused. Other reparse
+points, such as cloud-file placeholders, are read as data. Extract to a local
+directory whose path contains no links: content that is not available locally
+may fail to read or be fetched on access, the staged digest check rejects any
+mismatch, and opening a file through a directory linked to a network share
+contacts that server before the updater refuses it.
 
 The bundled updater must be in a directory ordinary users cannot write. A
 portable GUI or a custom installation in a user-writable directory cannot safely
