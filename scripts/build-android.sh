@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 : "${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK directory}"
 : "${ANDROID_NDK_HOME:?Set ANDROID_NDK_HOME to an installed NDK directory}"
 command -v gomobile >/dev/null 2>&1 || { echo 'gomobile is required' >&2; exit 1; }
+sh scripts/release-go.sh
 output="${ANDROID_BUILD_DIR:-$PWD/dist/android}"
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
@@ -24,9 +25,6 @@ fi
 # fixed path so that path names no user or workspace either. mkdir is atomic:
 # a second build, or another user, cannot take over the private directory,
 # and sticky /tmp keeps others from replacing it.
-case $(go env GOFLAGS GOEXPERIMENT) in
-    *[![:space:]]*) echo 'GOFLAGS and GOEXPERIMENT must be empty (also in go env -w)' >&2; exit 1 ;;
-esac
 dir=/tmp/bimeron-core-android
 if ! mkdir -m 700 "$dir"; then
     echo "$dir exists: another Android build is running, or remove it and retry" >&2

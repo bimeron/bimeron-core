@@ -284,12 +284,18 @@ func TestReleaseScriptsRefuseTestKey(t *testing.T) {
 	if err != nil {
 		t.Skip("bash not available")
 	}
+	config := filepath.Join(t.TempDir(), "goenv")
+	if err := os.WriteFile(config, []byte("GOFLAGS=-n\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct{ env, want string }{
 		{"BIMERON_RELEASE_TEST_UNPINNED_KEY=1", "unset BIMERON_RELEASE_TEST_UNPINNED_KEY"},
 		{"GOFLAGS=-tags=extra", "unset GOFLAGS"},
+		{"GOENV=" + config, "unset GOFLAGS"},
+		{"GOEXPERIMENT=arenas", "unset GOFLAGS and GOEXPERIMENT"},
 	} {
 		cmd := exec.Command(bash, "../scripts/publish-prepared-release.sh", "v0.5.0", t.TempDir())
-		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_TEST_UNPINNED_KEY=", "GOFLAGS=", tc.env)
+		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_TEST_UNPINNED_KEY=", "GOENV=off", "GOFLAGS=", "GOEXPERIMENT=", tc.env)
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), tc.want) {
 			t.Fatalf("publisher ran with %s: %v %s", tc.env, err, out)

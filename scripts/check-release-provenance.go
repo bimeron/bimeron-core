@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Usage: go run scripts/check-release-provenance.go -tag vX.Y.Z -dir release -commit <sha>
+// Usage: sh scripts/release-go.sh run scripts/check-release-provenance.go -tag vX.Y.Z -dir release -commit <sha>
 //
 // Checks the build information of every binary in the prepared release ZIPs:
 // each CLI executable must come from an unmodified checkout of the release

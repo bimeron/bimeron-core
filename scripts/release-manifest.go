@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Usage: go run scripts/release-manifest.go -tag vX.Y.Z -dir release [-verify]
+// Usage: ./scripts/release-go.ps1 run scripts/release-manifest.go -tag vX.Y.Z -dir release [-verify]
 //
 // Signing uses BIMERON_RELEASE_CARD_SERIAL (an OpenPGP hardware token such as
 // a YubiKey, with BIMERON_RELEASE_ED25519_PUBLIC_KEY naming its pinned key).

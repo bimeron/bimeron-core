@@ -2,8 +2,13 @@ $ErrorActionPreference = 'Stop'
 if (-not $env:ANDROID_HOME) { throw 'Set ANDROID_HOME to the Android SDK directory.' }
 if (-not $env:ANDROID_NDK_HOME) { throw 'Set ANDROID_NDK_HOME to an installed Android NDK directory.' }
 $root = Split-Path -Parent $PSScriptRoot
+$lock = $null
 Push-Location $root
 try {
+    ./scripts/release-go.ps1
+    $dist = New-Item -ItemType Directory -Force (Join-Path $root 'dist')
+    # Keep the lock file outside the packaged directory. The handle owns the lock.
+    $lock = [IO.File]::Open((Join-Path $dist.FullName '.android-build.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     $output = Join-Path $root 'dist/android'
     New-Item -ItemType Directory -Force $output | Out-Null
     # Keep the NDK install path out of the C/DWARF debug info and, with -trimpath,
@@ -19,7 +24,6 @@ try {
     # snapshots in each library's build information. Build from the root of a
     # temporary drive letter mapped to this checkout, so that path names no user
     # or workspace either. A subst mapping belongs to this logon session only.
-    if ((go env GOFLAGS GOEXPERIMENT) -join '' -match '\S') { throw 'GOFLAGS and GOEXPERIMENT must be empty (also in go env -w).' }
     $drive = $null
     foreach ($letter in [char[]]'ZYXWVUTSRQPONMLKJIHGFED') {
         if (Test-Path -LiteralPath "${letter}:\") { continue }
@@ -41,5 +45,6 @@ try {
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE'), (Join-Path $root 'THIRD_PARTY_NOTICES.txt') -Destination $output -Force
     Write-Output "Prepared $output"
 } finally {
+    if ($lock) { $lock.Dispose() }
     Pop-Location
 }

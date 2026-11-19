@@ -378,8 +378,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           printf 'SHA=%s OS=%s ARCH=%s\n' "$EXPECTED_SHA" "$(uname -s)" "$(uname -m)"
           go version
-      - run: go run scripts/build-dist.go
-      - run: go run scripts/check-dist.go
+      - run: sh scripts/release-go.sh run scripts/build-dist.go
+      - run: sh scripts/release-go.sh run scripts/check-dist.go
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-dist
@@ -408,7 +408,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
+          sh scripts/release-go.sh install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: gomobile init
       - run: sh scripts/build-android.sh
@@ -477,4 +477,4 @@ jobs:
             zip -qr "$release/bimeron-v0.0.0-ci-$target.zip" "$target"
           done
           cd "$GITHUB_WORKSPACE"
-          go run scripts/check-release-provenance.go -tag v0.0.0-ci -dir "$release" -commit "$EXPECTED_SHA"
+          sh scripts/release-go.sh run scripts/check-release-provenance.go -tag v0.0.0-ci -dir "$release" -commit "$EXPECTED_SHA"

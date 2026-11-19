@@ -134,7 +134,7 @@ func TestAndroidLibraryProvenance(t *testing.T) {
 	deps := func(root, sep string) []*debug.Module {
 		return []*debug.Module{
 			{Path: "bimeron", Version: "v0.0.0-00010101000000-000000000000", Replace: &debug.Module{Path: root, Version: "(devel)"}},
-			{Path: "github.com/quic-go/quic-go", Version: "v0.64.1", Replace: &debug.Module{Path: root + sep + "third_party" + sep + "quic-go", Version: "(devel)"}},
+			{Path: "github.com/quic-go/quic-go", Version: "v0.64.1", Replace: &debug.Module{Path: strings.TrimSuffix(root, sep) + sep + "third_party" + sep + "quic-go", Version: "(devel)"}},
 			{Path: "golang.org/x/net", Version: "v0.62.0", Sum: "h1:x"},
 		}
 	}
@@ -154,7 +154,7 @@ func TestAndroidLibraryProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	// scripts/build-android.ps1 builds from the root of a temporary drive.
-	if err := checkAndroidInfo(&debug.BuildInfo{Path: "gobind/gobind", Deps: deps(`Z:\`, ""), Settings: info(trimmed...).Settings}, "arm64"); err != nil {
+	if err := checkAndroidInfo(&debug.BuildInfo{Path: "gobind/gobind", Deps: deps(`Z:\`, `\`), Settings: info(trimmed...).Settings}, "arm64"); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -167,7 +167,7 @@ func TestAndroidLibraryProvenance(t *testing.T) {
 		{"wrong ABI", info(trimmed...), "amd64", "build setting GOARCH"},
 		{"built from a home directory", &debug.BuildInfo{Path: "gobind/gobind", Deps: deps("/home/builder/bimeron-core", "/"), Settings: info(trimmed...).Settings}, "arm64", "module bimeron was built from"},
 		{"vendored module outside the source", &debug.BuildInfo{Path: "gobind/gobind", Deps: append(deps(AndroidSourceLink, "/"), &debug.Module{Path: "example.com/m", Version: "v1.0.0", Replace: &debug.Module{Path: "/home/builder/m", Version: "(devel)"}}), Settings: info(trimmed...).Settings}, "arm64", "module example.com/m was built from"},
-		{"lowercase drive", &debug.BuildInfo{Path: "gobind/gobind", Deps: deps(`z:\`, ""), Settings: info(trimmed...).Settings}, "arm64", "module bimeron was built from"},
+		{"lowercase drive", &debug.BuildInfo{Path: "gobind/gobind", Deps: deps(`z:\`, `\`), Settings: info(trimmed...).Settings}, "arm64", "module bimeron was built from"},
 		{"extra tags", info(append(trimmed, "-tags=extra")...), "arm64", "unexpected build setting -tags"},
 		{"duplicate setting", info(append(trimmed, "GOOS=linux")...), "arm64", "duplicate"},
 		{"foreign package", &debug.BuildInfo{Path: "gobind/gobind", Settings: info(trimmed...).Settings}, "arm64", "unexpected main package"},

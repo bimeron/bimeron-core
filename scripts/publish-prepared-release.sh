@@ -8,12 +8,7 @@ if [[ -n "${BIMERON_RELEASE_TEST_UNPINNED_KEY:-}" ]]; then
   exit 2
 fi
 
-# GOFLAGS would change how the checks below are built and run. go env also
-# reports values set with go env -w.
-if [[ -n "$(go env GOFLAGS)" ]]; then
-  echo 'unset GOFLAGS (also go env -w GOFLAGS=): release checks run with the default Go settings' >&2
-  exit 2
-fi
+sh "$(dirname "$0")/release-go.sh"
 
 if [[ $# -lt 2 || $# -gt 3 || ( $# -eq 3 && "$3" != "--publish" ) ]]; then
   echo 'usage: scripts/publish-prepared-release.sh <tag> <release-dir> [--publish]' >&2

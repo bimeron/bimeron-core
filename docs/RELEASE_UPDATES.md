@@ -46,7 +46,7 @@ pinned public key:
 ```powershell
 $env:BIMERON_RELEASE_CARD_SERIAL = "22337246"
 $env:BIMERON_RELEASE_ED25519_PUBLIC_KEY = "lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI="
-go run scripts/release-manifest.go -tag <tag> -dir <release-dir>
+./scripts/release-go.ps1 run scripts/release-manifest.go -tag <tag> -dir <release-dir>
 ```
 
 The signer checks that the card holds exactly the configured public key before
@@ -132,10 +132,10 @@ new default setting, the gate refuses the build until the list is reviewed.
 
 Go does not record every build input. With `-trimpath` it omits `-ldflags`, so
 the embedded Core version is not checked, and options such as `-toolexec`,
-`-overlay` or `-modfile` leave no trace. Build and publish with an empty
-`GOFLAGS`, including values set with `go env -w`: `build-dist.go`, the Android
-scripts and the publisher check the effective value and refuse to run otherwise.
-CI applies the same gate to its distribution builds.
+`-overlay` or `-modfile` leave no trace. Build and publish with empty
+`GOFLAGS` and `GOEXPERIMENT`, including values saved with `go env -w`. The release
+launchers, Android builds and publisher require a successful lookup before running
+Go release tools. CI uses the same launchers.
 
 After approval, push the reviewed commit and its tag, wait for successful tag CI, and run the same command with `--publish`. It
 requires both local and remote tags to point to the prepared commit. It creates

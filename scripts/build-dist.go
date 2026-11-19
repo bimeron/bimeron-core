@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Run with: go run scripts/build-dist.go
+// Run with: sh scripts/release-go.sh run scripts/build-dist.go
 package main
 
 import (
@@ -65,7 +65,7 @@ func run() error {
 		mode = os.Args[1]
 	}
 	if len(os.Args) > 2 || (mode != "all" && mode != "windows" && mode != "windows-amd64" && mode != "windows-arm64" && mode != "linux" && mode != "macos") {
-		return fmt.Errorf("usage: go run scripts/build-dist.go [all|windows|windows-amd64|windows-arm64|linux|macos]")
+		return fmt.Errorf("usage: sh scripts/release-go.sh run scripts/build-dist.go [all|windows|windows-amd64|windows-arm64|linux|macos]")
 	}
 	coreVersion := strings.TrimPrefix(version, "v")
 	if err := removeResources(root); err != nil {
