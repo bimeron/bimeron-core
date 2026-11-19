@@ -109,3 +109,47 @@ func TestWireGuardReviewRegressions(t *testing.T) {
 		t.Fatalf("ambiguous file: %+v", p)
 	}
 }
+
+func TestLoadAnyRunsWireGuardFilesDirectly(t *testing.T) {
+	dir := t.TempDir()
+	wg := "[Interface]\nPrivateKey = " + wgKey(1) + "\nAddress = 10.8.0.2/32\nDNS = 10.8.0.1\nMTU = 1360\nJc = 4\n[Peer]\nPublicKey = " + wgKey(2) + "\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 10.8.0.0/24\n"
+	path := filepath.Join(dir, "My Office.conf")
+	if err := os.WriteFile(path, []byte(wg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadDir(dir)
+	c, err := LoadAny(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadDir(dir)
+	if len(after) != len(before) {
+		t.Fatal("direct run wrote a file")
+	}
+	if !c.IsWireGuard() || c.Name != "My Office" || c.Tunnel.Mode != "vpn" || c.AllowedIPsMode != "only" {
+		t.Fatalf("profile %+v", c)
+	}
+	if protocol, label, _ := c.WireGuardAdapterLabel(); protocol != "AWG" || label != "My Office" {
+		t.Fatalf("label %s %s", protocol, label)
+	}
+	if got := strings.Join(c.WireGuardDNS(), ","); got != "10.8.0.1" || c.WireGuardTunnelMTU() != 1360 {
+		t.Fatalf("dns %s mtu %d", got, c.WireGuardTunnelMTU())
+	}
+	if !IsWireGuardFile(path) {
+		t.Fatal("not detected")
+	}
+	// Bimeron profiles keep loading as before.
+	profile := filepath.Join(dir, "p.conf")
+	if err := os.WriteFile(profile, []byte("[Profile]\nVersion = 1\n[AccessKey]\nFile = My Office.conf\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := LoadAny(profile); err != nil || c.AllowedIPsMode != "" || IsWireGuardFile(profile) {
+		t.Fatalf("Bimeron profile: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(wg+"PostUp = x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAny(path); problem.Of(err).Code != "wireguard_hook_unsupported" || problem.Of(err).Document != "wireguard" {
+		t.Fatalf("invalid file: %v", err)
+	}
+}

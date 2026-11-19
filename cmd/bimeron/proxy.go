@@ -2,6 +2,7 @@ package main
 
 import (
 	core "bimeron/core"
+	"bimeron/internal/config"
 	"bimeron/internal/routing"
 	"encoding/json"
 	"flag"
@@ -28,6 +29,9 @@ func serve(args []string) error {
 		if flags.NArg() != 1 {
 			return fmt.Errorf("usage: bimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>")
 		}
+		if config.IsWireGuardFile(flags.Arg(0)) {
+			return serveWireGuard(flags.Arg(0), *listen, *policyFile)
+		}
 		session = core.KeyFile(flags.Arg(0))
 		session.Mode = "proxy"
 		session.Listen = *listen
@@ -45,6 +49,38 @@ func serve(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	return runSession(session)
+}
+
+// serveWireGuard runs a plain WireGuard or AmneziaWG file as a local SOCKS5
+// proxy. AllowedIPs alone decide what uses the tunnel; with -policy the
+// policy decides and destinations outside AllowedIPs go direct. DNS for
+// names comes from the file's [Interface]. No adapter, route or system DNS
+// is created.
+func serveWireGuard(path, listen, policyFile string) error {
+	c, err := config.LoadWireGuard(path)
+	if err != nil {
+		return err
+	}
+	c.Tunnel.Mode, c.Tunnel.Listen = "proxy", listen
+	session, err := core.FromConfig(c)
+	if err != nil {
+		return err
+	}
+	if policyFile != "" {
+		b, e := os.ReadFile(policyFile)
+		if e != nil {
+			return fmt.Errorf("could not read policy")
+		}
+		var p routing.Config
+		if json.Unmarshal(b, &p) != nil {
+			return fmt.Errorf("invalid policy JSON")
+		}
+		if session.Policy, err = routing.Compile(p); err != nil {
+			return err
+		}
+		session.AllowedIPsMode = "direct"
 	}
 	return runSession(session)
 }

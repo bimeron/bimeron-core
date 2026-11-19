@@ -1,10 +1,13 @@
 package config
 
 import (
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/problem"
+	"bimeron/internal/routing"
 	"bimeron/internal/wgconf"
 )
 
@@ -138,4 +141,89 @@ func (c *File) WireGuardTunnelMTU() int {
 		return 0
 	}
 	return min(max(c.profile.WireGuard.MTU, 1280), 1500)
+}
+
+// WireGuardAdapterLabel returns "WG" or "AWG" for the recognized WireGuard
+// text and the label for the adapter alias: the referenced file's name
+// without ".conf", or the profile name for explicit options. ok is false for
+// other profiles.
+func (c *File) WireGuardAdapterLabel() (protocol, label string, ok bool) {
+	if !c.IsWireGuard() {
+		return "", "", false
+	}
+	protocol = "WG"
+	if c.profile.WireGuard.Protocol() == wgconf.ProtocolAmneziaWG {
+		protocol = "AWG"
+	}
+	label = c.Name
+	if c.Access.KeyFile != "" {
+		label = filepath.Base(filepath.Clean(c.Access.KeyFile))
+		if ext := filepath.Ext(label); strings.EqualFold(ext, ".conf") {
+			label = label[:len(label)-len(ext)]
+		}
+	}
+	return protocol, label, true
+}
+
+// LoadAny loads a Bimeron profile, or a plain WireGuard/AmneziaWG file run
+// directly (see LoadWireGuard). The format is detected from the content.
+func LoadAny(path string) (*File, error) {
+	b, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if format, err := wgconf.Detect(string(b)); err == nil && format == wgconf.FormatWireGuard {
+		return loadWireGuardBytes(b, path)
+	}
+	return loadBytes(b, path, nil, nil)
+}
+
+// LoadWireGuard builds an in-memory profile for a plain WireGuard or
+// AmneziaWG file, as wg-quick would run it: VPN mode, AllowedIPsMode =
+// only (AllowedIPs alone decide), DNS and MTU from its [Interface], and the
+// file name without ".conf" as the profile name. Nothing is written.
+func LoadWireGuard(path string) (*File, error) {
+	b, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return loadWireGuardBytes(b, path)
+}
+
+func loadWireGuardBytes(b []byte, path string) (*File, error) {
+	cfg, err := wgconf.Parse(string(b))
+	if err != nil {
+		p := problem.Of(err)
+		p.Document = wgconf.DocumentName
+		return nil, p
+	}
+	name := filepath.Base(filepath.Clean(path))
+	if ext := filepath.Ext(name); strings.EqualFold(ext, ".conf") {
+		name = name[:len(name)-len(ext)]
+	}
+	c := &File{
+		Version: 1, Name: name,
+		Tunnel:         Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: "1.1.1.1", Listen: "127.0.0.1:1080"},
+		Routing:        routing.Config{Default: routing.Proxy},
+		AllowedIPsMode: "only",
+		Access:         Access{KeyFile: path},
+		lines:          map[string]int{},
+	}
+	p := accesskey.WireGuardProfile(name, cfg)
+	c.profile = &p
+	if c.geoData, err = routing.DecodeGeoData(nil, nil); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// IsWireGuardFile reports whether path holds WireGuard or AmneziaWG text.
+// Read failures report false; the caller's own loading reports them.
+func IsWireGuardFile(path string) bool {
+	b, err := readFile(path)
+	if err != nil {
+		return false
+	}
+	format, err := wgconf.Detect(string(b))
+	return err == nil && format == wgconf.FormatWireGuard
 }
