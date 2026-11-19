@@ -110,24 +110,63 @@ func cloudPlaceholder(t *testing.T, data []byte) string {
 // TestReadCloudFilePlaceholder reads a cloud-file placeholder that the test
 // creates with the Cloud Files API. CI sets BIMERON_REQUIRE_CLOUD_FILE=1 so
 // that the test fails instead of skipping when the API is unavailable.
+//
+// The cloud files filter may disguise placeholders as ordinary files,
+// depending on the placeholder compatibility mode of the process and thread.
+// The file is read in the default mode and again with placeholders exposed,
+// where Go reports the reparse point as an irregular file and the opened
+// handle carries the cloud tag.
 func TestReadCloudFilePlaceholder(t *testing.T) {
 	path := cloudPlaceholder(t, []byte("cloud data"))
-	info, err := os.Lstat(path)
-	if err != nil {
-		t.Fatal(err)
+	read := func(t *testing.T) {
+		t.Helper()
+		if b, err := Read(path, 16); err != nil || string(b) != "cloud data" {
+			t.Fatalf("Read() = %q, %v", b, err)
+		}
+		if _, err := Read(path, 4); err != ErrTooLarge {
+			t.Fatalf("Read(limit 4) = %v, want ErrTooLarge", err)
+		}
 	}
-	if info.Mode().Type() != fs.ModeIrregular {
-		t.Fatalf("placeholder has mode %v, want a reparse-point data file", info.Mode())
+	t.Run("default", func(t *testing.T) {
+		if info, err := os.Lstat(path); err == nil {
+			t.Logf("placeholder mode in the default compatibility mode: %v", info.Mode())
+		}
+		read(t)
+	})
+	t.Run("exposed", func(t *testing.T) {
+		exposePlaceholders(t)
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Type() != fs.ModeIrregular {
+			t.Fatalf("placeholder has mode %v, want a reparse-point data file", info.Mode())
+		}
+		if tag := openedReparseTag(t, path); tag&^0xf000 != 0x9000001a {
+			t.Fatalf("placeholder has reparse tag %#x, want IO_REPARSE_TAG_CLOUD", tag)
+		}
+		read(t)
+	})
+}
+
+// PHCM_EXPOSE_PLACEHOLDERS for RtlSetProcessPlaceholderCompatibilityMode.
+const phcmExposePlaceholders = 2
+
+var procSetPlaceholderMode = windows.NewLazySystemDLL("ntdll.dll").NewProc("RtlSetProcessPlaceholderCompatibilityMode")
+
+// exposePlaceholders makes the cloud files filter show placeholders as
+// reparse points to this process until the test ends.
+func exposePlaceholders(t *testing.T) {
+	t.Helper()
+	if err := procSetPlaceholderMode.Find(); err != nil {
+		t.Skip("placeholder compatibility mode unavailable:", err)
 	}
-	if tag := openedReparseTag(t, path); tag&^0xf000 != 0x9000001a {
-		t.Fatalf("placeholder has reparse tag %#x, want IO_REPARSE_TAG_CLOUD", tag)
+	r, _, _ := procSetPlaceholderMode.Call(phcmExposePlaceholders)
+	previous := int8(r)
+	if previous < 0 {
+		t.Fatalf("RtlSetProcessPlaceholderCompatibilityMode = %d", previous)
 	}
-	if b, err := Read(path, 16); err != nil || string(b) != "cloud data" {
-		t.Fatalf("Read() = %q, %v", b, err)
-	}
-	if _, err := Read(path, 4); err != ErrTooLarge {
-		t.Fatalf("Read(limit 4) = %v, want ErrTooLarge", err)
-	}
+	t.Cleanup(func() { procSetPlaceholderMode.Call(uintptr(previous)) })
 }
 
 func openedReparseTag(t *testing.T, path string) uint32 {
