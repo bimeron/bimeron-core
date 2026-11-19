@@ -23,7 +23,8 @@ func TestFirewallBlocksNameResolutionBeforeDirectRules(t *testing.T) {
 		"meta l4proto { tcp, udp } th dport { 53, 853 } drop",
 		"udp dport { 137, 5355 } drop",
 		"tcp dport 5355 drop",
-		"meta l4proto { tcp, udp } th sport 5355 drop",
+		"udp sport { 137, 5355 } drop",
+		"tcp sport 5355 drop",
 	} {
 		i := strings.Index(script, rule)
 		if i < 0 || direct < 0 || i > direct {

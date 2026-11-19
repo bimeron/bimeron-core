@@ -52,9 +52,10 @@ and removal use atomic WFP transactions.
   and are also refused inbound. mDNS (UDP 5353) is not blocked separately: it
   is permitted only where a `direct` rule covers its multicast destination
   (`224.0.0.251/32` or `ff02::fb/128`), so a LAN rule such as `192.168.1.0/24`
-  alone does not permit it. With such a rule, local discovery such as printers
-  and casting keeps working, and it can disclose names of local services
-  queried on that link.
+  alone does not permit it. Answers arrive from the responders' LAN addresses,
+  so local discovery such as printers and casting needs `direct` rules for both
+  the multicast address and the LAN range; mDNS can then disclose names of
+  local services queried on that link.
 - Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
   guests) does not pass the application layers these filters use and is not
   covered by the kill switch.
