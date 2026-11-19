@@ -67,15 +67,17 @@ func TestKeyboardInteractivePromptsAreSanitized(t *testing.T) {
 		"Duo two-factor login\r\n\r\n 1. Push\r\n 2. Phone call\r\nPasscode or option (1-2)",
 		rlo + "edoc",
 		"OTP" + string(rune(0x9b)) + "2J",
+		"Verification code:\r\n",
 	}
 	want := []string{
 		fffd + "]52;c;Zm9v" + fffd + "Password",
 		"Duo two-factor login\n\n 1. Push\n 2. Phone call\nPasscode or option (1-2)",
 		fffd + "edoc",
 		"OTP" + fffd + "2J",
+		"Verification code:",
 	}
-	echoes := []bool{false, true, false, true}
-	answers := []string{"secret", "1", "code", "otp"}
+	echoes := []bool{false, true, false, true, false}
+	answers := []string{"secret", "1", "code", "otp", "123456"}
 	address, host := startInteractiveServer(t, questions, echoes, answers)
 	p := sshProfile(t, address, "", host)
 	var seen []Challenge

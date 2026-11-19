@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,22 @@ func TestControlOutputFiltersDaemonText(t *testing.T) {
 	requireDisplaySafe(t, out.String())
 	if got := strings.Count(out.String(), "\n"); got != 7 {
 		t.Fatalf("status printed %d lines, want 7: %q", got, out.String())
+	}
+}
+
+// JSON output keeps daemon text intact but escapes every terminal control.
+func TestDaemonJSONEscapesControls(t *testing.T) {
+	var out strings.Builder
+	if err := writeDaemonJSON(&out, core.BuildDetails{Version: hostile}); err != nil {
+		t.Fatal(err)
+	}
+	text := strings.TrimSuffix(out.String(), "\n")
+	if strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) || r == 0x202E }) {
+		t.Fatalf("JSON output keeps a control character: %q", out.String())
+	}
+	var back core.BuildDetails
+	if err := json.Unmarshal([]byte(text), &back); err != nil || back.Version != hostile {
+		t.Fatalf("JSON output %q decodes to %q, %v", text, back.Version, err)
 	}
 }
 

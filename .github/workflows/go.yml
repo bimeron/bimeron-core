@@ -144,6 +144,10 @@ jobs:
           for target in internal/config:FuzzParseData internal/accesskey:FuzzParseURI internal/accesskey:FuzzParseConfig internal/accesskey:FuzzParseSSPlugin core:FuzzConfigDocument internal/anytls:FuzzWire internal/vless:FuzzWire internal/tuic:FuzzReadAddress internal/proxy:FuzzReadSocksAddress; do
             go test "./${target%%:*}" -run '^$' -fuzz "^${target#*:}\$" -fuzztime=20000x
           done
+      - name: Display text fuzz targets
+        run: |
+          go test ./internal/displaytext -run '^$' -fuzz '^FuzzText$' -fuzztime=5s
+          go test ./internal/displaytext -run '^$' -fuzz '^FuzzEscapeJSON$' -fuzztime=5s
       - name: Check CLI, core, and control races
         run: CGO_ENABLED=1 go test -race ./cmd/bimeron ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
       - name: VLESS and VMess transport interoperability with Xray

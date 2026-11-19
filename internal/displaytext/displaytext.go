@@ -8,6 +8,7 @@
 package displaytext
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -32,9 +33,6 @@ func Text(s string) string { return clean(s, true) }
 func Line(s string) string { return clean(s, false) }
 
 func clean(s string, multiline bool) string {
-	if safe(s, multiline) {
-		return s
-	}
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
@@ -65,38 +63,37 @@ func clean(s string, multiline bool) string {
 	return b.String()
 }
 
-// safe reports whether clean would return s unchanged.
-func safe(s string, multiline bool) bool {
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		i += size
-		switch {
-		case r == utf8.RuneError && size == 1:
-			return false
-		case r == '\n' || r == '\t':
-			if !multiline {
-				return false
+// EscapeJSON writes every control character, bidirectional formatting
+// character and line or paragraph separator in encoded JSON as a \u escape.
+// encoding/json already escapes C0 controls and the separators, but writes
+// DEL, C1 controls and bidirectional formatting characters as they are. Such
+// characters only occur inside JSON strings, so the result is equivalent JSON.
+func EscapeJSON(b []byte) []byte {
+	var out []byte
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if !unsafeRune(r) && r != lineSeparator && r != paragraphSeparator {
+			if out != nil {
+				out = append(out, b[i:i+size]...)
 			}
-		case r == '\r' || r == lineSeparator || r == paragraphSeparator || unsafeRune(r):
-			return false
+			i += size
+			continue
 		}
+		if out == nil {
+			out = append(make([]byte, 0, len(b)+16), b[:i]...)
+		}
+		out = fmt.Appendf(out, `\u%04x`, r)
+		i += size
 	}
-	return true
+	if out == nil {
+		return b
+	}
+	return out
 }
 
-// unsafeRune reports C0 and C1 controls, DEL and the bidirectional formatting
-// characters: ALM (U+061C), LRM (U+200E), RLM (U+200F), the embeddings and
-// overrides U+202A to U+202E, and the isolates U+2066 to U+2069.
+// unsafeRune reports C0 and C1 controls, DEL and the Unicode Bidi_Control
+// characters: ALM, LRM, RLM, the embeddings and overrides U+202A to U+202E,
+// and the isolates U+2066 to U+2069.
 func unsafeRune(r rune) bool {
-	switch {
-	case unicode.IsControl(r):
-		return true
-	case r == 0x061C, r == 0x200E, r == 0x200F:
-		return true
-	case r >= 0x202A && r <= 0x202E:
-		return true
-	case r >= 0x2066 && r <= 0x2069:
-		return true
-	}
-	return false
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 }

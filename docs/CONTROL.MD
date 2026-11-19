@@ -100,7 +100,9 @@ codes.
 
 Display response strings as plain text. A client cannot tell a genuine daemon
 from an impostor by its text, so the CLI replaces control and bidirectional
-formatting characters in every daemon string it prints, including error codes.
+formatting characters in every daemon string it prints as text, including
+error codes, and escapes them as `\u` sequences in its JSON output
+(`stats`, `version -daemon`, `doctor`).
 SSH prompts follow [SSH.MD](SSH.MD#gui-and-local-control-ipc).
 
 Changes to required fields or existing command semantics require a new version.

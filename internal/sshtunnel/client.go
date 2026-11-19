@@ -302,10 +302,11 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 				return nil, fmt.Errorf("unsupported SSH authentication challenge")
 			}
 			// The server chooses the prompt text. Every consumer (terminal,
-			// GUI, embedded host) receives it without control characters.
+			// GUI, embedded host) receives it without control characters and
+			// without trailing line breaks.
 			prompts := make([]string, len(questions))
 			for i, q := range questions {
-				prompts[i] = displaytext.Text(q)
+				prompts[i] = strings.TrimRight(displaytext.Text(q), "\n")
 			}
 			return prompt(ctx, Challenge{Kind: "keyboard_interactive", Prompts: prompts, Echo: echoes})
 		}))

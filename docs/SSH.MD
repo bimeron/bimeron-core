@@ -121,8 +121,8 @@ order:
 An encrypted key causes a **key passphrase** prompt. This is separate from the
 SSH account password. Foreground CLI prompts require an interactive terminal;
 secret input is hidden. Keyboard-interactive prompts are shown without control
-characters, as described for the GUI below. Bimeron does not save passwords, passphrases, or
-keyboard-interactive answers. Authentication can be requested again on a new
+characters, as described for the GUI below. Bimeron does not save passwords,
+passphrases, or keyboard-interactive answers. Authentication can be requested again on a new
 connection. Multiple rejected keys may hit a server's authentication-attempt
 limit; select a specific identity when that happens.
 
@@ -205,9 +205,11 @@ as untrusted plain text. Core cleans them before any consumer sees them:
   bidirectional formatting characters U+061C, U+200E, U+200F, U+202A to
   U+202E and U+2066 to U+2069 become U+FFFD. Invalid UTF-8 becomes U+FFFD as
   well.
+- Trailing line breaks are removed.
 
 The server's name and instruction fields are not shown. Each prompt is limited
-to 256 bytes after cleaning; at most eight prompts are accepted. The GUI sends
+to 256 bytes after cleaning, and a replacement can make a prompt longer than
+the server sent it; at most eight prompts are accepted. The GUI sends
 one answer for each prompt:
 
 ```json

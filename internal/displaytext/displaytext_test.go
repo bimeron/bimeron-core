@@ -1,6 +1,7 @@
 package displaytext
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -74,11 +75,82 @@ func FuzzText(f *testing.F) {
 					t.Fatalf("%s(%q) = %q keeps %U", name, s, out, r)
 				}
 			}
+			if keeps(s, name == "Text") && out != s {
+				t.Fatalf("%s(%q) = %q changes safe text", name, s, out)
+			}
 			if again := clean(out); again != out {
 				t.Fatalf("%s is not idempotent: %q then %q", name, out, again)
 			}
 			if name == "Text" && !strings.Contains(s, "\r") && strings.Count(out, "\n") < strings.Count(s, "\n") {
 				t.Fatalf("Text(%q) = %q drops line feeds", s, out)
+			}
+		}
+	})
+}
+
+func TestEscapeJSON(t *testing.T) {
+	in, err := json.Marshal(map[string]string{"version": "v1\x1b]0;t\x07" + u(0x9b) + "2J" + u(0x7f) + u(0x202E) + u(0x2028) + "Пароль"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := EscapeJSON(in)
+	for _, r := range string(out) {
+		if unsafeRune(r) || r == lineSeparator || r == paragraphSeparator {
+			t.Fatalf("EscapeJSON kept %U: %s", r, out)
+		}
+	}
+	var back, orig map[string]string
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(in, &orig)
+	if back["version"] != orig["version"] {
+		t.Fatalf("EscapeJSON changed the value: %q, want %q", back["version"], orig["version"])
+	}
+	if plain := []byte(`{"version":"v1.2.3"}`); &EscapeJSON(plain)[0] != &plain[0] {
+		t.Fatal("EscapeJSON copied safe JSON")
+	}
+}
+
+// keeps reports whether multiline (Text) or single-line (Line) cleaning must
+// leave s unchanged.
+func keeps(s string, multiline bool) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if (r == '\n' || r == '\t') && multiline {
+			continue
+		}
+		if r == '\n' || r == '\t' || r == '\r' || r == lineSeparator || r == paragraphSeparator || unsafeRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func FuzzEscapeJSON(f *testing.F) {
+	for _, seed := range []string{"v1.2.3", "\x1b[2J", u(0x9b), u(0x202E) + "x", "\xff", u(0x2029)} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		in, err := json.Marshal(s)
+		if err != nil {
+			t.Skip()
+		}
+		out := EscapeJSON(in)
+		var back string
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatalf("EscapeJSON(%s) = %s: %v", in, out, err)
+		}
+		var orig string
+		json.Unmarshal(in, &orig)
+		if back != orig {
+			t.Fatalf("EscapeJSON(%s) decodes to %q, want %q", in, back, orig)
+		}
+		for _, r := range string(out) {
+			if unsafeRune(r) || r == lineSeparator || r == paragraphSeparator {
+				t.Fatalf("EscapeJSON(%s) = %s keeps %U", in, out, r)
 			}
 		}
 	})

@@ -17,6 +17,17 @@ import (
 // sends no control characters, but the CLI does not rely on that.
 func shown[T ~string](s T) string { return displaytext.Line(string(s)) }
 
+// writeDaemonJSON writes v, which holds daemon-supplied text, as one JSON line
+// with control and bidirectional formatting characters escaped.
+func writeDaemonJSON(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(displaytext.EscapeJSON(b), '\n'))
+	return err
+}
+
 func controlCommand(command string, args []string) error {
 	r := control.Request{Command: command}
 	if command == "reconnect" {
@@ -104,7 +115,7 @@ func statsControl(args []string) error {
 	if a.Stats == nil {
 		return fmt.Errorf("daemon did not report statistics")
 	}
-	return json.NewEncoder(os.Stdout).Encode(a.Stats)
+	return writeDaemonJSON(os.Stdout, a.Stats)
 }
 
 func capabilitiesControl(args []string) error {
