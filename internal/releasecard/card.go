@@ -12,13 +12,14 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
 	"time"
+
+	"bimeron/release"
 )
 
 // Transport exchanges one raw APDU with a card.
@@ -309,16 +310,34 @@ func (c *Card) readInfo() (*Info, error) {
 		}
 	}
 	if ki, err := c.getData(0x00DE); err == nil {
-		for j := 0; j+1 < len(ki); j += 2 {
-			if ki[j] == 0x01 {
-				i.SigKeyStatus, i.SigKeyStatusKnown = ki[j+1], true
-			}
-		}
+		i.SigKeyStatus, i.SigKeyStatusKnown = parseKeyInformation(ki)
 	}
 	if uif, err := c.getData(0x00D6); err == nil && len(uif) >= 1 {
 		i.SigTouch, i.SigTouchKnown = TouchPolicy(uif[0]), true
 	}
 	return i, nil
+}
+
+// parseKeyInformation returns the signature key status from the key
+// information DO: (key reference, status) pairs, optionally inside a DE tag.
+// Anything malformed reports the status as unknown, so callers fall back to
+// READ PUBLIC KEY.
+func parseKeyInformation(b []byte) (byte, bool) {
+	if len(b) >= 2 && b[0] == 0xDE {
+		if int(b[1]) != len(b)-2 {
+			return 0, false
+		}
+		b = b[2:]
+	}
+	if len(b) == 0 || len(b)%2 != 0 {
+		return 0, false
+	}
+	for j := 0; j < len(b); j += 2 {
+		if b[j] == 0x01 {
+			return b[j+1], true
+		}
+	}
+	return 0, false
 }
 
 // bcdSerial decodes the card serial; YubiKeys store their decimal serial as BCD.
@@ -589,10 +608,7 @@ func CheckSize(n int) error {
 
 // KeyID is the release manifest key identifier: the first eight bytes of the
 // SHA-256 of the public key, as 16 lowercase hex digits.
-func KeyID(pub ed25519.PublicKey) string {
-	sum := sha256.Sum256(pub)
-	return hex.EncodeToString(sum[:8])
-}
+func KeyID(pub ed25519.PublicKey) string { return release.KeyID(pub) }
 
 // CardRef names a reader holding an OpenPGP card.
 type CardRef struct {

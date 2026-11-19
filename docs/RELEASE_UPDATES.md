@@ -69,8 +69,10 @@ GitHub rulesets.
 
 Signing and `-verify` (also used by the prepared-release publisher) accept a key
 only for its release range, so a release that Desktop or Core repair would
-reject cannot be published: `7370a2d8cf890e5e` only for tags up to and including
-`v0.4.0-beta.2`, the hardware keys only for later tags. A hardware-signed
+reject cannot be published: `7370a2d8cf890e5e` only to re-verify or backfill
+the published releases up to `v0.4.0-beta.2`, the hardware keys for every new
+tag, which must sort after `v0.4.0-beta.2`. The release scripts refuse to run
+while the test-only `BIMERON_RELEASE_TEST_UNPINNED_KEY` is set. A hardware-signed
 manifest must set `gui_min` to at least `0.3.1`.
 
 To rotate, first release a GUI trusting both keys, then switch the signer, then

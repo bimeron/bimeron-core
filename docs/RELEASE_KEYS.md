@@ -20,9 +20,10 @@ repair acquisition (`cmd/bimeron/repair_acquire.go`) fetches only the broker's
 own exact release, so a Core built from this source pins only keys A and B.
 
 The publisher enforces these ranges (`release.SigningKeyUse`): signing and
-`-verify` accept `7370a2d8cf890e5e` only for tags up to and including
-`v0.4.0-beta.2` (including backfills of published tags), accept keys A and B
-only for later tags, and refuse a hardware-signed manifest whose `gui_min` is
+`-verify` accept `7370a2d8cf890e5e` only for the published releases up to
+`v0.4.0-beta.2` listed in `release.LegacyReleaseTags` (re-verification and
+backfill), require every new tag to sort after `v0.4.0-beta.2`, accept keys A
+and B only for those later tags, and refuse a hardware-signed manifest whose `gui_min` is
 below `0.3.1`. A test keeps the publisher's hardware key list equal to Core's
 repair trust.
 

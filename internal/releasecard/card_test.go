@@ -34,6 +34,7 @@ type fakeCard struct {
 	chained    int
 	extended   int
 	noKeyInfo  bool
+	wrapDE     bool
 	keyStatus  byte
 }
 
@@ -155,7 +156,11 @@ func (f *fakeCard) Transmit(cmd []byte) ([]byte, error) {
 			if f.noKeyInfo {
 				return sw(nil, 0x6A88), nil
 			}
-			return sw([]byte{0x01, f.keyStatus, 0x02, 0x00, 0x03, 0x00}, 0x9000), nil
+			ki := []byte{0x01, f.keyStatus, 0x02, 0x00, 0x03, 0x00}
+			if f.wrapDE {
+				ki = tlvBytes(0xDE, ki)
+			}
+			return sw(ki, 0x9000), nil
 		}
 		return sw(nil, 0x6A88), nil
 	case 0x20:
@@ -422,4 +427,36 @@ type endlessCard struct{}
 
 func (endlessCard) Transmit([]byte) ([]byte, error) {
 	return sw(make([]byte, 256), 0x6100), nil
+}
+
+func TestParseKeyInformation(t *testing.T) {
+	for _, tc := range []struct {
+		in     []byte
+		status byte
+		known  bool
+	}{
+		{[]byte{0x01, 0x01, 0x02, 0x00, 0x03, 0x00}, 1, true},
+		{[]byte{0xDE, 0x06, 0x01, 0x02, 0x02, 0x00, 0x03, 0x00}, 2, true},
+		{[]byte{0x02, 0x00, 0x01, 0x00}, 0, true},
+		{[]byte{0xDE, 0x07, 0x01, 0x01}, 0, false},
+		{[]byte{0x01, 0x01, 0x02}, 0, false},
+		{[]byte{0x02, 0x01, 0x03, 0x01}, 0, false},
+		{nil, 0, false},
+	} {
+		if s, k := parseKeyInformation(tc.in); s != tc.status || k != tc.known {
+			t.Fatalf("%x: got %d,%v want %d,%v", tc.in, s, k, tc.status, tc.known)
+		}
+	}
+	// A wrapped DE response that reports a key blocks generation.
+	f := newFakeCard(3070)
+	f.wrapDE = true
+	_, f.priv, _ = ed25519.GenerateKey(rand.Reader)
+	f.keyStatus = 0x01
+	c, err := NewCard(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Info().SigSlotEmpty() || !c.Info().SigKeyStatusKnown {
+		t.Fatal("wrapped key information ignored")
+	}
 }

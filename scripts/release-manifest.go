@@ -93,10 +93,6 @@ func publicKey() (ed25519.PublicKey, error) {
 	}
 	return ed25519.PublicKey(raw), nil
 }
-func keyID(pub ed25519.PublicKey) string {
-	sum := sha256.Sum256(pub)
-	return hex.EncodeToString(sum[:8])
-}
 
 func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	if !tagPattern.MatchString(tag) {
@@ -134,7 +130,7 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 		return err
 	}
 	if use == release.KeyUnpinned && os.Getenv("BIMERON_RELEASE_TEST_UNPINNED_KEY") != "1" {
-		return fmt.Errorf("key %s is not a release signing key (docs/RELEASE_KEYS.md)", keyID(pub))
+		return fmt.Errorf("key %s is not a release signing key (docs/RELEASE_KEYS.md)", release.KeyID(pub))
 	}
 	var c compatibility
 	data, err := os.ReadFile(compatPath)
@@ -162,7 +158,7 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	if strings.Contains(tag, "-") {
 		channel = "beta"
 	}
-	m := manifest{Schema: 1, Tag: tag, CoreVersion: strings.TrimPrefix(tag, "v"), Channel: channel, KeyID: keyID(pub), Compatibility: c}
+	m := manifest{Schema: 1, Tag: tag, CoreVersion: strings.TrimPrefix(tag, "v"), Channel: channel, KeyID: release.KeyID(pub), Compatibility: c}
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			name := fmt.Sprintf("bimeron-%s-%s-%s.zip", tag, platform, arch)

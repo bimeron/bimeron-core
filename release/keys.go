@@ -21,11 +21,20 @@ var HardwareReleaseKeys = []string{
 }
 
 // LegacyReleaseKey is the retiring software key 7370a2d8cf890e5e. It may sign
-// or verify only tags up to and including LastLegacyTag.
+// or verify only LegacyReleaseTags.
 const LegacyReleaseKey = "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
 
-// LastLegacyTag is the last release signed by LegacyReleaseKey.
+// LastLegacyTag is the last release signed by LegacyReleaseKey. Every new tag
+// must sort after it and is signed with a hardware key.
 const LastLegacyTag = "v0.4.0-beta.2"
+
+// LegacyReleaseTags are the published releases (and the frozen v0.4.0-beta.2
+// candidate) whose manifests LegacyReleaseKey signed or may backfill. The key
+// never signs any other tag, so no new release can depend on it.
+var LegacyReleaseTags = []string{
+	"v0.1.0-beta.1", "v0.1.0-beta.2", "v0.1.0-beta.3", "v0.1.0-beta.4", "v0.1.0-beta.5",
+	"v0.2.0-beta.1", "v0.3.0-beta.2", "v0.4.0-beta.1", LastLegacyTag,
+}
 
 // HardwareGUIMin is the oldest Desktop version that pins the hardware keys.
 // Older Desktop versions cannot verify hardware-signed releases, so their
@@ -80,37 +89,49 @@ const (
 	KeyUnpinned
 )
 
-// SigningKeyUse decides whether pub may sign or verify the manifest for tag:
-// the legacy key only up to LastLegacyTag, the hardware keys only after it. A
-// key no verifier pins is reported as KeyUnpinned for the caller to refuse
-// outside tests.
+// SigningKeyUse decides whether pub may sign or verify the manifest for tag.
+// The legacy key covers only LegacyReleaseTags; every other tag must sort after
+// LastLegacyTag and uses a hardware key. A key no verifier pins is reported as
+// KeyUnpinned for the caller to refuse outside tests.
 func SigningKeyUse(tag string, pub []byte) (KeyUse, error) {
 	after, err := tagAfter(tag, LastLegacyTag)
 	if err != nil {
 		return KeyRefused, err
 	}
+	listed := false
+	for _, t := range LegacyReleaseTags {
+		listed = listed || t == tag
+	}
+	if !listed && !after {
+		return KeyRefused, fmt.Errorf("tag %s is not a published legacy release and does not sort after %s; new releases need a later tag and a hardware key (docs/RELEASE_KEYS.md)", tag, LastLegacyTag)
+	}
 	legacy := bytes.Equal(pub, decodeKey(LegacyReleaseKey))
 	hardware := IsHardwareReleaseKey(pub)
 	switch {
-	case legacy && !after:
+	case legacy && listed:
 		return KeyLegacy, nil
 	case hardware && after:
 		return KeyHardware, nil
 	case legacy:
-		return KeyRefused, fmt.Errorf("key %s is retired: it may sign only releases up to %s, not %s; use a hardware key (docs/RELEASE_KEYS.md)", KeyID(pub), LastLegacyTag, tag)
+		return KeyRefused, fmt.Errorf("key %s is retired: it may only verify or backfill published releases up to %s, not %s; use a hardware key (docs/RELEASE_KEYS.md)", KeyID(pub), LastLegacyTag, tag)
 	case hardware:
 		return KeyRefused, fmt.Errorf("hardware key %s may sign only releases after %s, not %s", KeyID(pub), LastLegacyTag, tag)
 	}
 	return KeyUnpinned, nil
 }
 
-var semverPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?$`)
+// SemVer 2.0 without build metadata: no leading zeros in numeric identifiers
+// and no empty prerelease identifiers.
+var semverPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$`)
 
 // CompareVersions orders SemVer 2.0 versions with an optional "v" prefix.
 func CompareVersions(a, b string) (int, error) {
 	ma, mb := semverPattern.FindStringSubmatch(a), semverPattern.FindStringSubmatch(b)
-	if ma == nil || mb == nil {
-		return 0, fmt.Errorf("invalid version %q or %q", a, b)
+	if ma == nil {
+		return 0, fmt.Errorf("invalid version %q", a)
+	}
+	if mb == nil {
+		return 0, fmt.Errorf("invalid version %q", b)
 	}
 	for i := 1; i <= 3; i++ {
 		if c := compareNumeric(ma[i], mb[i]); c != 0 {

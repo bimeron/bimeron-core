@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The test-only escape hatch lets release-manifest.go accept a key no verifier
+# pins; it must never reach a real release.
+if [[ -n "${BIMERON_RELEASE_TEST_UNPINNED_KEY:-}" ]]; then
+  echo 'unset BIMERON_RELEASE_TEST_UNPINNED_KEY: it is for tests only' >&2
+  exit 2
+fi
+
 if [[ $# -lt 2 || $# -gt 3 || ( $# -eq 3 && "$3" != "--publish" ) ]]; then
   echo 'usage: scripts/publish-prepared-release.sh <tag> <release-dir> [--publish]' >&2
   exit 2

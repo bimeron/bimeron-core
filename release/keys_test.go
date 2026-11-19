@@ -66,6 +66,14 @@ func TestSigningKeyUse(t *testing.T) {
 		{"v0.4.0-beta.2", legacy, KeyLegacy},
 		{"v0.4.0-beta.3", legacy, KeyRefused},
 		{"v0.4.0", legacy, KeyRefused},
+		// New tags sorting at or below the last legacy release are refused for
+		// every key, so they cannot be legacy-signed and then fail repair.
+		{"v0.2.0", legacy, KeyRefused},
+		{"v0.3.0-beta.1", legacy, KeyRefused},
+		{"v0.4.0-alpha.1", legacy, KeyRefused},
+		{"v0.4.0-beta", a, KeyRefused},
+		{"v0.4.0-RC.1", a, KeyRefused},
+		{"v0.3.1", other, KeyRefused},
 		{"v0.4.0-beta.3", a, KeyHardware},
 		{"v0.4.0", b, KeyHardware},
 		{"v0.4.0-beta.2", a, KeyRefused},
@@ -80,5 +88,29 @@ func TestSigningKeyUse(t *testing.T) {
 	}
 	if _, err := SigningKeyUse("latest", a); err == nil {
 		t.Fatal("accepted an invalid tag")
+	}
+	for _, tag := range LegacyReleaseTags {
+		if c, err := CompareVersions(tag, LastLegacyTag); err != nil || c > 0 {
+			t.Fatalf("legacy tag %s sorts after %s", tag, LastLegacyTag)
+		}
+	}
+	if LegacyReleaseTags[len(LegacyReleaseTags)-1] != LastLegacyTag {
+		t.Fatal("LastLegacyTag must be the last legacy release")
+	}
+}
+
+func TestStrictVersionSyntax(t *testing.T) {
+	for _, v := range []string{"v0.4.0-beta.02", "v0.04.0", "v00.4.0", "v0.4.00", "v0.4.0-beta..3", "v0.4.0-", "v0.4.0-beta.3.", "v0.4.0-.beta", "v0.4.0+build", "v0.4.0-beta_3"} {
+		if _, err := CompareVersions(v, "v0.4.0"); err == nil {
+			t.Fatalf("accepted %s", v)
+		}
+		if _, err := SigningKeyUse(v, DecodedHardwareReleaseKeys()[0]); err == nil {
+			t.Fatalf("signing policy accepted %s", v)
+		}
+	}
+	for _, v := range []string{"v0.4.0-0", "v1.0.0-0a", "v1.0.0-x-y.7", "1.10.0-rc.1"} {
+		if _, err := CompareVersions(v, "v0.4.0"); err != nil {
+			t.Fatalf("rejected valid %s: %v", v, err)
+		}
 	}
 }

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The test-only escape hatch lets release-manifest.go accept a key no verifier
+# pins; it must never reach a real release.
+if [[ -n "${BIMERON_RELEASE_TEST_UNPINNED_KEY:-}" ]]; then
+  echo 'unset BIMERON_RELEASE_TEST_UNPINNED_KEY: it is for tests only' >&2
+  exit 2
+fi
+
 if [[ $# -lt 1 || $# -gt 2 || ( $# -eq 2 && "$2" != "--upload" ) ]]; then
   echo 'usage: scripts/backfill-update-manifest.sh <tag> [--upload]' >&2
   exit 2
