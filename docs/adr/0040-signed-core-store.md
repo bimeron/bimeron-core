@@ -1,4 +1,4 @@
-# ADR 0039: Signed versioned core store and anti-rollback floor
+# ADR 0040: Signed versioned core store and anti-rollback floor
 
 Status: proposed, November 19, 2026. All design questions (Q1–Q12) are
 decided. The record becomes accepted when it is merged. Not accepted yet. This

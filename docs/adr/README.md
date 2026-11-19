@@ -57,4 +57,4 @@ number.
 | 0037 | [Opt-in accept-new SSH host keys](0037-ssh-accept-new-host-keys.md) |
 | 0038 | [Core icon and Windows resources](0038-core-icon-and-windows-resources.md) |
 | 0039 | [Reconnect cycles and a held kill switch](0039-reconnect-cycles-and-held-kill-switch.md) |
-| 0039 | [Signed versioned core store and anti-rollback floor](0039-signed-core-store.md) |
+| 0040 | [Signed versioned core store and anti-rollback floor](0040-signed-core-store.md) |
