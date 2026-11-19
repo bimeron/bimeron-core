@@ -1,4 +1,4 @@
-# ADR 0041: WireGuard and AmneziaWG client upstream
+# ADR 0043: WireGuard and AmneziaWG client upstream
 
 Status: accepted, November 20, 2026. Tracks issue #202.
 

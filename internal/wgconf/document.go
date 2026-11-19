@@ -282,7 +282,7 @@ func (d *Document) SetField(sectionName, key, value string) error {
 	for i, s := range d.sections {
 		if s.known && s.name == sectionName {
 			if target >= 0 {
-				return problem.New("section_ambiguous", "duplicate WireGuard section").In(sectionName).InDocument(DocumentName)
+				return problem.New("section_duplicate", "duplicate WireGuard section").In(sectionName).InDocument(DocumentName)
 			}
 			target = i
 		}

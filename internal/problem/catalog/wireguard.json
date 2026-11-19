@@ -31,6 +31,11 @@
       "en": "This text mixes Bimeron profile sections with WireGuard sections. Keep the WireGuard configuration in a separate file.",
       "ru": "В тексте смешаны разделы профиля Bimeron и WireGuard. Храните конфигурацию WireGuard в отдельном файле."
     },
+    "wireguard_dns_invalid": {
+      "kind": "config",
+      "en": "WireGuard DNS must list IP addresses separated by commas. Search domains are not supported.",
+      "ru": "В DNS для WireGuard укажите IP-адреса через запятую. Домены поиска не поддерживаются."
+    },
     "wireguard_peer_count": {
       "kind": "config",
       "en": "A WireGuard profile must contain exactly one [Peer] section (found {count}).",

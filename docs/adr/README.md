@@ -58,4 +58,4 @@ number.
 | 0038 | [Core icon and Windows resources](0038-core-icon-and-windows-resources.md) |
 | 0039 | [Reconnect cycles and a held kill switch](0039-reconnect-cycles-and-held-kill-switch.md) |
 | 0040 | [Signed versioned core store and anti-rollback floor](0040-signed-core-store.md) |
-| 0041 | [WireGuard and AmneziaWG client upstream](0041-wireguard-amneziawg-client.md) |
+| 0043 | [WireGuard and AmneziaWG client upstream](0043-wireguard-amneziawg-client.md) |

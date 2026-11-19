@@ -80,9 +80,9 @@ except for required keys.
 
 Value problems: `wireguard_key_invalid` (keys are 32 bytes in standard
 base64), `wireguard_address_invalid`, `wireguard_allowed_ips_invalid`,
-`wireguard_endpoint_invalid`, and shared codes such as `number_invalid`,
-`number_out_of_range`, `port_invalid`, `host_invalid`, `dns_invalid` and
-`dns_too_many`.
+`wireguard_endpoint_invalid`, `wireguard_dns_invalid` (search domains or
+non-IP entries), and shared codes such as `number_invalid`,
+`number_out_of_range`, `port_invalid`, `host_invalid` and `dns_too_many`.
 
 These keys and layouts are refused with a problem:
 
@@ -309,7 +309,7 @@ Apple `RLCapabilities()` results currently omit the object, although their
 
 ## Runtime
 
-Design record: [ADR 0041](adr/0041-wireguard-amneziawg-client.md).
+Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
 
 - Engine: `github.com/amnezia-vpn/amneziawg-go/v3` `v3.1.20261116` (MIT) with
   its gVisor netstack. Plain WireGuard runs on the same engine without
@@ -415,7 +415,7 @@ comparison: the WireGuard rows include two userspace TCP stacks, which a
 real deployment also has (Bimeron's TUN stack plus the tunnel netstack).
 Threshold for regressions: Bimeron within 20% of native amneziawg-go
 throughput on the same run. If a live comparison with a kernel-level
-WireGuard client shows a larger gap, it is tracked separately (ADR 0041).
+WireGuard client shows a larger gap, it is tracked separately (ADR 0043).
 
 Run:
 

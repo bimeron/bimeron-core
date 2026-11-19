@@ -121,7 +121,8 @@ func (c *File) WireGuardDNS() []string {
 	}
 	var out []string
 	for _, a := range c.profile.WireGuard.DNS {
-		if a.Is4() && len(out) < 4 && !slices.Contains(out, a.String()) {
+		// The same rule as [Interface] DNS: unicast IPv4 resolvers only.
+		if a.Is4() && a.IsGlobalUnicast() && len(out) < 4 && !slices.Contains(out, a.String()) {
 			out = append(out, a.String())
 		}
 	}

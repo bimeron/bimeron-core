@@ -370,7 +370,7 @@ func (c *Config) set(section, key, value string) error {
 		for _, item := range listItems(value) {
 			a, err := netip.ParseAddr(item)
 			if err != nil || a.Zone() != "" || a.Is4In6() || !a.IsValid() || a.IsUnspecified() {
-				return problem.New("dns_invalid", "WireGuard DNS must list IP addresses; search domains are not supported")
+				return problem.New("wireguard_dns_invalid", "WireGuard DNS must list IP addresses; search domains are not supported")
 			}
 			c.DNS = append(c.DNS, a)
 		}

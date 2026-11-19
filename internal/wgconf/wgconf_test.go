@@ -144,7 +144,7 @@ func TestRejections(t *testing.T) {
 		replace(":51820", ":0"):                                                                   "port_invalid",
 		replace("Address = 10.8.0.2/32, fd00::2/128", "Address = nope"):                           "wireguard_address_invalid",
 		replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 300.0.0.0/8"):                       "wireguard_allowed_ips_invalid",
-		replace("DNS = 10.8.0.1, 1.1.1.1", "DNS = 10.8.0.1, corp.example"):                        "dns_invalid",
+		replace("DNS = 10.8.0.1, 1.1.1.1", "DNS = 10.8.0.1, corp.example"):                        "wireguard_dns_invalid",
 		replace("PrivateKey = "+testKey(1), "PrivateKey = short"):                                 "wireguard_key_invalid",
 		replace("PrivateKey = "+testKey(1)+"\n", ""):                                              "value_required",
 		replace("PublicKey = "+testKey(2), "PublicKey = "+testKey(2)+"\nPublicKey = "+testKey(2)): "option_duplicate",
