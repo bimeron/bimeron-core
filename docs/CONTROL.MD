@@ -117,7 +117,7 @@ Object owners set by Core:
 | `\\.\pipe\Bimeron.Core.Readiness` | BimeronCore service (LocalSystem) | `S-1-5-18` (SYSTEM) |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | Elevated console daemon of the user | `S-1-5-32-544` (Administrators) |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | Elevated foreground owner of the user | `S-1-5-32-544` (Administrators) |
-| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | No explicit owner (the elevated token default, normally Administrators) |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | `S-1-5-32-544` (Administrators) |
 | `/run/bimeron/control.sock` (Linux), `/var/run/bimeron/control.sock` (macOS) | Root daemon or service | Socket file owned by the control owner UID or root; listener credentials are root |
 | `/run/bimeron-repair/<nonce>.sock` | Root repair broker | Socket file owned by the caller UID; listener credentials are root |
 
@@ -138,14 +138,18 @@ FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`, and without
 | Endpoint | DACL (protected) |
 |---|---|
 | `\\.\pipe\Bimeron.Core.Service` | SYSTEM: full; control owner: `0x0012019B` |
-| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: full |
+| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: `0x0012019B` |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4` |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4`; medium no-write-up label |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | SYSTEM: full; Administrators: full; caller: `0x0012019B` |
 
 The console daemon and the IKEv2 foreground owner run elevated as the user, so
 the user and Administrators entries together give them the rights to serve
 further instances. Non-elevated processes of the user hold Administrators only
-as a deny-only group and cannot serve the pipe.
+as a deny-only group and cannot serve the pipe. Only SYSTEM serves the
+readiness pipe; administrators can connect to it but cannot add instances.
+The repair broker runs elevated and serves its pipe through the
+Administrators entry; the caller that launched it can only connect.
 
 ### Windows service pipe
 
