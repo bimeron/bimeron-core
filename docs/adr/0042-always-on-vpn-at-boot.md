@@ -1,8 +1,7 @@
 # ADR 0042: Always-on VPN at boot
 
-Status: proposed, November 19, 2026. All design questions (Q1–Q6) were decided
-by the user on November 20, 2026 (see Decisions). The record becomes accepted
-when it is merged. Not accepted yet. This record authorizes no implementation.
+Status: accepted on merge. The user decided all design questions (Q1–Q6)
+on November 20, 2026 (see Decisions). This record authorizes no implementation.
 
 Core v0.4.0-beta.3 and Desktop 0.3.2 ship first. Implementation of VPN
 protection across reboot is scheduled for the following release.
@@ -21,8 +20,7 @@ persistent sessions:
 It also amends the CONTROL.MD statement that a maintenance seal releases
 protection, and parts of [ADR 0040](0040-signed-core-store.md) listed under
 Interactions. It builds on the service update hold of
-[ADR 0041](0041-kill-switch-across-service-updates.md), which is recorded
-separately and must land first or together with this record. It takes over
+[ADR 0041](0041-kill-switch-across-service-updates.md). It takes over
 both items that ADR 0040 lists under "Related decisions recorded separately":
 always-on VPN at boot and the service reading of profile files.
 
