@@ -63,7 +63,8 @@ File = test.key
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
 `ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
-`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key. Relative paths are resolved against the `.conf` directory,
+`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key,
+or WireGuard text (see below). Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
@@ -77,13 +78,17 @@ for the rules that apply to every path in a profile.
 File = home.wg.conf
 ```
 
-When the file holds wg-quick or AmneziaWG text (an `[Interface]` and one
-`[Peer]` section), Core reads it as a WireGuard profile and never rewrites it.
-The same options may instead be written directly in `[AccessKey]` with
-`Type = wireguard`. `Address`, `DNS` and `MTU` in that text describe the
-tunnel, not the Bimeron TUN. WireGuard `DNS` is used only when
-`[Interface] DNS` is not set. See [WIREGUARD.MD](WIREGUARD.MD) for accepted
-keys, AmneziaWG versions, links and the desktop bridge.
+When the file holds wg-quick or AmneziaWG text (a `[Peer]` section or an
+`[Interface]` `PrivateKey`, and no Bimeron section), Core reads it as a
+WireGuard profile with exactly one `[Peer]`. The text is used as written,
+including whitespace, and Core never rewrites it. The same options may
+instead be written directly in `[AccessKey]` with `Type = wireguard`; this is
+the only form for in-memory profiles. `Address`, `DNS` and `MTU` in that text
+describe the tunnel, not the Bimeron TUN. WireGuard `DNS` is used only when
+`[Interface] DNS` is not set. `Mode = proxy` carries TCP only.
+`[Routing] AllowedIPsMode` controls how AllowedIPs combines with rules. See
+[WIREGUARD.MD](WIREGUARD.MD) for accepted keys, AmneziaWG versions, links and
+the desktop bridge.
 
 ### Inline static key
 

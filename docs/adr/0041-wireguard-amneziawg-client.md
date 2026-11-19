@@ -46,9 +46,9 @@ and the AmneziaVPN client is GPL-3.0. Bimeron must not ship GPL code.
    control applies desktop interface binding, Android protect or the Apple
    host network, so tunnel datagrams never loop into the TUN. The kill switch
    already exempts the core's own sockets. Datagrams from other sources are
-   dropped. The endpoint name is resolved on the outbound path (bootstrap
-   DNS) for every session generation, so a reconnect after a network change
-   creates a new device and resolves the name again.
+   dropped. The endpoint name is resolved for every session generation (in
+   VPN mode on the outbound path with bootstrap DNS), so a reconnect after a
+   network change creates a new device and resolves the name again.
 5. **Connected status.** A session reports connected only after a completed
    handshake (20-second bound). In VPN mode a DNS check through the scope
    follows (a public HTTPS target may be outside AllowedIPs), and health

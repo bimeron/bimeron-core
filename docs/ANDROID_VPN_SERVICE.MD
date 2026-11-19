@@ -73,6 +73,13 @@ always-on/lockdown policy. Android application split routing, if needed, is
 configured through `VpnService.Builder`; `Capabilities()` does not yet
 advertise it. A core kill switch is not implemented on Android.
 
+Experimental WireGuard and AmneziaWG profiles use explicit
+`Type = wireguard` parameters, since `File` is prohibited. The WireGuard UDP
+socket is an outgoing core socket and goes through `Protect` like the others.
+`Capabilities()` lists `wireguard` in `explicit_access` but does not include
+the `wireguard` capability object. WireGuard on Android builds and passes unit
+tests but has not been validated live. See [WIREGUARD.MD](WIREGUARD.MD).
+
 ## Validation
 
 Without an application: `go test ./androidcore ./core`, Go-package

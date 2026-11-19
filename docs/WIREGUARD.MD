@@ -29,11 +29,13 @@ text in one of two ways.
    ```
 
    A relative `File` path is resolved against the profile's directory. Core
-   recognizes the content: wg-quick text becomes a WireGuard profile, and any
-   other content is read as a URI key as before. The size limit is 64 KiB of
-   UTF-8. A BOM and CRLF line endings are accepted and kept. Core never
-   rewrites the file. In-memory profiles (`ParseData`, Android and Apple
-   embedding) cannot read files, so they use the explicit form below.
+   recognizes the content with the same rule as `detect` (see
+   [Desktop document bridge](#desktop-document-bridge)): wg-quick text becomes
+   a WireGuard profile, and any other content is read as a URI key as before.
+   The size limit is 64 KiB of UTF-8. A BOM and CRLF line endings are accepted
+   and kept. Core never rewrites the file. In-memory profiles
+   (`LoadConfigData`, Android and Apple embedding) cannot read files, so they
+   use the explicit form below.
 
 2. Explicit options in `[AccessKey]` (CLI, embedding and editors):
 
@@ -49,7 +51,12 @@ text in one of two ways.
    ```
 
    The option names are the same as in wg-quick text, and `Endpoint` is used
-   instead of `Server`/`Port`. Problems point to the `[AccessKey]` option.
+   instead of `Server`/`Port`. Each option appears once; write lists
+   comma-separated. Problems point to the `[AccessKey]` option and carry no
+   `document` marker. `Server`, `Port`, `Method`, `Password`, `Prefix`,
+   `Username`, `ServerName` and VLESS options other than `PublicKey` fail with
+   `option_not_supported`. WireGuard options without `Type = wireguard` fail
+   with `option_requires_type`.
 
 ## WireGuard text
 
@@ -61,29 +68,40 @@ except for required keys.
 | Section | Key | Notes |
 |---|---|---|
 | Interface | `PrivateKey` | Required. 32 bytes in base64, not all zero. Secret. |
-| Interface | `Address` | Required. A list of IPv4/IPv6 addresses or prefixes; may repeat. These are the tunnel addresses. |
-| Interface | `DNS` | A list of IP addresses (no search domains); may repeat. |
-| Interface | `MTU` | 576–9000. Tunnel MTU; the default is 1420. IPv6 addresses need at least 1280. |
-| Interface | `ListenPort` | 0–65535. The local UDP port. |
+| Interface | `Address` | Required. A list of distinct IPv4/IPv6 addresses or prefixes; may repeat. These are the tunnel addresses. |
+| Interface | `DNS` | Up to 8 IP addresses (no search domains); may repeat. |
+| Interface | `MTU` | 576–9000. Tunnel MTU; the default is 1420. An explicit MTU below 1280 fails when `Address` has an IPv6 address. |
+| Interface | `ListenPort` | 0–65535. The local UDP port; 0 or unset picks a free port. |
 | Peer | `PublicKey` | Required. Not all zero. |
 | Peer | `PresharedKey` | Optional. Secret. |
-| Peer | `Endpoint` | Required. `host:port`; IPv6 goes in brackets. |
-| Peer | `AllowedIPs` | Required. A list of prefixes; may repeat. |
+| Peer | `Endpoint` | Required. `host:port` with port 1–65535; IPv6 goes in brackets. |
+| Peer | `AllowedIPs` | Required. A list of prefixes or bare addresses; may repeat. |
 | Peer | `PersistentKeepalive` | `off`, 0–65535, or an AWG 3 range `lo-hi`. |
 
-These keys are refused with a problem:
+Value problems: `wireguard_key_invalid` (keys are 32 bytes in standard
+base64), `wireguard_address_invalid`, `wireguard_allowed_ips_invalid`,
+`wireguard_endpoint_invalid`, and shared codes such as `number_invalid`,
+`number_out_of_range`, `port_invalid`, `host_invalid`, `dns_invalid` and
+`dns_too_many`.
+
+These keys and layouts are refused with a problem:
 
 - `PreUp`, `PostUp`, `PreDown`, `PostDown`: `wireguard_hook_unsupported`.
 - `Table`, `FwMark`, `SaveConfig`: `option_not_supported`.
 - Any other key, including the AWG 1.5 drafts `J1`–`J3` and `Itime`: `option_unknown`.
 - Sections other than `[Interface]` and `[Peer]`: `section_unknown`.
 - Zero or several `[Peer]` sections: `wireguard_peer_count`.
+- A duplicate `[Interface]`: `section_duplicate`. A missing `[Interface]` or
+  required key: `value_required`.
+- A repeated key other than the list keys `Address`, `DNS` and `AllowedIPs`:
+  `option_duplicate`. A line that is neither a header nor `key = value`:
+  `syntax_invalid`.
 
 ### AmneziaWG options
 
 All AWG options go in `[Interface]`. The protocol is reported as `amneziawg`
-when any AWG option is set. `awg_version` is the oldest version that has all
-the options in use.
+when any AWG option or a `PersistentKeepalive` range is set. `awg_version` is
+the oldest version that has all the options in use.
 
 | Version | Options |
 |---|---|
@@ -98,6 +116,10 @@ plain WireGuard message types. Server-side options (H1–H4, S1–S4,
 `HeaderProtectionKey`, `RandomTrailers`) must match the server. Client-side
 options (`Jc`, `Jmin`, `Jmax`, `I1`–`I5`, timers, `DisableCookies`) need not.
 
+AWG problems: `awg_range_invalid` (a range or `Jmin`/`Jmax` in the wrong
+order), `awg_header_overlap`, `awg_header_protection_requires_padding`
+(`args.min` is 12), `awg_tag_invalid` (I1–I5) and `boolean_invalid`.
+
 ## Mapping to Bimeron settings
 
 - `Address`, `DNS` and `MTU` in the WireGuard text describe the tunnel, not
@@ -105,10 +127,11 @@ options (`Jc`, `Jmin`, `Jmax`, `I1`–`I5`, timers, `DisableCookies`) need not.
 - Bimeron `[Interface] MTU` (default 1420) is the system TUN. WireGuard `MTU`
   (default 1420) is the tunnel. They are independent.
 - DNS: when the profile has no `[Interface] DNS`, Bimeron's resolver uses the
-  WireGuard `DNS` entries, at most four IPv4 addresses in order. IPv6 entries
-  are not used, because Bimeron's resolver forwards to IPv4 servers only. An
-  explicit `[Interface] DNS` wins. With neither, the default is 1.1.1.1. DNS
-  queries are routed like other traffic.
+  WireGuard `DNS` entries: the first four distinct IPv4 addresses, in order.
+  IPv6 entries are not used, because Bimeron's resolver forwards to IPv4
+  servers only. An explicit `[Interface] DNS` wins. With neither, or with
+  only IPv6 entries, the default 1.1.1.1 applies. DNS queries are routed like
+  other traffic, so a resolver outside AllowedIPs follows `AllowedIPsMode`.
 - `Mode = proxy` (SOCKS5, TCP only), `IPv6 = disable` and `KillSwitch` work as
   for other upstreams.
 
@@ -116,7 +139,8 @@ options (`Jc`, `Jmin`, `Jmax`, `I1`–`I5`, timers, `DisableCookies`) need not.
 
 `[Routing] AllowedIPsMode` chooses how AllowedIPs combines with Bimeron rules.
 It is valid only for WireGuard profiles; on other profiles it fails with
-`allowed_ips_mode_requires_wireguard`.
+`allowed_ips_mode_requires_wireguard`. Another value fails with
+`choice_invalid`.
 
 | Value | Behavior |
 |---|---|
@@ -128,39 +152,55 @@ It is valid only for WireGuard profiles; on other profiles it fails with
 These rules always hold:
 
 - Block rules win in `direct`, `block` and `ignore`.
-- Direct rules apply inside AllowedIPs too.
+- In these modes direct rules apply inside AllowedIPs too.
 - When AllowedIPs covers all of IPv4 but not all of IPv6 (`coverage` =
   `ipv4_only`), IPv6 traffic that would go direct only because it is outside
   AllowedIPs is blocked. This applies in `direct` and `only`.
 - With full coverage, `direct`, `block` and `ignore` behave the same.
+- A connection that the scope sends into the tunnel fails when `Address` has
+  no address of its family.
 
 ## Share links
 
-`bimeron wireguard` `import_uri` turns links into wg-quick text.
+`bimeron wireguard` `import_uri` turns links into wg-quick text. A link is
+at most 65,536 bytes (`value_too_long`). Other schemes fail with
+`uri_scheme_invalid`. A converted link that does not validate still returns
+its text; the inspection's `problems` report why.
 
 - `vpn://` (Amnezia): base64url of Qt qCompress output (a 4-byte big-endian
-  length followed by zlib). Uncompressed JSON is also accepted.
+  length followed by zlib). Standard base64 and uncompressed JSON are also
+  accepted. The decoded JSON is at most 1 MiB.
   - Bimeron takes the `amnezia-awg2`, `amnezia-awg` or `amnezia-wireguard`
-    container. `defaultContainer` wins when it is one of them.
+    container, in that order. `defaultContainer` wins when it is one of them.
   - It uses `last_config.config`, fills `$PRIMARY_DNS`/`$SECONDARY_DNS` from
-    `dns1`/`dns2`, and applies `last_config.mtu` when the text has no MTU.
+    `dns1`/`dns2` (IP addresses only; empty entries are dropped), and applies
+    `last_config.mtu` when the text has no MTU. The suggested name is
+    `description`, or `name` when that is empty.
   - Other protocols only: `vpn_uri_container_missing`.
   - Amnezia Premium/Free service keys (`config_version`, `api_config`,
     `auth_data`, `api_key`, `api_endpoint`): `vpn_uri_api_key_unsupported`.
-  - A damaged payload or `format_version` above 1: `vpn_uri_invalid`.
+  - A damaged payload, `format_version` above 1 or any other `$` placeholder
+    left in the text: `vpn_uri_invalid`.
   - This is an independent implementation of the observed format.
 - `wireguard://` and `wg://` (v2rayN/v2rayNG, Hiddify, Throne/NekoRay).
-  - The private key comes from the userinfo or from `privatekey`/`pk`.
+  - The endpoint is the link's `host:port`; a missing host or port fails with
+    `wireguard_endpoint_invalid`. The fragment is the suggested name.
+  - The private key comes from the userinfo or from `privatekey`/`secretkey`/`pk`.
+    A userinfo password fails with `uri_credentials_invalid`.
   - Parameter names are compared in lowercase, ignoring `_` and `-`. Accepted
     aliases: `publickey`/`peerpublickey`/`pub`/`peerpub`/`peerpk`,
     `presharedkey`/`psk`, `address`/`ip`/`localaddress` (Throne's
     `-`-separated lists too), `allowedips` (default `0.0.0.0/0, ::/0`),
     `keepalive`/`persistentkeepalive`/`persistentkeepaliveinterval`, `mtu`,
     `dns`, `enable_amnezia`, and every AWG option name.
-  - Key spaces are restored to `+`, and base64url and hex header-protection
-    keys are converted.
+  - `enable_amnezia=false` together with an AWG option fails with
+    `uri_option_unsupported`. `RandomTrailers` and `DisableCookies` also
+    accept `1`/`0` and `yes`/`no`.
+  - In key parameters, spaces are restored to `+`, and base64url keys and
+    64-digit hex keys are converted to standard base64.
   - A non-zero `reserved` (Cloudflare WARP) fails with
     `wireguard_reserved_unsupported` ([#208](https://github.com/bimeron/bimeron-core/issues/208)).
+    An all-zero `reserved` is ignored.
   - Unknown or duplicate parameters fail with `uri_option_unsupported`.
   - `awg://` is not supported.
 
@@ -171,10 +211,16 @@ These rules always hold:
 
 - Run it with no arguments. Write exactly one UTF-8 JSON object, at most 1 MiB,
   to stdin, then read one JSON object followed by LF from stdout.
-- Protocol and operation failures exit with zero; inspect `problems`.
-- Unknown members, trailing JSON and a version other than `1` are rejected
-  with `invalid_request`.
-- The text limit is 65,536 bytes before and after every operation.
+- A request is `{"version":1,"op":...}` plus the members of its operation.
+  Every response has `"version": 1`.
+- Protocol and operation failures exit with zero. A failed request adds
+  `"error": "request failed"` and the failing problem in `problems`.
+- Unknown members, trailing JSON, a version other than `1`, an unknown `op`
+  and members that do not belong to the operation are rejected with
+  `invalid_request`.
+- The text limit is 65,536 bytes before and after every operation
+  (`file_too_large`). A request that is not valid UTF-8 fails with
+  `invalid_request`.
 - The bridge never touches files, DNS or the network.
 - A response that contains `text` or `fields` carries secrets.
 
@@ -184,29 +230,33 @@ These rules always hold:
 | `detect` | `text` | `format`: `bimeron` or `wireguard`, or problem `document_format_unknown` / `document_format_ambiguous` |
 | `inspect` | `text` | inspection |
 | `edit` | `text`, `operations` | inspection plus `text` |
-| `import_uri` | `uri` | inspection plus `text` and `name`, or only `problems` when the link cannot be converted |
+| `import_uri` | `uri` | inspection plus `text` and `name` (`""` when the link has none), or only `problems` when the link cannot be converted |
 
 Detection treats text as `wireguard` when it has a `[Peer]` section, or a
 `PrivateKey` in `[Interface]`, and no Bimeron-only section (`Profile`,
-`AccessKey`, `Routing`, `Rule`, `GeoData`, `IKEv2`, `ShadowTLS`). Text with only
-Bimeron-only sections is `bimeron`. Text with both kinds is ambiguous, and text
-with neither is unknown.
+`AccessKey`, `Routing`, `Rule`, `GeoData`, `IKEv2`, `ShadowTLS`). Text with a
+Bimeron-only section and neither WireGuard marker is `bimeron`. Text with both
+kinds is ambiguous, and text with neither is unknown. Section names are
+matched case-insensitively.
 
 Inspection members:
 
 - `format`, `protocol` (`wireguard`/`amneziawg`), `awg_version` (`""` or a version).
-- `fields`: a flat object of `"Section/Key"` to the decoded value. Repeated
-  list keys are joined with `", "`.
+- `fields`: a flat object of `"Section/Key"` to the value as written, for
+  recognized keys with a non-empty value. Repeated list keys are joined with
+  `", "`.
 - `fields_error`: set instead of `fields` when the structure is ambiguous: a
   duplicate `[Interface]`, several `[Peer]` sections, a duplicate non-list
   key or a malformed line. Use raw editing then.
 - `secret_fields`: `Interface/PrivateKey`, `Peer/PresharedKey` and
   `Interface/HeaderProtectionKey`.
-- `allowed_ips`: `prefixes`, `ipv4` and `ipv6` (each `full`, `partial` or
-  `none`), and `coverage`. Coverage is `full` when both families are covered,
-  `ipv4_only` when IPv4 is full and IPv6 is not, and `partial` otherwise.
-  Core computes the union, so `0.0.0.0/1` with `128.0.0.0/1` counts as full.
-- `problems`: the full validation result, `[]` when the text is runnable.
+- `allowed_ips`: `prefixes` (valid entries in text order, normalized to their
+  network address), `ipv4` and `ipv6` (each `full`, `partial` or `none`), and
+  `coverage`. Coverage is `full` when both families are covered, `ipv4_only`
+  when IPv4 is full and IPv6 is not, and `partial` otherwise. Core computes
+  the union, so `0.0.0.0/1` with `128.0.0.0/1` counts as full.
+- `problems`: validation problems, `[]` when the text is runnable. Validation
+  stops at the first problem, so the list has at most one element today.
   Inspection returns `fields` even when validation fails.
 
 An `edit` operation is `{"op":"set_field","section":"Interface"|"Peer","key":K,"value":V}`.
@@ -218,9 +268,15 @@ An `edit` operation is `{"op":"set_field","section":"Interface"|"Peer","key":K,"
 - A missing section is created. `[Interface]` always comes before `[Peer]`, and
   keys in a new section follow the order of the operations.
 - `value: ""` removes every line of the key.
-- Keys must use the canonical spelling. Values containing `#`, CR or LF, or
-  with spaces at either end, fail with `value_has_invalid_characters`.
-- A batch holds at most 256 operations; more fail with `invalid_request`.
+- Keys must use the canonical spelling; other keys fail with
+  `option_unknown`, and other sections with `section_unknown`. Values
+  containing `#`, CR or LF, or with spaces at either end, fail with
+  `value_has_invalid_characters`.
+- Editing a key that appears twice outside a list fails with
+  `option_duplicate`; editing a section that appears twice fails with
+  `section_ambiguous`.
+- `value` is required. A batch holds at most 256 operations; more, or an
+  `op` other than `set_field`, fail with `invalid_request`.
 - Operations run in order. Any failure returns the original text and its
   inspection, with `error` and the failing problem.
 - An edit does not validate the result; check `problems` in the response.
@@ -229,9 +285,10 @@ Problems located in WireGuard text carry `"document": "wireguard"`. Their
 `section`, `field` and `line` then refer to that text. When the text was
 read through `[AccessKey] File`, `source` is `File`. A missing or unreadable
 file reports `file_unreadable` (or `file_not_regular`, `file_path_not_local`,
-`file_too_large`) at `AccessKey`/`File` without the `document` marker. Text that mixes WireGuard and Bimeron sections fails with
-`document_format_ambiguous` (`document: "wireguard"`, `source: "File"`)
-instead of being read as a URI key.
+`file_too_large`, `file_not_utf8`) at `AccessKey`/`File` without the
+`document` marker. Text that mixes WireGuard and Bimeron sections fails with
+`document_format_ambiguous` (`document: "wireguard"`, `source: "File"`, no
+section or field) instead of being read as a URI key.
 
 ### Capabilities
 
@@ -243,8 +300,12 @@ instead of being read as a URI key.
  "allowed_ips_modes":["direct","block","ignore","only"],"document_api":1}
 ```
 
-Older daemons omit the object. An older CLI answers `bimeron wireguard` with an
-unknown-command error and a nonzero exit.
+The values are static for the build and the same on every desktop platform.
+`explicit_access` also lists `wireguard`. Older daemons omit the object; treat
+absence as unsupported. An older CLI answers `bimeron wireguard` with an
+unknown-command error and a nonzero exit. The Android `Capabilities()` and
+Apple `RLCapabilities()` results currently omit the object, although their
+`explicit_access` lists `wireguard`.
 
 ## Runtime
 
@@ -257,30 +318,36 @@ Design record: [ADR 0041](adr/0041-wireguard-amneziawg-client.md).
   (desktop interface binding, Android protect, Apple host network), so it
   never loops into Bimeron's TUN. The kill switch already permits the core's
   own sockets. Datagrams from other sources are dropped.
-- The endpoint name is resolved once on the outbound path for each session
-  generation, and status reports that physical UDP endpoint. Every
-  reconnect, including one after a network change, starts a new device and
-  resolves the name again. With a fixed `ListenPort`, the old device is
+- The endpoint name is resolved once for each session generation, preferring
+  IPv4 answers, and status reports that physical UDP endpoint. VPN mode
+  resolves it on the outbound path; SOCKS5 mode uses the system resolver. A
+  name that does not resolve fails with the retryable `endpoint_dns_failed`.
+  Every reconnect, including one after a network change, starts a new device
+  and resolves the name again. With a fixed `ListenPort`, the old device is
   closed before the new one opens the port. The socket hook may be
   `Control` or `ControlContext` of the outbound dialer.
 - The session reports connected only after a completed handshake (up to 20
-  seconds). In VPN mode a DNS check through the AllowedIPs scope follows;
-  SOCKS5 mode starts its listener right after the handshake. There is no
-  public HTTPS check, because its target may lie outside AllowedIPs. A
-  missing handshake fails with the retryable `wireguard_handshake_timeout`.
-  In VPN mode, health checks force a new handshake when the last one is
-  older than 150 seconds and wait until the handshake time changes.
+  seconds). Meanwhile the progress event `wireguard_handshake` is reported.
+  In VPN mode a DNS check through the AllowedIPs scope follows
+  (`transport_check`); SOCKS5 mode starts its listener right after the
+  handshake. There is no public HTTPS check, because its target may lie
+  outside AllowedIPs. A missing handshake fails with the retryable
+  `wireguard_handshake_timeout`. In VPN mode, health checks force a new
+  handshake when the last one is older than 150 seconds and wait until the
+  handshake time changes.
 - Start failures: `wireguard_socket_failed` (retryable; the outbound UDP
   socket or a fixed `ListenPort` could not be opened),
-  `wireguard_platform_limit` (packet sizes from S1–S4, `Jmax`, I1–I5 or MTU
-  exceed the engine buffers of this platform; Windows and iOS use about
-  2 KB and 1.7 KB, other platforms 64 KB) and `invalid_wireguard_transport`.
+  `wireguard_platform_limit` (not retryable; packet sizes from S1–S4, `Jmax`,
+  I1–I5 or MTU exceed the engine buffers of this platform; Windows and iOS
+  use 2,016 and 1,700 bytes, other platforms 65,535) and
+  `invalid_wireguard_transport` (not retryable).
 - AllowedIPs scope applies to all upstream traffic, including DNS queries
   and checks. Names given to the SOCKS5 server are resolved through Bimeron's
-  DNS servers (A and AAAA, one bounded exchange per server, then the next
-  server), and those queries follow the scope too. Answers outside the scope
-  or of a family the tunnel has no address for are skipped; the rest are
-  tried in order, IPv4 first.
+  DNS servers (A and AAAA, one 2-second exchange per server, then the next
+  server; NXDOMAIN is final), and those queries follow the scope too. Answers that the scope
+  blocks, and tunnel answers of a family the tunnel has no address for, are
+  skipped; the rest are tried in order, IPv4 first. A truncated UDP answer is
+  retried over TCP.
 - UDP datagrams larger than the tunnel MTU are fragmented by the inner
   stack. Each UDP socket is limited to 64 tunnel destinations and 64 queued
   replies. Closing a generation closes every socket and stream it opened,

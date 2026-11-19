@@ -41,6 +41,11 @@ tests build an independent, unmodified v2.13.0 reference server with `GOWORK=off
 and exercise simultaneous named presets over TCP and fragmented UDP. This
 requires the Go toolchain and the fixture module's pinned dependencies.
 
+The Linux job runs the WireGuard and AmneziaWG packages with the race
+detector against in-process upstream `wireguard-go` and `amneziawg-go`
+reference servers on 127.0.0.1, then fuzzes `FuzzParse`, `FuzzEdit` and
+`FuzzImportURI` for 20 seconds each. See [WIREGUARD.MD](WIREGUARD.MD#tests).
+
 The Linux job builds Caddy v2.11.7 with klzgrad/forwardproxy at
 `c096d6a00cb28e019cc1995b04bdc6a9311d8024` outside the core module. The
 NaiveProxy test verifies authenticated HTTP/2 and HTTP/3 CONNECT, padded large payloads,

@@ -57,7 +57,7 @@ SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIAT
 | Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
 | MASQUE | HTTP/3 CONNECT and CONNECT-UDP over QUIC | QUIC DATAGRAM; also available through local SOCKS5 |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
-| WireGuard, AmneziaWG 1.0–3.1 (experimental) | Userspace WireGuard over UDP; SOCKS5 mode is TCP only | Yes, in VPN mode |
+| [WireGuard, AmneziaWG 1.0–3.1](docs/WIREGUARD.MD) (experimental) | Userspace WireGuard over UDP; SOCKS5 mode is TCP only | Yes |
 
 Optional [ShadowTLS v3](docs/SHADOWTLS.MD) wraps the encrypted TCP upstreams
 listed in its compatibility matrix. It preserves inner encryption and UDP-over-stream;

@@ -81,7 +81,9 @@ rules are also rejected to prevent bypass.
 Core sockets receive `SO_MARK = 0x524c` and bind to the physical interface,
 allowing ssconf fetching, Outline connections, and `direct` traffic without
 looping back into TUN. Incoming TUN replies support strict `rp_filter`.
-Do not use this mark for other applications' sockets.
+Do not use this mark for other applications' sockets. The WireGuard UDP socket
+is a core socket and gets the same mark; wg-quick `FwMark` and `Table` are
+rejected in WireGuard text.
 
 All local TCP/UDP except loopback and the machine's own addresses enters the
 shared policy handler. Local networks also follow IP/CIDR rules: add their ranges
