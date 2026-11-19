@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/relay"
 	"bimeron/internal/routing"
 	"bimeron/internal/ss2022"
 	"bimeron/internal/streamtransport"
@@ -86,6 +87,8 @@ type Server struct {
 	Packet transport.PacketListener
 	Policy *routing.Policy
 	Stats  *telemetry.Counters
+	// idle and halfIdle override the relay idle limits in tests.
+	idle, halfIdle time.Duration
 }
 
 // Serve owns the listener and closes every client on cancellation. Only loopback
@@ -254,9 +257,20 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	_ = c.SetDeadline(time.Time{})
+	idleLimit, halfIdle := relay.IdleTimeout, relay.HalfClosedIdleTimeout
+	if s.idle > 0 {
+		idleLimit, halfIdle = s.idle, s.halfIdle
+	}
+	idle := relay.Watch(idleLimit, func() { _ = c.Close(); _ = upstream.Close() })
+	defer idle.Stop()
 	done := make(chan error, 1)
-	go func() { _, err := s.Stats.CopyUp(upstream, c); _ = upstream.CloseWrite(); done <- err }()
-	_, err = s.Stats.CopyDown(c, upstream)
+	go func() {
+		_, err := s.Stats.CopyUp(idle.Writer(upstream), c)
+		_ = upstream.CloseWrite()
+		idle.SetLimit(halfIdle)
+		done <- err
+	}()
+	_, err = s.Stats.CopyDown(idle.Writer(c), upstream)
 	if tcp, ok := c.(*net.TCPConn); ok {
 		_ = tcp.CloseWrite()
 	}

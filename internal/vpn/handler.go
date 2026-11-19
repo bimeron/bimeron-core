@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/relay"
 	"bimeron/internal/routing"
 	"bimeron/internal/telemetry"
 
@@ -37,6 +38,8 @@ type Handler struct {
 	closed bool
 	wg     sync.WaitGroup
 	slots  chan struct{}
+	// idle and halfIdle override the relay idle limits in tests.
+	idle, halfIdle time.Duration
 }
 
 func NewHandler(ctx context.Context) *Handler {
@@ -123,9 +126,20 @@ func (h *Handler) HandleTCP(c adapter.TCPConn) {
 		defer upstream.Close()
 		stop := context.AfterFunc(h.ctx, func() { _ = upstream.Close() })
 		defer stop()
+		idleLimit, halfIdle := relay.IdleTimeout, relay.HalfClosedIdleTimeout
+		if h.idle > 0 {
+			idleLimit, halfIdle = h.idle, h.halfIdle
+		}
+		idle := relay.Watch(idleLimit, func() { _ = c.Close(); _ = upstream.Close() })
+		defer idle.Stop()
 		done := make(chan struct{})
-		go func() { _, _ = h.Stats.CopyUp(upstream, c); _ = upstream.CloseWrite(); close(done) }()
-		_, _ = h.Stats.CopyDown(c, upstream)
+		go func() {
+			_, _ = h.Stats.CopyUp(idle.Writer(upstream), c)
+			_ = upstream.CloseWrite()
+			idle.SetLimit(halfIdle)
+			close(done)
+		}()
+		_, _ = h.Stats.CopyDown(idle.Writer(c), upstream)
 		// Allow a bounded half-close, then release both sides. Never strand a goroutine.
 		if half, ok := c.(interface{ CloseWrite() error }); ok {
 			_ = half.CloseWrite()

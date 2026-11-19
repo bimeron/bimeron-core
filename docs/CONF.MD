@@ -662,6 +662,13 @@ This section is optional; missing options receive defaults.
 
 Values are validated even when unused in the selected mode.
 
+Relayed TCP connections, in both `vpn` and `proxy` mode, are closed after 10
+minutes without data in either direction, or after 1 minute without data once
+one side has finished sending. This releases connections whose peer stopped
+responding. Applications that keep long idle connections, such as SSH
+sessions, should enable keepalives (for example `ServerAliveInterval`). UDP
+flows are closed after 60 seconds without data.
+
 System VPN DNS always goes through the selected upstream transport, regardless of `Default` and rules.
 
 Each query starts with the first server. A network error, timeout (2 seconds per
