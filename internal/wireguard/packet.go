@@ -99,6 +99,7 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	if s := p.direct[v6]; s != nil {
 		return s, nil
 	}
+	writeDeadline := p.writeDeadline
 	p.mu.Unlock()
 	// Open the socket without holding the lock: the outbound hook may block,
 	// and Close must stay responsive. Bound the hook by the socket setup
@@ -107,7 +108,11 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	if v6 {
 		network, local = "udp6", "[::]:0"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), socketSetupTimeout)
+	setup := socketSetupTimeout
+	if !writeDeadline.IsZero() {
+		setup = min(setup, time.Until(writeDeadline))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), setup)
 	go func() {
 		select {
 		case <-p.closed:
@@ -190,6 +195,12 @@ func (p *scopedPacket) WriteTo(b []byte, addr net.Addr) (int, error) {
 }
 
 func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
+	// Data already received wins over an expired deadline.
+	select {
+	case d := <-p.incoming:
+		return copy(b, d.data), d.from, nil
+	default:
+	}
 	for {
 		p.mu.Lock()
 		deadline, changed := p.readDeadline, p.changed

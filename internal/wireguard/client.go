@@ -240,9 +240,9 @@ func (c *Client) waitHandshakeAfter(ctx context.Context, previous time.Time) err
 // LastHandshake reports the most recent completed handshake.
 func (c *Client) LastHandshake() time.Time { return c.tunnel.LastHandshake() }
 
-// candidateTimeout bounds one address of a name when the caller set no
-// deadline and other addresses remain.
-const candidateTimeout = 5 * time.Second
+// candidateTimeout bounds each address of a destination when the caller
+// set no deadline.
+const candidateTimeout = 10 * time.Second
 
 // probeFreshness is how recent a handshake must be for Probe to pass
 // without a new one.
@@ -328,14 +328,11 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	for i, to := range candidates {
 		// Share the remaining time among the remaining candidates, so a
 		// silent first address cannot use up the whole dial deadline.
-		attempt, cancel := ctx, context.CancelFunc(func() {})
-		if rest := len(candidates) - i; rest > 1 {
-			budget := candidateTimeout
-			if deadline, ok := ctx.Deadline(); ok {
-				budget = time.Until(deadline) / time.Duration(rest)
-			}
-			attempt, cancel = context.WithTimeout(ctx, budget)
+		budget := candidateTimeout
+		if deadline, ok := ctx.Deadline(); ok {
+			budget = time.Until(deadline) / time.Duration(len(candidates)-i)
 		}
+		attempt, cancel := context.WithTimeout(ctx, budget)
 		stream, err := c.dialOne(attempt, to)
 		cancel()
 		if err == nil {

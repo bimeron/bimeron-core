@@ -45,15 +45,17 @@ func (c *Client) lookup(ctx context.Context, host string) ([]netip.Addr, error) 
 	return nil, errResolve
 }
 
-// question is one outstanding query of an exchange.
-type question struct {
-	t        dnsmessage.Type
-	answered bool
+// reply is the outcome of one question.
+type reply struct {
+	id      uint16
+	rcode   dnsmessage.RCode
+	answers []dnsmessage.Resource
 }
 
-// exchange asks one resolver for A and AAAA records over UDP, retrying a
-// truncated question over TCP. It returns the addresses of every question
-// that was answered; it fails only when none was.
+// exchange asks one resolver for A and AAAA records over UDP. A truncated
+// reply is retried over TCP in the background while UDP keeps being read.
+// It returns the addresses of every answered question and fails only when
+// none was answered; a validated NXDOMAIN ends it at once.
 func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsmessage.Name) ([]netip.Addr, error) {
 	ctx, cancel := context.WithTimeout(ctx, dnsAttemptTimeout)
 	defer cancel()
@@ -67,9 +69,9 @@ func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsme
 	stop := context.AfterFunc(ctx, func() { _ = pc.SetDeadline(time.Now()) })
 	defer stop()
 	to := net.UDPAddrFromAddrPort(server)
-	pending := map[uint16]*question{}
+	types := map[uint16]dnsmessage.Type{}
 	for _, t := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
-		id, err := newID(pending)
+		id, err := newID(types)
 		if err != nil {
 			return nil, err
 		}
@@ -80,99 +82,156 @@ func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsme
 		if _, err := pc.WriteTo(packet, to); err != nil {
 			return nil, err
 		}
-		pending[id] = &question{t: t}
+		types[id] = t
 	}
-	var ips []netip.Addr
-	answered, nxdomain := 0, false
-	buf := make([]byte, 4096)
-	for answered < len(pending) {
-		n, from, err := pc.ReadFrom(buf)
-		if err != nil {
-			break
+	// Replies from UDP and from background TCP retries meet here. The
+	// channel holds one reply per question, so senders never block.
+	replies := make(chan reply, 2*len(types))
+	done := make(chan struct{})
+	send := func(r reply) {
+		select {
+		case replies <- r:
+		case <-done:
 		}
-		if u, ok := from.(*net.UDPAddr); !ok || u.AddrPort() != server {
-			continue
-		}
-		var m dnsmessage.Message
-		if m.Unpack(buf[:n]) != nil {
-			continue
-		}
-		q := pending[m.ID]
-		if q == nil || q.answered || !validResponse(m, name, q.t) {
-			continue
-		}
-		if m.Truncated {
-			// Ask the same question again over TCP within this attempt.
-			answers, rcode, err := c.exchangeTCP(ctx, server, name, q.t)
+	}
+	udpDone := make(chan struct{})
+	tcpStarted := map[uint16]bool{}
+	go func() {
+		defer close(udpDone)
+		buf := make([]byte, 4096)
+		for {
+			n, from, err := pc.ReadFrom(buf)
 			if err != nil {
+				return
+			}
+			if u, ok := from.(*net.UDPAddr); !ok || u.AddrPort() != server {
 				continue
 			}
-			m.RCode, m.Answers = rcode, answers
+			header, ok := parseHeader(buf[:n], name, types)
+			if !ok {
+				continue
+			}
+			if header.Truncated {
+				// Ask the same question again over TCP within this attempt,
+				// once per question.
+				if !tcpStarted[header.ID] {
+					tcpStarted[header.ID] = true
+					go func(id uint16) {
+						if r, err := c.exchangeTCP(ctx, server, name, types[id]); err == nil {
+							r.id = id
+							send(r)
+						}
+					}(header.ID)
+				}
+				continue
+			}
+			var m dnsmessage.Message
+			if m.Unpack(buf[:n]) != nil {
+				continue
+			}
+			send(reply{id: m.ID, rcode: m.RCode, answers: m.Answers})
 		}
-		q.answered = true
-		answered++
-		switch m.RCode {
-		case dnsmessage.RCodeSuccess:
-			ips = append(ips, addresses(m.Answers, name, q.t)...)
-		case dnsmessage.RCodeNameError:
-			nxdomain = true
+	}()
+	defer func() { close(done); _ = pc.Close(); <-udpDone }()
+	var ips []netip.Addr
+	answered := map[uint16]bool{}
+	for len(answered) < len(types) {
+		select {
+		case r := <-replies:
+			if answered[r.id] {
+				continue
+			}
+			answered[r.id] = true
+			switch r.rcode {
+			case dnsmessage.RCodeSuccess:
+				ips = append(ips, addresses(r.answers, name, types[r.id])...)
+			case dnsmessage.RCodeNameError:
+				// NXDOMAIN applies to the name, not to one record type.
+				return nil, errNoSuchName
+			}
+		case <-ctx.Done():
+			if len(answered) == 0 {
+				return nil, errResolve
+			}
+			return ips, nil
 		}
-	}
-	if nxdomain {
-		// NXDOMAIN applies to the name, not to one record type.
-		return nil, errNoSuchName
-	}
-	if answered == 0 {
-		return nil, errResolve
 	}
 	return ips, nil
 }
 
+// parseHeader validates the header and the single question of a reply
+// without decoding its records, so a truncated reply can still be matched.
+func parseHeader(b []byte, name dnsmessage.Name, types map[uint16]dnsmessage.Type) (dnsmessage.Header, bool) {
+	var p dnsmessage.Parser
+	h, err := p.Start(b)
+	if err != nil || !h.Response || h.OpCode != 0 {
+		return h, false
+	}
+	t, ok := types[h.ID]
+	if !ok {
+		return h, false
+	}
+	q, err := p.Question()
+	if err != nil || q.Type != t || q.Class != dnsmessage.ClassINET || !strings.EqualFold(q.Name.String(), name.String()) {
+		return h, false
+	}
+	if _, err := p.Question(); !errors.Is(err, dnsmessage.ErrSectionDone) {
+		return h, false
+	}
+	return h, true
+}
+
 // exchangeTCP sends one question over a scoped TCP stream.
-func (c *Client) exchangeTCP(ctx context.Context, server netip.AddrPort, name dnsmessage.Name, t dnsmessage.Type) ([]dnsmessage.Resource, dnsmessage.RCode, error) {
+func (c *Client) exchangeTCP(ctx context.Context, server netip.AddrPort, name dnsmessage.Name, t dnsmessage.Type) (reply, error) {
 	conn, err := c.DialStream(ctx, server.String())
 	if err != nil {
-		return nil, 0, err
+		return reply{}, err
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
 	id, err := newID(nil)
 	if err != nil {
-		return nil, 0, err
+		return reply{}, err
 	}
 	packet, err := query(id, name, t)
 	if err != nil {
-		return nil, 0, err
+		return reply{}, err
 	}
 	framed := binary.BigEndian.AppendUint16(nil, uint16(len(packet)))
 	if _, err := conn.Write(append(framed, packet...)); err != nil {
-		return nil, 0, err
+		return reply{}, err
 	}
 	var size [2]byte
 	if _, err := io.ReadFull(conn, size[:]); err != nil {
-		return nil, 0, err
+		return reply{}, err
 	}
 	response := make([]byte, binary.BigEndian.Uint16(size[:]))
 	if _, err := io.ReadFull(conn, response); err != nil {
-		return nil, 0, err
+		return reply{}, err
+	}
+	header, ok := parseHeader(response, name, map[uint16]dnsmessage.Type{id: t})
+	if !ok || header.Truncated {
+		return reply{}, errResolve
 	}
 	var m dnsmessage.Message
-	if m.Unpack(response) != nil || m.ID != id || !validResponse(m, name, t) || m.Truncated {
-		return nil, 0, errResolve
+	if m.Unpack(response) != nil {
+		return reply{}, errResolve
 	}
-	return m.Answers, m.RCode, nil
+	return reply{rcode: m.RCode, answers: m.Answers}, nil
 }
 
 // newID returns a random query ID not used by pending.
-func newID(pending map[uint16]*question) (uint16, error) {
+func newID(pending map[uint16]dnsmessage.Type) (uint16, error) {
 	for {
 		var b [2]byte
 		if _, err := rand.Read(b[:]); err != nil {
 			return 0, err
 		}
-		if id := binary.BigEndian.Uint16(b[:]); pending[id] == nil {
+		if id := binary.BigEndian.Uint16(b[:]); func() bool { _, used := pending[id]; return !used }() {
 			return id, nil
 		}
 	}
@@ -183,23 +242,28 @@ func query(id uint16, name dnsmessage.Name, t dnsmessage.Type) ([]byte, error) {
 	return m.Pack()
 }
 
-// validResponse checks that m answers exactly the question asked.
-func validResponse(m dnsmessage.Message, name dnsmessage.Name, t dnsmessage.Type) bool {
-	if !m.Response || m.OpCode != 0 || len(m.Questions) != 1 {
-		return false
-	}
-	q := m.Questions[0]
-	return q.Type == t && q.Class == dnsmessage.ClassINET && strings.EqualFold(q.Name.String(), name.String())
-}
+// maxCNAMEChain bounds alias chains, as resolvers do.
+const maxCNAMEChain = 8
 
-// addresses takes A or AAAA records of the queried type. Records for other
-// owners are accepted only as the target of a CNAME chain from the name.
+// addresses takes IN-class A or AAAA records of the queried type for the
+// name, following an IN-class CNAME chain from the name regardless of the
+// order of records, with cycle detection.
 func addresses(answers []dnsmessage.Resource, name dnsmessage.Name, t dnsmessage.Type) []netip.Addr {
-	owners := map[string]bool{strings.ToLower(name.String()): true}
+	aliases := map[string]string{}
 	for _, a := range answers {
-		if c, ok := a.Body.(*dnsmessage.CNAMEResource); ok && owners[strings.ToLower(a.Header.Name.String())] {
-			owners[strings.ToLower(c.CNAME.String())] = true
+		if c, ok := a.Body.(*dnsmessage.CNAMEResource); ok && a.Header.Class == dnsmessage.ClassINET {
+			aliases[strings.ToLower(a.Header.Name.String())] = strings.ToLower(c.CNAME.String())
 		}
+	}
+	owners := map[string]bool{}
+	owner := strings.ToLower(name.String())
+	for i := 0; i <= maxCNAMEChain && !owners[owner]; i++ {
+		owners[owner] = true
+		next, ok := aliases[owner]
+		if !ok {
+			break
+		}
+		owner = next
 	}
 	var ips []netip.Addr
 	for _, a := range answers {

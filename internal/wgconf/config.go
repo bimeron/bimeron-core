@@ -596,13 +596,16 @@ func (c *Config) PacketSizes() (handshake, transport, junk, signature int) {
 		handshake = max(handshake, size+number(key))
 	}
 	if c.AWG["RandomTrailers"] == "true" {
-		// The engine pads handshakes with random trailers up to its default
-		// 500-byte window.
+		// The engine pads handshakes with random trailers up to its initial
+		// 500-byte UDP window; a larger observed window only follows larger
+		// datagrams from the peer.
 		handshake = max(handshake, 500)
 	}
 	// The engine aligns content to 16 bytes but never beyond the MTU, and
-	// caps content padding and trailers by the peer's observed datagram
-	// size, so a transport message is at most header, tag, S4 and MTU.
+	// caps content padding and trailers by the UDP window: the largest
+	// datagram observed from the peer, which our own receive limits already
+	// bound. So a locally built transport message is header, tag, S4 and MTU,
+	// plus padding only up to what the peer itself sent.
 	transport = int(messageSizes["S4"]) + number("S4") + c.TunnelMTU()
 	junk = number("Jmax")
 	for i := 1; i <= 5; i++ {
@@ -649,9 +652,10 @@ func (c *Config) validateCombinations() error {
 		}
 	}
 	// A full transport message must still fit one UDP datagram.
-	padding, _ := parseRange(c.AWG["ContentPaddingAddition"], 0, maxPadding)
-	if number("S4")+messageSizes["S4"]+uint64(c.TunnelMTU())+uint64(padding.Hi) > maxDatagram {
-		return awg("number_out_of_range", "S4 with the tunnel MTU and content padding exceeds a UDP datagram", "S4").Also("MTU", "ContentPaddingAddition").Arg("min", "0").Arg("max", strconv.Itoa(maxDatagram-int(messageSizes["S4"])-c.TunnelMTU()-int(padding.Hi)))
+	// The engine caps content padding by the UDP window, so only S4 and the
+	// MTU bound a transport message.
+	if number("S4")+messageSizes["S4"]+uint64(c.TunnelMTU()) > maxDatagram {
+		return awg("number_out_of_range", "S4 with the tunnel MTU exceeds a UDP datagram", "S4").Also("MTU").Arg("min", "0").Arg("max", strconv.Itoa(maxDatagram-int(messageSizes["S4"])-c.TunnelMTU()))
 	}
 	hasV6 := false
 	for _, a := range c.Addresses {
