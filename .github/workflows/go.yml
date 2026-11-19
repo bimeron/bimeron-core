@@ -139,6 +139,11 @@ jobs:
           go test ./androidcore ./core ./internal/config ./internal/routing -count=1
           go test ./internal/routing -run '^$' -fuzz '^FuzzDecodeGeoData$' -fuzztime=100000x
           go test ./internal/routing -run '^$' -bench 'Geo' -benchtime=200ms -count=1
+      - name: Fuzz profile, access key and wire parsers
+        run: |
+          for target in internal/config:FuzzParseData internal/accesskey:FuzzParseURI internal/accesskey:FuzzParseConfig internal/accesskey:FuzzParseSSPlugin core:FuzzConfigDocument internal/anytls:FuzzWire internal/vless:FuzzWire internal/tuic:FuzzReadAddress internal/proxy:FuzzReadSocksAddress; do
+            go test "./${target%%:*}" -run '^$' -fuzz "^${target#*:}\$" -fuzztime=20000x
+          done
       - name: Check CLI, core, and control races
         run: CGO_ENABLED=1 go test -race ./cmd/bimeron ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
       - name: VLESS and VMess transport interoperability with Xray

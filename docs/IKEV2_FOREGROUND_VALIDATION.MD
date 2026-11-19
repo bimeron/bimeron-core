@@ -219,8 +219,8 @@ added.
 
 The test-only follow-up follows acceptance commit `b6d3d02` and is identified by
 the exact commit recorded in PR #71. Production PowerShell execution,
-cancellation and deadlines are unchanged. Mocked fixtures retain their
-15-second budget, DNS ownership/conflict assertions and in-memory network
+cancellation and deadlines are unchanged. Mocked fixtures retained their
+15-second budget (later raised to 60 seconds, see [CI.MD](CI.MD)), DNS ownership/conflict assertions and in-memory network
 cmdlets. Native64 discovery still resolves only Get-NetRoute metadata and checks
 the poisoned user-module marker; it never executes a networking command.
 
