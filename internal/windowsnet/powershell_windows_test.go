@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestPowerShellCommandIgnoresInheritedExecutableAndSecrets(t *testing.T) {
@@ -54,7 +53,7 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 		t.Fatal("fixture module write failed")
 	}
 	t.Setenv("PSModulePath", temp)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	cmd, err := PowerShellCommand(ctx, fixtureEntry+`[Console]::Error.WriteLine('diag:fixture'); [Console]::Error.WriteLine('diag:module-start'); $c=Get-Command Get-NetRoute -ErrorAction Stop; [Console]::Error.WriteLine('diag:module-done'); foreach($h in @('System32','SysWOW64')) { if($c.Module.ModuleBase -eq ($env:SystemRoot+'\'+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP')) { [Console]::Error.WriteLine('diag:module='+$h+'\WindowsPowerShell\v1.0\Modules\NetTCPIP') } }; if(-not $c.Module.ModuleBase.StartsWith($PSHOME+'\Modules',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted module'}; [Console]::Out.Write('trusted-system-module'); [Console]::Error.WriteLine('diag:done')`)
 	if err != nil {
@@ -83,7 +82,7 @@ func TestPowerShellCommandRejectsUserModuleAutoload(t *testing.T) {
 // is required there.
 func TestPowerShellCommandPreservesUnicodeOutput(t *testing.T) {
 	const want = "адаптер-雪-é"
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	cmd, err := PowerShellCommand(ctx, `[Console]::Out.Write('`+want+`'); [Console]::Error.Write('`+want+`')`)
 	if err != nil {

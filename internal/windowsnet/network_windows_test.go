@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
-	"time"
 )
 
 const mockCmdlets = `
@@ -46,7 +45,7 @@ function Remove-DnsClientNrptRule {
 
 func mocked(t *testing.T, c Config, extra string) map[string]any {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	cmd, err := PowerShellCommand(ctx, fixtureSource(c, mockCmdlets+extra))
 	if err != nil {
