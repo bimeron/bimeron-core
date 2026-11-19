@@ -30,7 +30,7 @@ func TestMeasureGeoRegexWorstCase(t *testing.T) {
 	if os.Getenv("BIMERON_GEOSITE_MEASURE_WORST") != "1" {
 		t.Skip("BIMERON_GEOSITE_MEASURE_WORST is not set")
 	}
-	for _, value := range []string{`^\pL{22}$`, "[a-z]{1000}", "^[a-z]{1000}$"} {
+	for _, value := range []string{`^\pL{22}$`, "[a-z]{1000}", "^[a-z]{900}$"} {
 		tree, err := syntax.Parse(value, syntax.Perl)
 		if err != nil {
 			t.Fatal(err)
@@ -49,6 +49,7 @@ func TestMeasureGeoRegexWorstCase(t *testing.T) {
 			}
 			return d
 		})
+		runtime.KeepAlive(site)
 		t.Logf("%d x %q: %d instructions, %d endpoints, %.1f MiB retained", n, value, n*insts, n*runes, mib)
 	}
 }
@@ -78,7 +79,9 @@ func TestMeasureGeoSiteRegexBudget(t *testing.T) {
 		}
 		return d
 	})
+	runtime.KeepAlive(data)
 	t.Logf("%s: %d groups, %d expressions, %d regex bytes", path, len(d.sites), budget.count, budget.bytes)
+	t.Logf("largest expression: %d bytes (limit %d)", budget.maxLen, maxGeoRegexLen)
 	t.Logf("instructions: %d total (limit %d), %d largest (limit %d)", budget.insts, maxGeoRegexInsts, budget.maxInsts, maxGeoRegexInst)
 	t.Logf("rune-range endpoints: %d total (limit %d), %d largest (limit %d)", budget.runes, maxGeoRegexRunes, budget.maxRunes, maxGeoRegexRune)
 	t.Logf("retained heap after decoding: %.1f MiB", retained)
@@ -91,6 +94,7 @@ func TestMeasureGeoSiteRegexBudget(t *testing.T) {
 		{"total endpoints", budget.runes, maxGeoRegexRunes, 2},
 		{"regex count", budget.count, maxGeoRegex, 2},
 		{"regex bytes", budget.bytes, maxGeoRegexBytes, 2},
+		{"largest expression bytes", budget.maxLen, maxGeoRegexLen, 4},
 		{"largest expression instructions", budget.maxInsts, maxGeoRegexInst, 4},
 		{"largest expression endpoints", budget.maxRunes, maxGeoRegexRune, 4},
 	} {

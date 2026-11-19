@@ -161,9 +161,9 @@ func geoError(kind, group string, rule int, err error) *GeoDataError {
 	return &GeoDataError{Code: code, Kind: strings.ToLower(kind), Group: group, Rule: rule, Err: err}
 }
 
-// regexBudget accumulates the regex estimates of a dataset; maxInsts and
+// regexBudget accumulates the regex estimates of a dataset; maxLen, maxInsts and
 // maxRunes record the largest single expression.
-type regexBudget struct{ count, bytes, insts, runes, maxInsts, maxRunes int }
+type regexBudget struct{ count, bytes, insts, runes, maxLen, maxInsts, maxRunes int }
 
 // geoLimit names an exceeded decoder limit and matches errGeoLimit.
 type geoLimit string
@@ -515,6 +515,7 @@ func decodeDomain(b []byte, g *domainGroup, budget *regexBudget) error {
 	case 1:
 		budget.count++
 		budget.bytes += len(value)
+		budget.maxLen = max(budget.maxLen, len(value))
 		switch {
 		case budget.count > maxGeoRegex:
 			return geoLimit("regex count")
