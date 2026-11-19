@@ -18,7 +18,14 @@ try {
     $env:CGO_CFLAGS = "$cflags -ffile-prefix-map=$($env:ANDROID_NDK_HOME)=/android-ndk"
     $buildFlags = @()
     $version = $env:BIMERON_VERSION
-    if (-not $version) { $version = git describe --tags --abbrev=0 --match 'v[0-9]*' 2>$null; if ($LASTEXITCODE -eq 0) { $version += '-dev' } }
+    if (-not $version -and (Get-Command git -ErrorAction SilentlyContinue)) {
+        # Windows PowerShell 5.1 turns native stderr into a terminating error
+        # under 'Stop'; without a tag, build without a version like the shell
+        # script does.
+        $global:LASTEXITCODE = 1
+        $tag = & { $ErrorActionPreference = 'Continue'; git describe --tags --abbrev=0 --match 'v[0-9]*' 2>$null }
+        if ($LASTEXITCODE -eq 0 -and $tag) { $version = "$tag-dev" }
+    }
     if ($version) { $buildFlags = @('-ldflags', "-X bimeron/core.Version=$($version.TrimStart('v'))") }
     # gomobile records the absolute directory of this module and of the vendored
     # snapshots in each library's build information. Build from the root of a
