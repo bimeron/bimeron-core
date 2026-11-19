@@ -87,3 +87,25 @@ func TestWireGuardFileDNS(t *testing.T) {
 		t.Fatal("in-memory File must stay unavailable")
 	}
 }
+
+func TestWireGuardReviewRegressions(t *testing.T) {
+	for _, extra := range []string{"WSEarlyData = 0\n", "GRPCMultiMode = false\n"} {
+		_, err := ParseData([]byte(explicitWireGuard(extra)))
+		if p := problem.Of(err); err == nil || p.Code != "option_not_supported" {
+			t.Errorf("%q: %v", extra, err)
+		}
+	}
+	dir := t.TempDir()
+	wg := "[Interface]\nPrivateKey = " + wgKey(1) + "\nAddress = 10.8.0.2/32\n[Peer]\nPublicKey = " + wgKey(2) + "\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 0.0.0.0/0\n[Routing]\nDefault = proxy\n"
+	if err := os.WriteFile(filepath.Join(dir, "k.conf"), []byte(wg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "p.conf")
+	if err := os.WriteFile(path, []byte("[Profile]\nVersion = 1\n[AccessKey]\nFile = k.conf\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if p := problem.Of(err); err == nil || p.Code != "document_format_ambiguous" || p.Source != "File" || p.Document != "wireguard" {
+		t.Fatalf("ambiguous file: %+v", p)
+	}
+}

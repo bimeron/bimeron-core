@@ -68,9 +68,10 @@ type PeerConfig struct {
 	Keepalive Range
 }
 
-// Protocol reports amneziawg when any AmneziaWG option is set.
+// Protocol reports amneziawg when any AmneziaWG option or an AWG 3
+// keepalive range is set, matching Document.Protocol.
 func (c *Config) Protocol() string {
-	if len(c.AWG) > 0 {
+	if len(c.AWG) > 0 || c.Peer.Keepalive.Lo != c.Peer.Keepalive.Hi {
 		return ProtocolAmneziaWG
 	}
 	return ProtocolWireGuard
@@ -330,13 +331,25 @@ func rangeArgs(err error, min, max uint64) error {
 const (
 	maxDatagram = 65507
 	maxJunk     = 128
-	maxPadding  = 65535 - 148
+	// maxPadding bounds ContentPaddingAddition before the MTU check.
+	maxPadding = maxDatagram
 )
+
+// messageSizes are the unpadded WireGuard message sizes behind S1-S3; S4
+// pads transport messages, checked against the tunnel MTU.
+var messageSizes = map[string]uint64{"S1": 148, "S2": 92, "S3": 64, "S4": 32}
+
+func errZeroKey() error {
+	return problem.New("wireguard_key_invalid", "WireGuard key must not be all zero")
+}
 
 func (c *Config) set(section, key, value string) error {
 	switch section + "/" + key {
 	case "Interface/PrivateKey":
 		k, err := parseKey(value)
+		if err == nil && k.IsZero() {
+			return errZeroKey()
+		}
 		c.PrivateKey = k
 		return err
 	case "Interface/Address":
@@ -376,6 +389,9 @@ func (c *Config) set(section, key, value string) error {
 		return err
 	case "Peer/PublicKey":
 		k, err := parseKey(value)
+		if err == nil && k.IsZero() {
+			return errZeroKey()
+		}
 		c.Peer.PublicKey = k
 		return err
 	case "Peer/PresharedKey":
@@ -454,7 +470,7 @@ func awgValue(key, value string) (string, error) {
 		n, err := parseUint(value, maxDatagram)
 		return strconv.FormatUint(n, 10), invalidArg(err, key)
 	case "S1", "S2", "S3", "S4":
-		n, err := parseUint(value, maxPadding)
+		n, err := parseUint(value, maxDatagram-messageSizes[key])
 		return strconv.FormatUint(n, 10), invalidArg(err, key)
 	case "H1", "H2", "H3", "H4":
 		r, err := parseRange(value, 0, 1<<32-1)
@@ -523,9 +539,8 @@ func validateTags(value string) error {
 		}
 		switch parts[0] {
 		case "b":
-			hexDigits, ok := strings.CutPrefix(arg, "0x")
-			b, err := hex.DecodeString(hexDigits)
-			if !ok || err != nil || len(b) == 0 {
+			b, err := hex.DecodeString(strings.TrimPrefix(arg, "0x"))
+			if err != nil || len(b) == 0 {
 				return bad()
 			}
 			total += len(b)
@@ -540,8 +555,15 @@ func validateTags(value string) error {
 				return bad()
 			}
 			total += n
+		case "dz":
+			// A size field of the given byte width.
+			n, err := strconv.Atoi(arg)
+			if err != nil || n < 1 || n > 8 {
+				return bad()
+			}
+			total += n
 		default:
-			// Data tags carry the handshake payload; they take no argument.
+			// <d> and <ds> carry the message itself and take no argument.
 			if arg != "" {
 				return bad()
 			}
@@ -587,6 +609,11 @@ func (c *Config) validateCombinations() error {
 				return awg("awg_header_protection_requires_padding", "header protection requires S1-S4 of at least 12", key).Arg("min", "12")
 			}
 		}
+	}
+	// A full transport message must still fit one UDP datagram.
+	padding, _ := parseRange(c.AWG["ContentPaddingAddition"], 0, maxPadding)
+	if number("S4")+messageSizes["S4"]+uint64(c.TunnelMTU())+uint64(padding.Hi) > maxDatagram {
+		return awg("number_out_of_range", "S4 with the tunnel MTU and content padding exceeds a UDP datagram", "S4").Also("MTU", "ContentPaddingAddition").Arg("min", "0").Arg("max", strconv.Itoa(maxDatagram-int(messageSizes["S4"])-c.TunnelMTU()-int(padding.Hi)))
 	}
 	hasV6 := false
 	for _, a := range c.Addresses {

@@ -2,6 +2,7 @@ package wgconf
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/netip"
 	"strings"
 	"testing"
@@ -313,5 +314,80 @@ func TestFieldsJoinLists(t *testing.T) {
 	i := d.Inspect()
 	if i.FieldsError == "" || len(i.Problems) != 1 {
 		t.Fatalf("inspect %+v", i)
+	}
+}
+
+func TestReviewRegressions(t *testing.T) {
+	replace := func(old, new string) string { return strings.Replace(sample(), old, new, 1) }
+	zero := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	cases := map[string]string{
+		replace("PrivateKey = "+testKey(1), "PrivateKey = "+zero): "wireguard_key_invalid",
+		replace("PublicKey = "+testKey(2), "PublicKey = "+zero):   "wireguard_key_invalid",
+		replace("DNS = ", "S1 = 65359\nDNS = "):                   "",
+		replace("DNS = ", "S1 = 65360\nDNS = "):                   "number_out_of_range",
+		replace("DNS = ", "S4 = 64055\nDNS = "):                   "",
+		replace("DNS = ", "S4 = 64056\nDNS = "):                   "number_out_of_range",
+		replace("DNS = ", "I1 = <dz 2><d>\nDNS = "):               "",
+		replace("DNS = ", "I1 = <dz>\nDNS = "):                    "awg_tag_invalid",
+		replace("DNS = ", "I1 = <b 0102>\nDNS = "):                "",
+	}
+	for text, want := range cases {
+		if _, err := Parse(text); code(err) != want {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+	c, err := Parse(replace("PersistentKeepalive = 25", "PersistentKeepalive = 20-30"))
+	d, _ := ParseDocument(replace("PersistentKeepalive = 25", "PersistentKeepalive = 20-30"))
+	if protocol, _ := d.Protocol(); err != nil || c.Protocol() != protocol || protocol != ProtocolAmneziaWG {
+		t.Fatal("Config and Document must classify the protocol alike")
+	}
+}
+
+func TestUnknownEditKeyNotEchoed(t *testing.T) {
+	d, _ := ParseDocument(sample())
+	err := d.SetField(Interface, testKey(7), "1")
+	p := problem.Of(err)
+	if p.Code != "option_unknown" || p.Field != "" {
+		t.Fatalf("problem %+v", p)
+	}
+	b, _ := json.Marshal(p)
+	if strings.Contains(string(b), testKey(7)) {
+		t.Fatal("problem echoes the caller's key")
+	}
+}
+
+func TestEditInspectionMatchesText(t *testing.T) {
+	d, _ := ParseDocument(strings.Replace(sample(), "DNS = ", "MTU = 1420\nDNS = ", 1))
+	if err := d.SetField(Interface, "MTU", "1300"); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := ParseDocument(d.String())
+	got, want := d.Inspect(), fresh.Inspect()
+	if got.Fields["Interface/MTU"] != "1300" || want.Fields["Interface/MTU"] != "1300" {
+		t.Fatalf("stale fields: %v", got.Fields["Interface/MTU"])
+	}
+}
+
+func TestReplaceKeepsSurroundingBytes(t *testing.T) {
+	for in, want := range map[string]string{
+		"MTU = 1420  \n":      "MTU = 1300  \n",
+		"MTU=1420#c\r\n":      "MTU=1300#c\r\n",
+		"MTU = 1420 # keep\n": "MTU = 1300 # keep\n",
+		"MTU =\t1420\t#x\r\n": "MTU =\t1300\t#x\r\n",
+	} {
+		if got := replaceValue(in, "1300"); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestEditBatchLimit(t *testing.T) {
+	d, _ := ParseDocument(sample())
+	edits := make([]Edit, MaxEdits+1)
+	for i := range edits {
+		edits[i] = Edit{Interface, "MTU", ""}
+	}
+	if err := d.ApplyEdits(edits); code(err) != "invalid_request" {
+		t.Fatalf("batch limit: %v", err)
 	}
 }

@@ -81,8 +81,14 @@ type Edit struct {
 	Section, Key, Value string
 }
 
+// MaxEdits bounds one batch; editors send a handful of fields at a time.
+const MaxEdits = 256
+
 // ApplyEdits applies edits in order. On failure the document is unchanged.
 func (d *Document) ApplyEdits(edits []Edit) error {
+	if len(edits) > MaxEdits {
+		return problem.New("invalid_request", "too many WireGuard edit operations").ArgInt("max", MaxEdits)
+	}
 	saved := slices.Clone(d.lines)
 	for _, e := range edits {
 		err := d.SetField(e.Section, e.Key, e.Value)

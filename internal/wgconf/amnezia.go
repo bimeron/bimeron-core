@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -137,8 +138,13 @@ func importAmnezia(payload string) (Imported, error) {
 	if text == "" {
 		return Imported{}, amneziaInvalid()
 	}
-	text = strings.ReplaceAll(text, "$PRIMARY_DNS", jsonText(top, "dns1"))
-	text = strings.ReplaceAll(text, "$SECONDARY_DNS", jsonText(top, "dns2"))
+	// Bound the text before substitution, and substitute only IP addresses,
+	// so placeholders cannot expand it.
+	if err := checkText(text); err != nil {
+		return Imported{}, err
+	}
+	text = strings.ReplaceAll(text, "$PRIMARY_DNS", dnsValue(top, "dns1"))
+	text = strings.ReplaceAll(text, "$SECONDARY_DNS", dnsValue(top, "dns2"))
 	if strings.Contains(text, "$") {
 		// Placeholders that only the Amnezia client or service can fill.
 		return Imported{}, amneziaInvalid()
@@ -207,4 +213,13 @@ func chooseContainer(containers []map[string]json.RawMessage, preferred string) 
 		}
 	}
 	return nil
+}
+
+// dnsValue returns an Amnezia DNS member when it is a plain IP address.
+func dnsValue(top map[string]json.RawMessage, key string) string {
+	a, err := netip.ParseAddr(jsonText(top, key))
+	if err != nil || a.Zone() != "" {
+		return ""
+	}
+	return a.String()
 }

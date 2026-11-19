@@ -252,3 +252,19 @@ func TestImportAmneziaVariants(t *testing.T) {
 		t.Fatal("service keys must be refused even with containers")
 	}
 }
+
+func TestAmneziaDNSCannotExpandText(t *testing.T) {
+	text := strings.Replace(sample(), "DNS = 10.8.0.1, 1.1.1.1", "DNS = $PRIMARY_DNS", 1) + strings.Repeat("# $PRIMARY_DNS\n", 3000)
+	last, _ := json.Marshal(map[string]any{"config": text})
+	link := "vpn://" + amnezia(t, map[string]any{
+		"containers": []any{map[string]any{"container": "amnezia-awg", "awg": map[string]any{"last_config": string(last)}}},
+		"dns1":       strings.Repeat("x", 300),
+	})
+	got, err := ImportURI(link)
+	if err == nil && len(got.Text) > MaxSize {
+		t.Fatal("import exceeded the text limit")
+	}
+	if err == nil && strings.Contains(got.Text, "xxxx") {
+		t.Fatal("a non-IP DNS value was substituted")
+	}
+}

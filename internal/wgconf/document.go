@@ -272,7 +272,8 @@ func (d *Document) SetField(sectionName, key, value string) error {
 	}
 	canonical, ok := canonicalKey(sectionName, key)
 	if !ok || canonical != key {
-		return fail("option_unknown", "unknown WireGuard option")
+		// The key is caller input and may hold a pasted secret: no field.
+		return problem.New("option_unknown", "unknown WireGuard option").In(sectionName).InDocument(DocumentName)
 	}
 	if value != strings.TrimSpace(value) || strings.ContainsAny(value, "#\r\n") {
 		return fail("value_has_invalid_characters", "WireGuard values cannot contain #, line breaks or outer spaces")
@@ -306,6 +307,7 @@ func (d *Document) SetField(sectionName, key, value string) error {
 		first := matches[0]
 		d.lines[first].raw = replaceValue(d.lines[first].raw, value)
 		d.remove(matches[1:])
+		d.reindex()
 		return nil
 	}
 	newLine := key + " = " + value + eol
@@ -342,12 +344,10 @@ func replaceValue(raw, value string) string {
 	eq := strings.IndexByte(body, '=')
 	rest := body[eq+1:]
 	lead := rest[:len(rest)-len(strings.TrimLeft(rest, " \t"))]
+	// Replace only the value span; the spacing around it stays verbatim.
 	trail := ""
-	if comment != "" {
+	if len(lead) < len(rest) {
 		trail = rest[len(strings.TrimRight(rest, " \t")):]
-		if trail == "" {
-			trail = " "
-		}
 	}
 	return body[:eq+1] + lead + value + trail + comment + terminator
 }

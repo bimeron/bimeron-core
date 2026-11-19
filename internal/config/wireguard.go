@@ -32,8 +32,10 @@ func (c *File) explicitWireGuard() (*File, error) {
 	if c.Access.Parameters != nil || c.Access.Username != "" || c.Access.ServerName != "" {
 		return nil, c.unsupported("WireGuard", message, "Server", "Port", "Method", "Password", "Prefix", "Username", "ServerName")
 	}
-	if v := c.Access.VLESSParameters; v != nil && *v != (accesskey.VLESS{PublicKey: v.PublicKey}) {
-		others := slices.DeleteFunc(slices.Clone(vlessFields), func(f string) bool { return f == "PublicKey" })
+	// Check option presence, not parsed values: zero values such as
+	// WSEarlyData = 0 must be refused too. PublicKey is shared.
+	others := slices.DeleteFunc(slices.Clone(vlessFields), func(f string) bool { return f == "PublicKey" })
+	if c.present(others...) != "" {
 		return nil, c.unsupported("WireGuard", message, others...)
 	}
 	fields := map[string]string{}
@@ -64,7 +66,23 @@ func (c *File) explicitWireGuard() (*File, error) {
 // wireGuardFile parses wg-quick text read through [AccessKey] File. Problems
 // keep their location inside that text and name File as the source.
 func (c *File) wireGuardFile(text string) (bool, error) {
-	if format, err := wgconf.Detect(text); err != nil || format != wgconf.FormatWireGuard {
+	format, err := wgconf.Detect(text)
+	if err != nil {
+		p := problem.Of(err)
+		if p.Code == "document_format_unknown" {
+			// Not WireGuard text: read it as a URI key.
+			return false, nil
+		}
+		// Ambiguous or non-UTF-8 text must not fall back to URI parsing.
+		if p.Code == "document_format_ambiguous" {
+			// A whole-text problem of the referenced file.
+			p.Document = wgconf.DocumentName
+			return true, p.From("File")
+		}
+		p.Document = ""
+		return true, p.In("AccessKey").At("File").From("File")
+	}
+	if format != wgconf.FormatWireGuard {
 		return false, nil
 	}
 	cfg, err := wgconf.Parse(text)
