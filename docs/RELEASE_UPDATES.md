@@ -149,8 +149,10 @@ source must be a plain drive-letter path (`C:\...`) on a fixed local drive:
 UNC, device and `\\?\` paths are refused, and so is an opened file that
 resolves to a network share or to a volume that is not a fixed drive, for
 example through a linked directory or a removable volume mounted in a folder.
-The drive type is the one the volume reports, so a RAM disk that reports a
-fixed drive is accepted. WSL FIFOs and device files are refused. Other reparse
+The drive type is the one the volume reports, so a RAM disk is refused only
+if it reports `DRIVE_RAMDISK`; one that reports a fixed drive is accepted. A
+volume without a volume GUID path is refused. AF_UNIX sockets and WSL FIFOs
+and device files are refused. Other reparse
 points, such as cloud-file placeholders, are read as data. Extract to a local
 directory whose path contains no links: content that is not available locally
 may fail to read or be fetched on access, the staged digest check rejects any

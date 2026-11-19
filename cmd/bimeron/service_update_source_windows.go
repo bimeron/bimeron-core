@@ -34,6 +34,7 @@ const (
 const (
 	fileNameNormalized = 0x0
 	volumeNameDOS      = 0x0
+	volumeNameGUID     = 0x1
 )
 
 var errUpdateSourceNotLocal = errors.New("update source must be on a fixed local drive")
@@ -127,28 +128,71 @@ func specialFileTag(tag uint32) bool {
 	return false
 }
 
-// checkUpdateSourceLocal rejects a handle served by a network redirector or
-// whose final path is not on a fixed drive letter and a fixed volume.
+// checkUpdateSourceLocal rejects a handle served by a network redirector,
+// whose final path is not on a fixed drive letter, or whose volume is not a
+// fixed drive.
 func checkUpdateSourceLocal(h windows.Handle) error {
 	if remoteProtocolInfo(h) == nil {
 		return errUpdateSourceNotLocal
 	}
-	buf := make([]uint16, windows.MAX_PATH)
-	for {
-		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), fileNameNormalized|volumeNameDOS)
-		if err != nil {
-			return errUpdateSourceNotLocal
-		}
-		if n < uint32(len(buf)) {
-			buf = buf[:n]
-			break
-		}
-		buf = make([]uint16, n)
-	}
-	if !fixedDriveFinalPath(windows.UTF16ToString(buf)) {
+	final, err := finalPathName(h, fileNameNormalized|volumeNameDOS)
+	if err != nil || !fixedDriveFinalPath(final) || !fixedVolume(h) {
 		return errUpdateSourceNotLocal
 	}
 	return nil
+}
+
+// finalPathName returns the final path of the opened file in the form that
+// flags select.
+func finalPathName(h windows.Handle, flags uint32) (string, error) {
+	buf := make([]uint16, windows.MAX_PATH)
+	for {
+		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), flags)
+		if err != nil {
+			return "", err
+		}
+		if n < uint32(len(buf)) {
+			return windows.UTF16ToString(buf[:n]), nil
+		}
+		buf = make([]uint16, n)
+	}
+}
+
+// fixedVolume reports whether the volume that holds the opened file is
+// DRIVE_FIXED. The drive letter alone does not tell: a removable or other
+// volume can be mounted in a folder of a fixed drive. The volume comes from
+// the handle (its volume GUID path), not from the path text, so a folder
+// replaced after opening cannot redirect the check. A volume without a GUID
+// path is refused.
+func fixedVolume(h windows.Handle) bool {
+	final, err := finalPathName(h, fileNameNormalized|volumeNameGUID)
+	if err != nil {
+		return false
+	}
+	root, ok := volumeGUIDRoot(final)
+	if !ok {
+		return false
+	}
+	name, err := windows.UTF16PtrFromString(root)
+	return err == nil && windows.GetDriveType(name) == windows.DRIVE_FIXED
+}
+
+// volumeGUIDRoot returns the \\?\Volume{GUID}\ root of a VOLUME_NAME_GUID
+// final path.
+func volumeGUIDRoot(final string) (string, bool) {
+	const prefix = `\\?\Volume{`
+	if len(final) < len(prefix) || !strings.EqualFold(final[:len(prefix)], prefix) {
+		return "", false
+	}
+	end := strings.IndexByte(final[len(prefix):], '}')
+	if end < 0 {
+		return "", false
+	}
+	root := final[:len(prefix)+end+1]
+	if rest := final[len(root):]; rest != "" && rest[0] != '\\' {
+		return "", false
+	}
+	return root + `\`, true
 }
 
 // remoteProtocolInfo queries FILE_REMOTE_PROTOCOL_INFO, which only network
@@ -159,10 +203,8 @@ func remoteProtocolInfo(h windows.Handle) error {
 }
 
 // fixedDriveFinalPath accepts a VOLUME_NAME_DOS final path of the form
-// \\?\X:\... whose drive is DRIVE_FIXED and that lies on a DRIVE_FIXED
-// volume; \\?\UNC\ and any other form are refused. The volume is checked
-// separately because a removable or other volume can be mounted in a folder
-// of a fixed drive.
+// \\?\X:\... whose drive is DRIVE_FIXED; \\?\UNC\ and any other form are
+// refused. The volume that holds the file is checked separately.
 func fixedDriveFinalPath(final string) bool {
 	const prefix = `\\?\`
 	if len(final) < len(prefix)+3 || final[:len(prefix)] != prefix {
@@ -173,39 +215,7 @@ func fixedDriveFinalPath(final string) bool {
 	if letter < 'a' || letter > 'z' || drive[1] != ':' || drive[2] != '\\' {
 		return false
 	}
-	return fixedDrivePath(drive) && fixedVolume(final)
-}
-
-// fixedVolume reports whether the volume that contains path, which may be a
-// \\?\ path, is DRIVE_FIXED. For a file in a mounted folder this is the
-// mounted volume, not the drive that holds the folder.
-func fixedVolume(path string) bool {
-	volume, err := volumePath(path)
-	if err != nil {
-		return false
-	}
-	// GetDriveType documents drive-letter roots, mounted folders and volume
-	// GUID paths; pass a drive-letter mount point without the \\?\ prefix.
-	if rest, ok := strings.CutPrefix(volume, `\\?\`); ok && len(rest) >= 3 && rest[1] == ':' && rest[2] == '\\' {
-		volume = rest
-	}
-	root, err := windows.UTF16PtrFromString(volume)
-	return err == nil && windows.GetDriveType(root) == windows.DRIVE_FIXED
-}
-
-// volumePath returns the mount point of the volume that contains path, with
-// a trailing backslash, as GetVolumePathNameW reports it.
-func volumePath(path string) (string, error) {
-	name, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return "", err
-	}
-	// The mount point is a prefix of path plus a trailing backslash.
-	buf := make([]uint16, len(path)+2)
-	if err := windows.GetVolumePathName(name, &buf[0], uint32(len(buf))); err != nil {
-		return "", err
-	}
-	return windows.UTF16ToString(buf), nil
+	return fixedDrivePath(drive)
 }
 
 // createPrivateUpdateFile creates a new file readable only by SYSTEM and

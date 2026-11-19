@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"unsafe"
 
@@ -49,6 +48,11 @@ func setMicrosoftReparsePoint(t *testing.T, path string, tag uint32) {
 	*(*uint32)(unsafe.Pointer(&buf[0])) = tag
 	var n uint32
 	if err := windows.DeviceIoControl(h, windows.FSCTL_SET_REPARSE_POINT, &buf[0], uint32(len(buf)), nil, 0, &n, nil); err != nil {
+		// CI sets BIMERON_REQUIRE_REPARSE_TAGS=1 so that this check cannot
+		// be skipped silently.
+		if os.Getenv("BIMERON_REQUIRE_REPARSE_TAGS") == "1" {
+			t.Fatal("setting a reparse point:", err)
+		}
 		t.Skip("setting a reparse point unavailable:", err)
 	}
 }
@@ -72,39 +76,5 @@ func TestWindowsUpdateSourceSpecialFilesAreRejected(t *testing.T) {
 		if err := copyUpdateSource(source, filepath.Join(dir, "staged")); !errors.Is(err, errUpdateSourceNotRegular) {
 			t.Errorf("%s source: %v", name, err)
 		}
-	}
-}
-
-// TestWindowsVolumePath checks the volume mount point used for the drive type.
-// With BIMERON_TEST_MOUNTED_FOLDER naming a folder where another volume is
-// mounted, a file in it must resolve to that folder, not to its drive;
-// BIMERON_TEST_MOUNTED_FOLDER_FIXED=0 says that volume is not a fixed drive.
-func TestWindowsVolumePath(t *testing.T) {
-	system := os.Getenv("SystemDrive")
-	if len(system) != 2 {
-		t.Skip("SystemDrive unavailable")
-	}
-	for _, path := range []string{system + `\Windows\win.ini`, `\\?\` + system + `\Windows\win.ini`} {
-		volume, err := volumePath(path)
-		if err != nil || !strings.EqualFold(strings.TrimPrefix(volume, `\\?\`), system+`\`) {
-			t.Errorf("volumePath(%q) = %q, %v", path, volume, err)
-		}
-		if !fixedVolume(path) {
-			t.Errorf("fixedVolume(%q) = false", path)
-		}
-	}
-	mounted := os.Getenv("BIMERON_TEST_MOUNTED_FOLDER")
-	if mounted == "" {
-		return
-	}
-	mounted = strings.TrimRight(mounted, `\`)
-	file := `\\?\` + mounted + `\update.exe`
-	volume, err := volumePath(file)
-	if err != nil || !strings.EqualFold(strings.TrimPrefix(volume, `\\?\`), mounted+`\`) {
-		t.Fatalf("volumePath(%q) = %q, %v; want the mounted folder", file, volume, err)
-	}
-	want := os.Getenv("BIMERON_TEST_MOUNTED_FOLDER_FIXED") != "0"
-	if got := fixedVolume(file); got != want {
-		t.Fatalf("fixedVolume(%q) = %t, want %t", file, got, want)
 	}
 }

@@ -248,6 +248,8 @@ jobs:
       # including the Apple manifest tests' nested cross-builds. Keep test timing
       # visible: serialization does not diagnose stalls before script entry.
       - run: go test -p 1 -v ./...
+        env:
+          BIMERON_REQUIRE_REPARSE_TAGS: '1'
       - run: go vet ./...
       - name: Read a real cloud-file placeholder
         env:
