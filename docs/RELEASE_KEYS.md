@@ -44,6 +44,17 @@ apart from key A. Keep each device's OpenPGP PIN and admin PIN in a password
 manager, labelled with the device serial; three wrong admin PIN entries lock the
 OpenPGP application, and recovery means a reset that destroys the key.
 
+## Relation to ADR 0040
+
+Keys A and B are the hardware keys `H1` and `H2` of
+[ADR 0040](adr/0040-signed-core-store.md). That design is not implemented yet;
+until it is, a schema 1 manifest carries one signature from a hardware key.
+Implementing it moves this list into `release/trust.json` with the YubiKey
+attestation material, adds the offline release key `R2`, and requires `R2` plus
+a hardware key for every release. Store-era builds never trust
+`7370a2d8cf890e5e`. The OpenPGP attestation for each key can be exported at any
+time with `ykman openpgp keys attest sig` while the device is connected.
+
 ## Ceremony and signing tools
 
 `scripts/release-card.go` lists cards, shows public metadata, generates a key in
