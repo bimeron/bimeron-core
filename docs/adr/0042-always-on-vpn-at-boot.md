@@ -37,7 +37,7 @@ installed as the first step of a run and held through every attempt, wait and
 | `stop`, `shutdown`, Desktop Disconnect | Released (intended) | Released (intended) |
 | Service stop (SCM, `systemctl stop`) | Released | Released |
 | Normal OS shutdown or restart | Released, then traffic leaves outside the VPN after boot until the user connects | Same |
-| Core update or repair | Released (the proposed ADR 0041 would keep it for clients that request it) | Same |
+| Core update or repair | Released (the proposed ADR 0041 would keep it for clients that request it) | Released (the Linux scope of ADR 0041 is decided there) |
 | Crash, forced termination, failed listener | Filters stay, `KillSwitch: "residual"` | nft table stays until reboot |
 | Power loss, or crash followed by reboot | Persistent WFP filters stay, `residual` after boot | **Released**: nftables rules are not persisted |
 | Early boot before the filtering engine starts | Not covered | Not covered |
@@ -120,8 +120,10 @@ Three facts constrain any fix:
 - **Bundle**: the profile bytes and the bytes of every file the profile
   references, produced by the Core CLI running as the user.
 - **Retained exit**: the service process ends but keeps the record and, for a
-  kill switch session, leaves protection installed in the no-tunnel form, for
-  the next instance to take over. ADR 0039 already has the primitive
+  kill switch session, leaves protection installed for the next instance to
+  take over: on Windows in the no-tunnel form (the full ADR 0039 set without
+  the tunnel interface permit), on Linux as it is, because the table matches
+  the tunnel by name. ADR 0039 already has the primitive
   (`Engine.Abandon`); ADR 0041 uses it once for an update; this record uses it
   for every non-Disconnect exit of a persistent session.
 - **Restore**: the start of a persistent session by the service itself, from
@@ -158,8 +160,8 @@ Three facts constrain any fix:
 | Private directory | `%ProgramFiles%\Bimeron Core\persist\`: protected DACL, owner SYSTEM, SYSTEM and Administrators only. Outside the core store and outside the ADR 0040 member set | Record and guard: `/etc/bimeron/persist/`, root, 0700. Bundle: `/var/lib/bimeron/persist/`, root, 0700 |
 | Record | `record.json` | `/etc/bimeron/persist/record.json`, 0600 |
 | Bundle | `bundle-<sha256>`, encrypted with DPAPI in the SYSTEM user scope (no `CRYPTPROTECT_LOCAL_MACHINE`) | `bundle-<sha256>`, 0600 |
-| Network state for restore | Existing owned WFP and NRPT markers | A copy of the cleanup journal, including the original DNS configuration, in `/var/lib/bimeron/persist/`, because `/run/bimeron/state.json` is lost on power loss |
-| Boot guard (kill switch records only) | Boot-time and persistent WFP filters (BFE store) | `/etc/bimeron/persist/guard.nft`, 0600: the rendered no-tunnel ruleset |
+| Network state for restore | Existing owned WFP and NRPT markers | The cleanup journal of a persistent session, including the original DNS configuration and the boot ID, kept durably in `/var/lib/bimeron/persist/` and written there before each network change, because `/run/bimeron/state.json` is lost on power loss |
+| Boot guard (kill switch records only) | Boot-time and persistent WFP filters (BFE store) | `/etc/bimeron/persist/guard.nft`, 0600: the rendered ruleset without a tunnel |
 | Public copy, no secrets | Protected HKLM value `SOFTWARE\Bimeron\Core\PersistentSession`, readable by Users | `/etc/bimeron/persist.json`, root, 0644 |
 
 - The record holds a format version, the owner SID or UID, the profile ID and
@@ -194,33 +196,44 @@ session that owns protection, or the session the owner last asked for.
      `kill_switch_pending_run_recover` and the others), so a start that will
      be rejected never writes anything;
   2. the new bundle, and for a kill switch profile the boot guard
-     (`guard.nft`, boot-time filters). Both are harmless without a record: the
-     guard unit requires the record, and reconciliation removes boot-time
-     filters without one;
+     (`guard.nft`, boot-time filters). Without a record they are nearly
+     harmless: the guard unit requires the record, and reconciliation removes
+     boot-time filters at the next service start; at worst they block the few
+     seconds before BFE on the next boot;
   3. the record (atomic replace, the commit point);
   4. the handover or the run's early arm, then the public copy. The previous
      bundle is deleted only after the new run has armed.
 
   If step 2 or 3 fails, `start` fails with `persist_store_failed` and an
-  earlier session keeps running untouched. If step 4 fails before a new run
-  exists (for example a failed cleanup of the previous session during a
-  handover), the previous record is put back, or the new one removed if there
-  was none, before `start` returns. The record is written at Connect, not at
-  the first `connected` (see Q2).
+  earlier session keeps running untouched. Once the record is committed, it
+  stands for the user's intent: if step 4 fails (for example the previous
+  session's cleanup fails during a handover, or the early arm fails), `start`
+  returns the error, and the service keeps a persistent run for the new
+  record in held `failed` with the failure code and an active Session. The
+  same holds for every failure before a restored run's first attempt, such
+  as acquiring the session lock: a persistent run stays active. The record is
+  written at Connect, not at the first `connected` (see Q2).
 - **Disconnect**: record removal (the commit point) → release of the filters
   as on a normal stop → boot guard → public copy → bundle. If removing the
   record fails, nothing is released: `stop` fails with `persist_clear_failed`
   and the session stays as it was. Protection is never released while the
   record survives.
-- **Changing persistence of a running session**: a `start` of the running
-  profile with the same bundle digest and a different `persist` value writes
-  or removes the record in place and leaves the session untouched. This covers
-  a Desktop upgrade during a kill switch session and toggling the control for
-  a profile without the kill switch.
+- **Changing persistence of a running session**: `persist` has three values.
+  Absent keeps the current state; `true` writes the record; an explicit
+  `false` removes it. A `start` of the running profile with the same bundle
+  digest and a different explicit value writes or removes the record in place
+  and leaves the session untouched; the change follows the Connect or
+  Disconnect order above for the bundle and the boot guard. This covers
+  toggling the control for a profile without the kill switch. A kill switch
+  session that an older client started by path has no bundle digest, so after
+  a Desktop upgrade it becomes persistent through a handover to a bundle start
+  of the same profile ID, which leaves no gap.
 - **Reconciliation at service start**:
   - No record: delete boot-time filters, `guard.nft`, the public copy and
-    every `bundle-*`. Persistent and residual filters keep their ADR 0039
-    meaning: residual until a kill switch start or `recover`.
+    every `bundle-*`, and finish the network cleanup from the persisted Linux
+    journal if one is left (for example after a power loss during
+    Disconnect). Persistent and residual filters keep their ADR 0039 meaning:
+    residual until a kill switch start or `recover`.
   - A record: restore. Make the boot guard and the public copy match it (no
     boot guard for a record without the kill switch) and delete bundles that
     it does not name.
@@ -281,8 +294,9 @@ opens network or device paths, or follows links.
    format it cannot read.
 
 *Decided Q4 extension:* bundles are used for every connection. Path-based
-`start` (`config`) stays only for clients that do not advertise bundle
-support, and is removed in a later release after Desktop has migrated.
+`start` (`config`) stays only for clients that do not use bundles yet (older
+Desktop releases), and is removed in a later release after Desktop has
+migrated. Until then the service still opens the path of such a start.
 Persistence requires a bundle.
 
 ### Retained exits
@@ -290,10 +304,10 @@ Persistence requires a bundle.
 While a record exists, every exit that is not an explicit Disconnect is a
 retained exit:
 
-- SCM stop, preshutdown and shutdown on Windows; SIGTERM and SIGHUP of the
-  service on Linux (`systemctl stop`, system shutdown, an administrator's
-  signal). LINUX.MD lists them as releases today; for a persistent session
-  they keep the record and the table;
+- SCM stop, preshutdown and shutdown on Windows; SIGTERM, SIGHUP and SIGINT
+  of the service on Linux (`systemctl stop`, system shutdown, an
+  administrator's signal). LINUX.MD lists them as releases today; for a
+  persistent session they keep the record and the table;
 - the stop step of `service update`, the ADR 0040 maintenance session switch,
   repair and their undo paths;
 - a maintenance seal, a failed control listener, a panic boundary or any other
@@ -309,6 +323,11 @@ replacement fails, the existing filters stay. A crash, a forced termination or
 a power loss skips all of this: the filters that the run installed stay,
 including the Windows interface permit for an adapter that no longer exists,
 until the next instance replaces them.
+
+A retained exit that completes its cleanup exits with code 0. While a record
+exists, Bimeron's own filters are intended, so they never count as missing
+cleanup proof: the update stop check, repair inspection and ADR 0040
+reconciliation treat a clean exit with filters and a record as clean.
 
 The cleanup is the same as on a normal stop, but the race against the OS
 shutdown timeout becomes harmless: protection is already in its boot form
@@ -360,8 +379,11 @@ sections below apply to kill switch records only.
    set: permit loopback, DHCP and IPv6 neighbor discovery; block other
    outbound and inbound connections. No core exception is needed because no
    core process runs before BFE. Boot-time filters cannot also be persistent,
-   so they are separate objects that stay until deleted; reconciliation,
-   Disconnect and `recover` delete them.
+   so they are separate objects. Microsoft's pages describe their fate at BFE
+   start differently ("disabled" on the WFP Operation page, "removed when BFE
+   finishes initialization" on the Object Management page). Reconciliation
+   therefore reinstalls the set at every service start while a kill switch
+   record exists, and Disconnect and `recover` delete it.
    - They use their own sublayer under the Bimeron provider. Today's `arm`
      replaces every rule in the kill switch sublayer, and would otherwise
      delete the boot-time set at the first arm of a restored run. They keep the
@@ -374,7 +396,8 @@ sections below apply to kill switch records only.
      sublayers together with the provider in one transaction.
    - *Feasibility check during implementation, on a test VM:* that the ALE
      connect and receive-accept layers accept boot-time filters; that
-     boot-time filters may use a custom provider and sublayer; that a
+     boot-time filters may use a custom provider and sublayer; whether they
+     survive BFE start and a reboot or must be added again each time; that a
      boot-time filter added while BFE runs is not enforced until the next boot
      (otherwise its block, in its own sublayer, would override the run's
      permits); and that the handoff to persistent filters leaves no gap. The
@@ -406,26 +429,34 @@ Before=network-pre.target
 After=local-fs.target nftables.service firewalld.service ufw.service netfilter-persistent.service
 ConditionPathExists=/etc/bimeron/persist/record.json
 ConditionPathExists=/etc/bimeron/persist/guard.nft
-ConditionPathExists=/usr/local/lib/bimeron/bimeron-core
+ConditionPathExists=/etc/systemd/system/bimeron-core.service
 ConditionKernelCommandLine=!bimeron.persist=off
 
 [Service]
 Type=oneshot
-ExecStart=<nft resolved at install> -f /etc/bimeron/persist/guard.nft
+ExecStart=nft -f /etc/bimeron/persist/guard.nft
 
 [Install]
 WantedBy=sysinit.target
 ```
 
 - All conditions must hold, so a leftover `guard.nft` without a record never
-  blocks a boot. Requiring the service executable keeps a boot open after an
-  older `service uninstall` that removed the daemon but not the guard: without
-  a service nothing could restore the session.
+  blocks a boot. Requiring the daemon's unit file keeps a boot open after an
+  older `service uninstall`, which deletes that unit but not the guard:
+  without a service nothing could restore the session. The unit file is used
+  rather than the executable, because ADR 0040 moves the executable at the
+  first store-era switch. A residual risk remains: an older reinstall after an
+  older uninstall brings the unit back with a daemon that does not know about
+  persistence; ADR 0040 repair heals such an installation.
+- `ExecStart=` names `nft` without a path; systemd 239 and later look it up in
+  a fixed search path, so the unit stays valid if `nft` is installed after
+  Bimeron.
 - The unit pulls in nothing except `network-pre.target`: systemd checks
   conditions only when the job runs, after the jobs it pulls in were queued,
   so a `Wants=` on the daemon would start it at every boot regardless of the
   record. The daemon starts because its own unit is enabled (Q6).
-- `guard.nft` is the no-tunnel ruleset that the service renders whenever the
+- `guard.nft` is the ADR 0039 ruleset (tunnel matched by name, core sockets
+  by mark) that the service renders whenever the
   persistent session starts or its profile changes. It must load whether or
   not the table exists. It uses the `add table`, `delete table`, recreate
   idiom, because `destroy table` needs nftables 1.0.8 and Ubuntu 22.04 ships
@@ -460,15 +491,23 @@ WantedBy=sysinit.target
 - Before its first attempt, a restore runs the filter-preserving network
   cleanup itself: owned routes, DNS settings and leftover adapters from an
   unclean exit are removed, any filters and the record stay. On Linux it uses
-  the copy of the cleanup journal, so the original DNS configuration survives
-  a power loss; today `Guard` refuses to run while that cleanup is pending.
-  When the journal comes from an earlier boot (the boot ID differs), the
-  system has regenerated its DNS configuration since then: the cleanup adopts
-  the current file instead of refusing because it "changed externally", as
-  `recover --keep-current-dns` does today. In the same boot the normal checks
-  apply. This is the one automatic cleanup Core performs, and it never opens
-  the network. GUI_INTEGRATION.MD's "do not run `recover` automatically" still
-  applies to clients.
+  the durable journal in `/var/lib/bimeron/persist/`, which is written before
+  each network change, so the original DNS configuration survives a power
+  loss; today `Guard` refuses to run while that cleanup is pending. When the
+  journal comes from an earlier boot (the boot ID differs):
+  - if the DNS file still holds the bytes Core installed, the original is
+    restored;
+  - if it differs from both the original and Core's bytes, the system has
+    regenerated it since then, and the cleanup adopts the current file instead
+    of refusing because it "changed externally", as
+    `recover --keep-current-dns` does today.
+
+  In the same boot the normal checks apply. This is the one automatic cleanup
+  Core performs, and it never opens the network. GUI_INTEGRATION.MD's "do not
+  run `recover` automatically" still applies to clients.
+- A restore starts before the control pipe and the readiness pipe accept
+  mutating requests, so a client never sees a service with a record but no
+  Session.
 - A restored run gets a new `Session.id` and `Session.restored: true`. It
   continues a run that the user started, so it uses the ADR 0039 policy for
   loss of an established session from its first attempt: cycles of 10 attempts
@@ -491,9 +530,15 @@ WantedBy=sysinit.target
     Retry for it.
   - A `start` replaces a persistent run in `failed`, subject to the kill switch
     admission rules: a profile without the kill switch cannot replace a run
-    that holds protection.
+    that holds protection. The control layer's guarded `start` admission is
+    amended to match (see Changed in the contract outline).
   - Without the kill switch nothing is blocked and `Status.KillSwitch` stays
     omitted.
+  - The held states `persistent_record_unsupported` and
+    `persistence_suspended` have nothing to retry: `reconnect_now` returns
+    `reconnect_not_pending`, a `start` replaces them under the same admission
+    rules, and `stop` clears the record. `Status.KillSwitch` reports `holding`
+    while Bimeron filters are installed and is omitted otherwise.
 - Faults that require explicit recovery (`_run_recover` codes) do not end a
   persistent run: it stays active in `failed` with the code, any filters and
   the record stay, and `stop` works as usual. The same applies when the bundle
@@ -520,8 +565,9 @@ WantedBy=sysinit.target
   the leftovers need `recover`.
 - **Switching profiles** follows ADR 0039: a `start` with another kill switch
   profile hands over without a gap and replaces the record atomically. The
-  record follows the running session: a handover to a `start` without
-  `persist` removes the record once the new run has armed. Without the kill
+  record follows the running session: a handover without `persist` keeps the
+  session persistent with the new profile, and one with `persist: false`
+  removes the record once the new run has armed. Without the kill
   switch there is no handover: Desktop sends `stop`, which clears the record,
   then `start` with `persist`, which writes a new one, as it switches such
   profiles today.
@@ -544,7 +590,7 @@ public copy. The table applies to kill switch records.
 | Desktop broken, service fine | `bimeron stop` from any terminal of the owner. No elevation, no network |
 | Service stopped or crashing, filters in place | Desktop reads the public copy and shows "Internet is blocked because Bimeron Core is not running" with Start service, Repair and Turn off protection. Each needs elevation. Turn off is a maintenance-session operation (ADR 0040 entry points): a persistence-aware `recover` |
 | No working GUI, administrator present | `bimeron service stop`, then `bimeron recover`, run from the newest committed core store version (`%ProgramFiles%\Bimeron Core\store\versions\<version>\bimeron.exe`, `/usr/local/lib/bimeron/store/versions/<version>/bimeron`). Under the "never below active" rule that binary knows the record format. `recover` clears the record, the public copy, boot-time filters and the Linux guard, and needs no network |
-| Linux, nothing works | Boot once with `bimeron.persist=off`, then `recover` |
+| Linux, nothing works | Boot once with `bimeron.persist=off`, then `bimeron stop` if the service runs, or `recover` if it is broken |
 | Package removal | Clears persistence (below) |
 
 A `recover` from a Core older than persistence support does not help: on
@@ -552,8 +598,8 @@ Windows its single transaction fails because the boot-time objects still
 reference the provider, so it removes nothing; on Linux it ignores the record
 and the guard. Likewise, an older `service uninstall` leaves the persistence
 objects behind; on Windows the filters then stay with no service to restore
-the session, while on Linux the guard does not load without the service
-executable. The documentation says to use the current tools. A last-resort
+the session, while on Linux the guard does not load without the daemon's
+unit file. The documentation says to use the current tools. A last-resort
 procedure for a Windows machine whose Core files are all damaged is written
 and validated on a test VM during implementation; it may not depend on
 downloading anything.
@@ -579,19 +625,22 @@ exit). Both are protected, and acceptance covers Shut down and Restart.
   `reconnecting` or `connected`, with `KillSwitch` `holding` or `active` for a
   kill switch record) instead of a clean `disconnected` status. A restored run
   cycles from its first attempt, so it waits in `reconnecting` while the
-  server is unreachable; that is not an update failure. `failed` with a
-  `persistent_*` code is.
+  server is unreachable; that is not an update failure. Any `failed` state,
+  including `_run_recover` and `persistent_*` codes, is.
 - A record without the kill switch is restored after an update in the same
   way. There is no protection to keep, so ADR 0041 does not apply to it, and
   traffic leaves outside the VPN between the old session closing and the new
   one connecting.
 - ADR 0040 amendments:
   - The switch `stop` step and the undo-side stop are retained exits; the
-    `start` step restores.
-  - "Network cleanup before starting the old image": with a record, the
-    cleanup is the filter-preserving mode (routes and DNS only), never the
-    full `Recover`. It does not open the network, so it needs no
-    network-recovery consent. Without a record the rule is unchanged.
+    `start` step restores. A retained exit with code 0 and Bimeron filters
+    present, while a record exists, satisfies the stop step's cleanup proof.
+  - Every network cleanup that the maintenance broker plans while a record
+    exists (update, repair, reconciliation, and "Network cleanup before
+    starting the old image") is the filter-preserving mode (routes and DNS
+    only), never the full `Recover`. It does not open the network, so it
+    needs no network-recovery consent. A full `Recover` happens only through
+    Turn off protection. Without a record the rules are unchanged.
   - A backward run to an image without persistence support would show the
     filters as residual and never restore. With network-recovery consent, the
     undo first clears persistence as on Disconnect and reports
@@ -606,8 +655,10 @@ exit). Both are protected, and acceptance covers Shut down and Restart.
   - The package removal action below is an additional elevated entry point,
     with the same self-check as the installer action.
 
-**Repair.** Same as updates. Desktop's guided repair never runs a full
-`recover` while a record exists, unless the user chose Turn off protection.
+**Repair.** Same as updates. Repair inspection treats Bimeron filters with a
+record as intended, not as pending cleanup. Desktop's guided repair never runs
+a full `recover` while a record exists, unless the user chose Turn off
+protection.
 
 **Package removal and service uninstall.**
 
@@ -632,9 +683,8 @@ exit). Both are protected, and acceptance covers Shut down and Restart.
 machine-wide, like the system VPN itself: once restored, the session carries
 every account's traffic, and with the kill switch every account is blocked
 until it connects. Only the owner (through the pipe) or an administrator
-(`recover`) can turn it off. Other users' Desktop instances
-cannot control the service; they can read the public copy and explain the
-state. Fast user switching, sign-out and remote sessions do not affect the
+(`recover`) can turn it off. Other users' Desktop instances cannot control
+the service; they can read the public copy and explain the state. Fast user switching, sign-out and remote sessions do not affect the
 service-owned session. A restored session runs before and without any sign-in.
 Desktop exits caused by sign-out or OS shutdown never send `stop` or
 `shutdown`; "stop Core on exit" applies to an explicit Quit only, and uses
@@ -679,8 +729,8 @@ Desktop decision.
 **Domain-joined machines.** With the kill switch, until the VPN connects,
 domain controller discovery and boot-time Group Policy fail, because DNS
 outside the tunnel is blocked even to `direct` resolvers. Sign-in uses cached
-credentials. Such machines need a
-VPN path to their domain controllers; this record makes no exception.
+credentials. Such machines need a VPN path to their domain controllers; this
+record makes no exception.
 
 **Desktop while blocked.** With the kill switch, Desktop cannot download
 updates or geodata until the restored session connects. The profile list stays
@@ -697,9 +747,8 @@ Linux systemd service support persistence. Console daemons, foreground
 local listener would then run before any sign-in; it can be added later.
 
 **Clock.** With the kill switch, time synchronization is blocked until the VPN
-connects. A machine
-whose clock is far off fails TLS validation and stays blocked; `LastError`
-names the TLS failure and Desktop shows it. No NTP exception is proposed.
+connects. A machine whose clock is far off fails TLS validation and stays
+blocked; `LastError` names the TLS failure and Desktop shows it. No NTP exception is proposed.
 
 **Network boot.** Machines whose system disk depends on network storage are
 out of scope; the boot guard may block it.
@@ -735,15 +784,23 @@ one LF-terminated line") gains one explicit exception:
    again, and sends the ordinary `start` response.
 
 Reading outside the lock means an upload never blocks `bimeron stop`. One
-upload runs at a time; a second gets `upload_in_progress`. `stop` and
-`shutdown` cancel a pending upload, so a Connect followed quickly by
-Disconnect never starts a session after the Disconnect. `bundle` and `config`
-are mutually exclusive, and `persist` with `config` is rejected; both return
-`invalid_request`. Errors (catalog codes, kind `control`): `bundle_invalid`,
-`bundle_too_large`, `upload_in_progress`, `persist_unsupported_profile` (the
+upload runs at a time; a second gets `upload_in_progress`. An upload is
+pending until its `start` holds the command lock; `stop` and `shutdown`
+cancel a pending upload, whose `start` then returns `start_cancelled`, so a
+Connect followed quickly by Disconnect never starts a session after the
+Disconnect. `bundle` and `config` are mutually exclusive, and `persist` with
+`config` is rejected; both return `invalid_request`.
+
+`persist` is optional and has three values: absent keeps the current
+persistence of the session it replaces or matches (none for a new session),
+`true` writes the record, and `false` removes it.
+
+Errors (catalog codes, kind `control`): `bundle_invalid`, `bundle_too_large`,
+`upload_in_progress`, `start_cancelled`, `persist_unsupported_profile` (the
 profile is not a packet profile in VPN mode, for example proxy mode or native
 IKEv2), `persist_requires_service`, `persist_store_failed`,
-`persist_clear_failed` (on `stop`).
+`persist_clear_failed` (on `stop`). Request errors use the `persist_` prefix,
+held-state codes `persistent_` and events `persistence_`.
 
 **Session fields** (additive):
 
@@ -769,14 +826,24 @@ cannot be used; Connect again or Disconnect), `persistent_record_unsupported`
 (the record has a format this service does not know), `persistence_suspended`
 (Linux kernel switch).
 
-**Changed:** `stop` and `shutdown` keep their requests; their meaning gains
-"and clear persistence", and they cancel a pending upload. `reconnect_now`
-also applies to any persistent run in `failed`. With persistence, a
-maintenance seal is a retained exit instead of a release. The guards and
-handover otherwise keep their ADR 0039 rules.
+**Changed:**
+
+- `stop` and `shutdown` keep their requests; their meaning gains "and clear
+  persistence", and they cancel a pending upload.
+- `reconnect_now` also applies to any persistent run in `failed`.
+- With persistence, a maintenance seal is a retained exit instead of a
+  release.
+- Daemon session guards: today a guarded `start` returns
+  `session_already_running` while an unprotected session is active. It is
+  also admitted when the active session is a persistent run in `failed`, or
+  when it runs the same profile ID and bundle digest and only `persist`
+  differs.
+- The guards and handover otherwise keep their ADR 0039 rules.
 
 **CLI:** `bimeron profile bundle <profile.conf>`; `bimeron start` sends a
-bundle when the server supports it; `bimeron start -persist <profile.conf>`;
+bundle when the server supports it, without `persist`, so it never changes an
+existing session's persistence; `bimeron start -persist <profile.conf>` and
+`bimeron start -persist=false <profile.conf>` set it explicitly;
 `bimeron status` shows persistence.
 
 **Desktop** (contract only; the work happens in the Desktop repository):
@@ -793,8 +860,9 @@ bundle when the server supports it; `bimeron start -persist <profile.conf>`;
   a kill switch record and the Q3 captive portal hint. For a record without
   the kill switch, say plainly that traffic is not protected until the VPN
   connects.
-- Alert when `persistence_enabled` arrives or `bundle_digest` changes without
-  a Desktop action. Another process of the same user can start a session.
+- Alert when `persistence_enabled` or `persistence_cleared` arrives, or
+  `bundle_digest` changes, without a Desktop action. Another process of the
+  same user can start a session or change its persistence.
 - Adopt a restored session at startup, and skip GUI auto-connect while a
   persistent session exists. Offer Retry for a persistent run in `failed`,
   with or without the kill switch.
@@ -818,9 +886,9 @@ its own bundle. The same mechanism restores profiles without the kill switch.
 
 - For: meets the rule from Connect to Disconnect across boots; protects machine
   traffic before sign-in; connects before sign-in with or without the kill
-  switch; works without a GUI; reuses ADR 0039 hold,
-  handover and cycles and the ADR 0041 retained exit; ends the service's
-  reading of caller-chosen paths.
+  switch; works without a GUI; reuses ADR 0039 hold, handover and cycles and
+  the ADR 0041 retained exit; ends the service's reading of caller-chosen
+  paths.
 - Against: the largest change; a second copy of profile secrets on disk;
   Desktop must produce bundles; a broken service blocks the network until an
   administrator acts.
@@ -882,7 +950,7 @@ NetworkManager connection autoconnect).**
 | Other local users | Cannot create, change or clear persistence: the control pipe admits only the owner and SYSTEM or root; the private directories admit only SYSTEM, root and Administrators |
 | Stale or foreign records | Bound to the owner SID or UID; never adopted after an owner change; an unknown format fails closed; reconciliation removes orphans |
 | Secrets at rest | A second copy of profile secrets: SYSTEM, Administrators or root only. On Windows, DPAPI in the SYSTEM user scope protects a copy of the file alone, for example in a file-level backup; it does not protect against an administrator or a full backup that includes the system registry hives. Administrators and root can read it, as they can read the user's original. Removed on Disconnect and package removal |
-| Privileged file access for callers | Removed: the service parses bounded bytes from the authenticated owner and never opens a caller-chosen path, device, pipe or share |
+| Privileged file access for callers | Removed for bundle starts: the service parses bounded bytes from the authenticated owner and never opens a caller-chosen path, device, pipe or share. Path-based starts from older clients keep today's behavior until they are removed |
 | Store tampering, squatting | Program Files, `/etc` and `/var/lib` with protected, explicitly owned objects created handle-relative, per the ADR 0040 rules. The digest in the record binds the bundle |
 | Untrusted bundle content | Parsed with the existing bounded parsers and per-kind limits; same trust as today's `start`, without file access. The upload is bounded, one at a time and outside the command lock |
 | Boot guard without a reconnecting service | The service is always registered for boot start (Q6); a guard failure is reported; a disabled or broken service is visible to Desktop |
@@ -971,8 +1039,10 @@ the router:
    blocked, cycling; unblock: connects without sign-in.
 3. Service stop, update, repair while persistent: no gap; restored by itself.
 4. Crash with a systemd or SCM restart, and power loss (VM hard reset) while
-   persistent, including the Linux `resolv.conf` file method: blocked after
-   boot, the filter-preserving cleanup runs, restored with the original DNS.
+   persistent: blocked after boot, the filter-preserving cleanup runs, and the
+   session is restored. With the Linux `resolv.conf` file method, check both
+   cases: the file still holds Core's bytes (the original is restored), and
+   the system regenerated it at boot (the current file is adopted).
 5. Disconnect as a standard owner after a restored boot: normal access, normal
    next boot, no Bimeron filters or guard left.
 6. Broken service (binary removed or service disabled): Desktop notice, a
