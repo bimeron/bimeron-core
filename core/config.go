@@ -183,6 +183,11 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if wgDNS := copy.WireGuardDNS(); len(wgDNS) > 0 {
 		dns = wgDNS
 	}
+	// Likewise the WireGuard MTU sets the adapter MTU.
+	mtu := copy.Tunnel.MTU
+	if wgMTU := copy.WireGuardTunnelMTU(); wgMTU != 0 {
+		mtu = wgMTU
+	}
 	if copy.Tunnel.Mode == "vpn" {
 		p, err = copy.VPNPolicy()
 	}
@@ -195,7 +200,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 			return SessionConfig{}, err
 		}
 	}
-	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: copy.Tunnel.Name, Listen: copy.Tunnel.Listen, MTU: copy.Tunnel.MTU,
+	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: copy.Tunnel.Name, Listen: copy.Tunnel.Listen, MTU: mtu,
 		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 

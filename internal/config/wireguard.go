@@ -128,3 +128,13 @@ func (c *File) WireGuardDNS() []string {
 	}
 	return out
 }
+
+// WireGuardTunnelMTU returns the adapter MTU taken from the WireGuard text's
+// MTU when the profile does not set [Interface] MTU itself, clamped to the
+// adapter range 1280-1500. Zero means the profile's own or default MTU.
+func (c *File) WireGuardTunnelMTU() int {
+	if !c.IsWireGuard() || c.lines["Interface.MTU"] > 0 || c.profile.WireGuard.MTU == 0 {
+		return 0
+	}
+	return min(max(c.profile.WireGuard.MTU, 1280), 1500)
+}

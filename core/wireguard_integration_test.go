@@ -3,13 +3,18 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/config"
 	"bimeron/internal/proxy"
 	"bimeron/internal/telemetry"
 	"bimeron/internal/wgconf"
@@ -79,5 +84,38 @@ func TestWireGuardHandshakeTimeoutFault(t *testing.T) {
 	var staged *stageError
 	if !errors.As(err, &staged) || staged.code != "wireguard_handshake_timeout" || !staged.retry {
 		t.Fatalf("fault %v", err)
+	}
+}
+
+func TestWireGuardTextSetsAdapterMTUAndDNS(t *testing.T) {
+	client := wgtest.NewKeyPair(t)
+	server := wgtest.NewKeyPair(t)
+	wg := "[Interface]\nPrivateKey = " + wgtest.B64(client.Private) + "\nAddress = 10.8.0.2/32\n%s[Peer]\nPublicKey = " + wgtest.B64(server.Public) + "\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 0.0.0.0/0\n"
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		wgExtra, profileExtra string
+		mtu                   int
+		dns                   string
+	}{
+		{"MTU = 1300\nDNS = 10.8.0.1\n", "", 1300, "10.8.0.1"},
+		{"", "", 1420, "1.1.1.1"},
+		{"MTU = 9000\n", "", 1500, "1.1.1.1"},
+		{"MTU = 1300\nDNS = 10.8.0.1\n", "[Interface]\nMTU = 1400\nDNS = 9.9.9.9\n", 1400, "9.9.9.9"},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "k.conf"), []byte(fmt.Sprintf(wg, tc.wgExtra)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "p.conf")
+		if err := os.WriteFile(path, []byte("[Profile]\nVersion = 1\n[AccessKey]\nFile = k.conf\n"+tc.profileExtra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := config.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := FromConfig(c)
+		if err != nil || s.MTU != tc.mtu || strings.Join(s.DNS, ",") != tc.dns {
+			t.Fatalf("%q/%q: mtu %d dns %v err %v", tc.wgExtra, tc.profileExtra, s.MTU, s.DNS, err)
+		}
 	}
 }

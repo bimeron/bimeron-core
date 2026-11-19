@@ -122,16 +122,20 @@ order), `awg_header_overlap`, `awg_header_protection_requires_padding`
 
 ## Mapping to Bimeron settings
 
-- `Address`, `DNS` and `MTU` in the WireGuard text describe the tunnel, not
-  Bimeron's own TUN adapter.
-- Bimeron `[Interface] MTU` (default 1420) is the system TUN. WireGuard `MTU`
-  (default 1420) is the tunnel. They are independent.
-- DNS: when the profile has no `[Interface] DNS`, Bimeron's resolver uses the
-  WireGuard `DNS` entries: the first four distinct IPv4 addresses, in order.
-  IPv6 entries are not used, because Bimeron's resolver forwards to IPv4
-  servers only. An explicit `[Interface] DNS` wins. With neither, or with
-  only IPv6 entries, the default 1.1.1.1 applies. DNS queries are routed like
-  other traffic, so a resolver outside AllowedIPs follows `AllowedIPsMode`.
+- The WireGuard text is the source of `DNS` and `MTU` for these profiles.
+  Editors show them as the profile's DNS and MTU and write them into the
+  WireGuard text. `Address` holds the tunnel addresses.
+- MTU: the WireGuard `MTU` is the tunnel MTU and also the system adapter MTU,
+  clamped to the adapter range 1280–1500. Without it both stay automatic
+  (1420). Import never adds an `MTU` line.
+- DNS: Bimeron's resolver uses the WireGuard `DNS` entries: the first four
+  distinct unicast IPv4 addresses, in order. IPv6 entries are not used,
+  because Bimeron's resolver forwards to IPv4 servers only. Without usable
+  entries the default 1.1.1.1 applies. DNS queries are routed like other
+  traffic, so a resolver outside AllowedIPs follows `AllowedIPsMode`.
+- A Bimeron `[Interface] MTU` or `DNS` in a WireGuard profile currently still
+  overrides the WireGuard value. How such profiles migrate is being agreed;
+  the agreed rule will replace this one.
 - `Mode = proxy` (SOCKS5, TCP only), `IPv6 = disable` and `KillSwitch` work as
   for other upstreams.
 
