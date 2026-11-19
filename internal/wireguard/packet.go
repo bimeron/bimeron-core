@@ -235,6 +235,14 @@ func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
 		if timer != nil {
 			timer.Stop()
 		}
+		if !got && err != nil {
+			// A datagram that arrived together with the timeout still wins.
+			select {
+			case d = <-p.incoming:
+				got = true
+			default:
+			}
+		}
 		if got {
 			return copy(b, d.data), d.from, nil
 		}

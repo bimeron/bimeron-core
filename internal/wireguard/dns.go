@@ -38,6 +38,8 @@ func (c *Client) lookup(ctx context.Context, host string) ([]netip.Addr, error) 
 		switch {
 		case errors.Is(err, errNoSuchName):
 			return nil, errResolve
+		case errors.Is(err, ErrClosed):
+			return nil, ErrClosed
 		case err == nil && len(ips) > 0:
 			return ips, nil
 		}
@@ -135,21 +137,44 @@ func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsme
 	defer func() { close(done); _ = pc.Close(); <-udpDone }()
 	var ips []netip.Addr
 	answered := map[uint16]bool{}
+	nxdomain := false
+	answeredOne := func(r reply) {
+		answered[r.id] = true
+		switch r.rcode {
+		case dnsmessage.RCodeSuccess:
+			ips = append(ips, addresses(r.answers, name, types[r.id])...)
+		case dnsmessage.RCodeNameError:
+			// NXDOMAIN applies to the name, not to one record type.
+			nxdomain = true
+		}
+	}
 	for len(answered) < len(types) {
 		select {
 		case r := <-replies:
 			if answered[r.id] {
 				continue
 			}
-			answered[r.id] = true
-			switch r.rcode {
-			case dnsmessage.RCodeSuccess:
-				ips = append(ips, addresses(r.answers, name, types[r.id])...)
-			case dnsmessage.RCodeNameError:
-				// NXDOMAIN applies to the name, not to one record type.
+			answeredOne(r)
+			if nxdomain {
 				return nil, errNoSuchName
 			}
+		case <-c.closed:
+			return nil, ErrClosed
 		case <-ctx.Done():
+			// Replies already published still count.
+			for drained := false; !drained; {
+				select {
+				case r := <-replies:
+					if !answered[r.id] {
+						answeredOne(r)
+					}
+				default:
+					drained = true
+				}
+			}
+			if nxdomain {
+				return nil, errNoSuchName
+			}
 			if len(answered) == 0 {
 				return nil, errResolve
 			}
