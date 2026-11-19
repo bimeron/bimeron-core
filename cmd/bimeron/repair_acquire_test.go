@@ -36,7 +36,7 @@ func TestRepairAcquisitionSignatureAndArchive(t *testing.T) {
 		data, _ := json.Marshal(m)
 		data = append(data, '\n')
 		sig := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data)) + "\n")
-		return verifyRepairManifest(data, sig, pub, m.Version, "windows", "amd64")
+		return verifyRepairManifest(data, sig, [][]byte{pub}, m.Version, "windows", "amd64")
 	}
 	a, err := verify()
 	if err != nil {
@@ -61,7 +61,7 @@ func TestRepairAcquisitionSignatureAndArchive(t *testing.T) {
 	data := []byte("{}\n")
 	sig := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data)) + "\n")
 	data[0] = '['
-	if _, err = verifyRepairManifest(data, sig, pub, m.Version, "windows", "amd64"); err == nil {
+	if _, err = verifyRepairManifest(data, sig, [][]byte{pub}, m.Version, "windows", "amd64"); err == nil {
 		t.Fatal("accepted bad signature")
 	}
 }
@@ -113,5 +113,55 @@ func TestRepairManifestRejectsDuplicateKeys(t *testing.T) {
 	}
 	if !repairJSONUnique([]byte(`{"a":[{"x":1},{"x":2}]}`)) {
 		t.Fatal("valid nested JSON")
+	}
+}
+func TestRepairTrustsOnlyHardwareReleaseKeys(t *testing.T) {
+	want := []string{"e6fb20d55656904a", "095d295f5fe9a4e2"}
+	keys := decodeRepairKeys()
+	if len(keys) != len(want) {
+		t.Fatalf("trusted %d repair keys, want %d", len(keys), len(want))
+	}
+	for i, k := range keys {
+		sum := sha256.Sum256(k)
+		if len(k) != ed25519.PublicKeySize || hex.EncodeToString(sum[:8]) != want[i] {
+			t.Fatalf("repair key %d does not match docs/RELEASE_KEYS.md", i)
+		}
+	}
+}
+
+func TestRepairManifestSelectsSigningKey(t *testing.T) {
+	pubA, privA, _ := ed25519.GenerateKey(rand.Reader)
+	pubB, privB, _ := ed25519.GenerateKey(rand.Reader)
+	trusted := [][]byte{pubA, pubB}
+	id := func(k ed25519.PublicKey) string { s := sha256.Sum256(k); return hex.EncodeToString(s[:8]) }
+	m := repairManifest{Schema: 1, Tag: "v0.2.0", Version: "0.2.0", Channel: "stable", Compatibility: repairCompatibilityFromSource(t)}
+	for _, p := range []string{"windows", "linux"} {
+		for _, a := range []string{"amd64", "arm64"} {
+			m.Archives = append(m.Archives, repairArchive{p, a, "bimeron-v0.2.0-" + p + "-" + a + ".zip", 1, hex.EncodeToString(make([]byte, 32))})
+		}
+	}
+	verify := func(keyID string, priv ed25519.PrivateKey, keys [][]byte) error {
+		m.KeyID = keyID
+		data, _ := json.Marshal(m)
+		data = append(data, '\n')
+		sig := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data)) + "\n")
+		_, err := verifyRepairManifest(data, sig, keys, "0.2.0", "windows", "amd64")
+		return err
+	}
+	if err := verify(id(pubB), privB, trusted); err != nil {
+		t.Fatal("backup key rejected:", err)
+	}
+	if err := verify(id(pubA), privA, trusted); err != nil {
+		t.Fatal("primary key rejected:", err)
+	}
+	if verify(id(pubA), privB, trusted) == nil {
+		t.Fatal("accepted a key_id naming a different trusted key")
+	}
+	_, untrusted, _ := ed25519.GenerateKey(rand.Reader)
+	if verify(id(untrusted.Public().(ed25519.PublicKey)), untrusted, trusted) == nil {
+		t.Fatal("accepted an untrusted key")
+	}
+	if verify(id(pubA), privA, nil) == nil {
+		t.Fatal("accepted with no trusted keys")
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bimeron/internal/releasecard"
 )
 
 func TestManifestGenerationAndTamper(t *testing.T) {
@@ -154,3 +156,47 @@ type commandError struct {
 }
 
 func (e *commandError) Error() string { return e.cause.Error() + ": " + e.output }
+
+// The hardware signer accepts at most releasecard.MaxManifestSize bytes; the
+// publisher must refuse a larger manifest for every key type, and the current
+// manifest shape must stay well below the bound.
+func TestManifestSizeBound(t *testing.T) {
+	dir := t.TempDir()
+	for _, platform := range []string{"windows", "linux"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			name := "bimeron-v0.12.34-beta.56-" + platform + "-" + arch + ".zip"
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	sign := func(compat string) (string, error) {
+		cmd := exec.Command("go", "run", "../scripts/release-manifest.go", "-tag", "v0.12.34-beta.56", "-dir", dir, "-compat", compat)
+		cmd.Env = append(os.Environ(), "BIMERON_RELEASE_ED25519_KEY="+base64.StdEncoding.EncodeToString(key), "BIMERON_RELEASE_CARD_SERIAL=")
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := sign("compatibility.json"); err != nil {
+		t.Fatal(err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "update-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > releasecard.MaxManifestSize*3/4 {
+		t.Fatalf("manifest is %d bytes, close to the %d-byte hardware signing bound", len(data), releasecard.MaxManifestSize)
+	}
+	compat, err := os.ReadFile("compatibility.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Replace(string(compat), `"gui_min": "0.3.0"`, `"gui_min": "0.3.0-`+strings.Repeat("x", releasecard.MaxManifestSize)+`"`, 1)
+	largePath := filepath.Join(dir, "large-compatibility.json")
+	if err := os.WriteFile(largePath, []byte(large), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := sign(largePath); err == nil || !strings.Contains(out, "at most 2560 bytes") {
+		t.Fatalf("oversized manifest was not refused: %v %s", err, out)
+	}
+}

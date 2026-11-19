@@ -37,15 +37,39 @@ pinned public key selected by `key_id` before using any manifest values.
 It must reject unknown schema, missing or duplicate targets, unsafe asset names,
 unsupported compatibility, or a mismatch of downloaded ZIP size or SHA-256.
 
-Generate the Ed25519 key outside the repository. The local signing step reads
-`BIMERON_RELEASE_ED25519_KEY`, standard base64 of the 64-byte private key, and
-checks it against `BIMERON_RELEASE_ED25519_PUBLIC_KEY`, standard base64 of the
-32-byte public key pinned by the GUI. Keep the private key in a protected vault
-with an offline backup; do not commit it or place it in shell history or logs.
-The publisher verifies using only the public key. A key ID alone does not
-establish trust. Protect release tags with GitHub rulesets. To rotate, first
-release GUI trusting both keys, then switch the signer, then retire the old key
-after the supported update window.
+[RELEASE_KEYS.md](RELEASE_KEYS.md) lists the pinned public keys and which
+releases each one signs. Releases after `v0.4.0-beta.2` are signed with a
+hardware key held in a YubiKey's OpenPGP application. On Windows, with the
+YubiKey connected by USB, run the signing step with the card serial and its
+pinned public key:
+
+```powershell
+$env:BIMERON_RELEASE_CARD_SERIAL = "22337246"
+$env:BIMERON_RELEASE_ED25519_PUBLIC_KEY = "lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI="
+go run scripts/release-manifest.go -tag <tag> -dir <release-dir>
+```
+
+The signer checks that the card holds exactly the configured public key before
+it asks for the card's OpenPGP PIN, then asks for a touch, and verifies the
+returned signature before writing it. It needs an interactive console. Use the
+backup key B (`19344964`, see RELEASE_KEYS.md) only when key A is unavailable.
+Every signer refuses a manifest larger than 2560 bytes, below the YubiKey's
+3070-byte signature input limit; a test keeps the current manifest well under
+that bound.
+
+Without `BIMERON_RELEASE_CARD_SERIAL`, the signing step reads
+`BIMERON_RELEASE_ED25519_KEY`, standard base64 of the 64-byte software private
+key, and checks it against `BIMERON_RELEASE_ED25519_PUBLIC_KEY` when set. This
+path remains for tooling and backfills of releases signed by the retiring
+software key `7370a2d8cf890e5e`; do not use it for new releases, commit the key,
+or place it in shell history or logs. The publisher verifies using only the
+public key. A key ID alone does not establish trust. Protect release tags with
+GitHub rulesets.
+
+To rotate, first release a GUI trusting both keys, then switch the signer, then
+retire the old key after the supported update window. Desktop 0.3.0 and earlier
+pin only `7370a2d8cf890e5e`: they cannot verify a release signed by a hardware
+key and must first update to Desktop 0.3.1, which pins all three keys.
 
 ## Documentation for each version
 

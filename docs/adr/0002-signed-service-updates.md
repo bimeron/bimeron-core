@@ -1,6 +1,6 @@
 # ADR 0002: Signed manifests and service update health checks
 
-Status: amended, October 21, 2026.
+Status: amended, November 19, 2026.
 
 ## Context
 
@@ -12,12 +12,16 @@ Publish a JSON manifest and detached Ed25519 signature. Sign the exact UTF-8 fil
 
 Rotate keys by shipping a GUI version that trusts both old and new public keys before changing the release signing key. Later remove the old public key after its supported release window. Old GUI versions must update before they can trust releases signed only by the successor key. A compromised signing key still requires a separate incident response and GUI trust-store release; rotation alone does not revoke an already installed trust anchor.
 
+Since November 19, 2026, release signing keys are non-exportable Ed25519 keys generated inside the OpenPGP application of two YubiKeys: key A signs, key B is the backup, and both require the PIN and a touch for every signature (touch policy `fixed`). The publisher sends the complete manifest bytes to the card, which returns a plain Ed25519 signature, so the manifest and signature formats and all verifiers stay unchanged. Signing refuses manifests above 2560 bytes, below the card's 3070-byte input limit. The rotation away from the software key `7370a2d8cf890e5e` was precautionary: it may once have been stored as a CI secret. Desktop 0.3.1 pins the old key and both hardware keys; no release after `v0.4.0-beta.2` uses the old key, and Desktop drops it after releases it signed leave the supported update window. Core repair acquisition, which fetches only its own exact release, pins only the hardware keys. [RELEASE_KEYS.md](../RELEASE_KEYS.md) is the authoritative key list.
+
 Backfill downloads and verifies existing archives, generates only metadata assets, and defaults to dry-run. Existing archives and SHA256SUMS stay byte-for-byte unchanged.
 
 ## Alternatives and tradeoffs
 
 - GitHub asset digests alone depend on GitHub as the sole trust root and do not authenticate the compatibility policy outside its API. Ed25519 lets the GUI verify downloaded metadata independently.
-- An embedded signing key in the core would make rotation depend on core updates and would put the trust decision inside a privileged executable. The GUI owns update selection and a pinned public key; the private key stays in GitHub Actions secrets.
+- An embedded signing key in the core would make rotation depend on core updates and would put the trust decision inside a privileged executable. The GUI owns update selection and pinned public keys; private keys stay outside the repository and CI.
+- A software private key in an offline vault is simple, but any copy of it can sign, and its exposure history is hard to prove. Non-exportable hardware keys need the operator, PIN, and touch for every signature; two devices avoid a single point of loss.
+- YubiKey PIV Ed25519 requires firmware 5.7 or newer; the available devices run 5.4.3, whose OpenPGP application supports Ed25519. Signing through an OpenPGP tool would wrap a hash in OpenPGP packets and change the signature format; raw card signing keeps it.
 - Automatically reconnecting VPN after update would need persistent secrets and recovery of session intent. Explicit reconnection preserves current service behavior.
 - A stopped service cannot answer IPC without changing its prior state. It stays stopped; executable identity and staged digest are checked before replacement, and the first later start is user initiated.
 - Elevating the downloaded executable would allow a same-user file swap between the GUI's verification and process launch. Elevating the bundled updater avoids this race, but requires the GUI package directory to be protected against ordinary-user writes. Portable or user-writable GUI installations must disable this update route.

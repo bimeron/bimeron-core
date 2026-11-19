@@ -1,6 +1,6 @@
 package main
 
-// Signed repair acquisition deliberately reuses Desktop's published update key
+// Signed repair acquisition deliberately reuses Desktop's published update keys
 // and manifest envelope. The authenticated broker chooses the exact build tag;
 // no caller can select a URL, key, digest, version, or archive member.
 import (
@@ -26,8 +26,17 @@ import (
 	"time"
 )
 
+// repairUpdateKeys are the release signing keys this build accepts for its own
+// exact release: the two hardware keys (docs/RELEASE_KEYS.md). The retired
+// software key 7370a2d8cf890e5e signed only releases before this source and is
+// never needed, because repair fetches the broker's own version.
+//
 //lint:ignore U1000 used by the Windows repair path.
-const repairUpdateKey = "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
+var repairUpdateKeys = []string{
+	"lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI=", // e6fb20d55656904a, YubiKey A (primary)
+	"6K8uY/1qIogN2j3ZdpEr4PuTqXzH7EseTd6kzHxpIr4=", // 095d295f5fe9a4e2, YubiKey B (backup)
+}
+
 const repairDownloadLimit = 100 * 1024 * 1024
 
 var repairReleaseVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.(0|[1-9][0-9]*))?$`)
@@ -49,13 +58,25 @@ type repairManifest struct {
 	Archives      []repairArchive       `json:"archives"`
 }
 
-func verifyRepairManifest(data, signature, key []byte, version, platform, arch string) (repairArchive, error) {
+func verifyRepairManifest(data, signature []byte, keys [][]byte, version, platform, arch string) (repairArchive, error) {
 	fail := func() (repairArchive, error) { return repairArchive{}, fmt.Errorf("signed repair manifest rejected") }
-	if len(data) == 0 || len(data) > 65536 || data[len(data)-1] != '\n' || len(signature) != 89 || signature[88] != '\n' || len(key) != ed25519.PublicKeySize {
+	if len(data) == 0 || len(data) > 65536 || data[len(data)-1] != '\n' || len(signature) != 89 || signature[88] != '\n' {
 		return fail()
 	}
 	sig, err := base64.StdEncoding.Strict().DecodeString(string(signature[:88]))
-	if err != nil || base64.StdEncoding.EncodeToString(sig) != string(signature[:88]) || !ed25519.Verify(key, data, sig) {
+	if err != nil || base64.StdEncoding.EncodeToString(sig) != string(signature[:88]) {
+		return fail()
+	}
+	// Authenticate before parsing; the manifest key_id must then name the key
+	// that verified it.
+	var key []byte
+	for _, k := range keys {
+		if len(k) == ed25519.PublicKeySize && ed25519.Verify(k, data, sig) {
+			key = k
+			break
+		}
+	}
+	if key == nil {
 		return fail()
 	}
 	var m repairManifest
@@ -185,8 +206,7 @@ func acquireRepairMember(ctx context.Context, member string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, _ := base64.StdEncoding.DecodeString(repairUpdateKey)
-	a, err := verifyRepairManifest(data, sig, key, version, runtime.GOOS, runtime.GOARCH)
+	a, err := verifyRepairManifest(data, sig, decodeRepairKeys(), version, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return nil, err
 	}
@@ -296,4 +316,14 @@ func stageRepairDownload(target string, data []byte) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+//lint:ignore U1000 used by the Windows repair path.
+func decodeRepairKeys() [][]byte {
+	keys := make([][]byte, 0, len(repairUpdateKeys))
+	for _, s := range repairUpdateKeys {
+		k, _ := base64.StdEncoding.DecodeString(s)
+		keys = append(keys, k)
+	}
+	return keys
 }

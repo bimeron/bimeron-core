@@ -1,6 +1,10 @@
 //go:build ignore
 
 // Usage: go run scripts/release-manifest.go -tag vX.Y.Z -dir release [-verify]
+//
+// Signing uses BIMERON_RELEASE_CARD_SERIAL (an OpenPGP hardware token such as
+// a YubiKey, with BIMERON_RELEASE_ED25519_PUBLIC_KEY naming its pinned key) or,
+// for legacy tooling, the software key in BIMERON_RELEASE_ED25519_KEY.
 package main
 
 import (
@@ -17,7 +21,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"bimeron/internal/releasecard"
+
+	"golang.org/x/term"
 )
 
 const manifestName = "update-manifest.json"
@@ -92,7 +101,9 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 	var private ed25519.PrivateKey
 	var pub ed25519.PublicKey
 	var err error
-	if verify {
+	cardSerial := os.Getenv("BIMERON_RELEASE_CARD_SERIAL")
+	if verify || cardSerial != "" {
+		// A hardware key is identified by the pinned public key; the card must hold it.
 		pub, err = publicKey()
 	} else {
 		private, err = privateKey()
@@ -180,7 +191,21 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 		}
 		return nil
 	}
-	signature := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(private, canonical)) + "\n")
+	// Enforced for every signer so a manifest that outgrows hardware signing
+	// fails in tests rather than during a release.
+	if err := releasecard.CheckSize(len(canonical)); err != nil {
+		return err
+	}
+	var raw []byte
+	if cardSerial != "" {
+		raw, err = cardSign(cardSerial, pub, canonical)
+		if err != nil {
+			return err
+		}
+	} else {
+		raw = ed25519.Sign(private, canonical)
+	}
+	signature := []byte(base64.StdEncoding.EncodeToString(raw) + "\n")
 	if err := os.WriteFile(manifestPath, canonical, 0644); err != nil {
 		return err
 	}
@@ -188,4 +213,23 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 		return err
 	}
 	return nil
+}
+
+func cardSign(serial string, pub ed25519.PublicKey, msg []byte) ([]byte, error) {
+	n, err := strconv.ParseUint(serial, 10, 32)
+	if err != nil || n == 0 {
+		return nil, errors.New("BIMERON_RELEASE_CARD_SERIAL must be the decimal card serial number")
+	}
+	fd := int(os.Stdin.Fd())
+	pin := func() ([]byte, error) {
+		if !term.IsTerminal(fd) {
+			return nil, errors.New("hardware signing needs an interactive console for the PIN")
+		}
+		fmt.Fprintf(os.Stderr, "Signing PIN for card %d: ", n)
+		p, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		return p, err
+	}
+	touch := func() { fmt.Fprintf(os.Stderr, "Touch the YubiKey (card %d) to sign the manifest...\n", n) }
+	return releasecard.SignManifest(uint32(n), pub, msg, pin, touch)
 }

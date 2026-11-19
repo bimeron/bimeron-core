@@ -34,7 +34,7 @@ func TestRepairAcquisitionSignedPolicyNegatives(t *testing.T) {
 		}
 		b = append(b, '\n')
 		s := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv, b)) + "\n")
-		_, e = verifyRepairManifest(b, s, key, "0.2.0", "windows", "amd64")
+		_, e = verifyRepairManifest(b, s, [][]byte{key}, "0.2.0", "windows", "amd64")
 		return e
 	}
 	if e := verify(base, pub); e != nil {

@@ -213,7 +213,10 @@ Acceptance: when the protected broker's Wintun source is missing or invalid,
 repair may obtain that DLL within the original authenticated elevated session.
 Only the exact protected broker build version is eligible; caller JSON cannot
 select metadata, URL, version, key, digest or archive member. Production uses the
-existing Desktop Ed25519 public key (key ID `7370a2d8cf890e5e`), not a new trust root.
+release signing keys Desktop pins, not a new trust root: Core from this source
+accepts the hardware keys `e6fb20d55656904a` and `095d295f5fe9a4e2` listed in
+[RELEASE_KEYS.md](RELEASE_KEYS.md); the manifest `key_id` must name the key that
+verified it.
 
 `repair_acquire.go` verifies the existing signed update-manifest envelope, all four
 unique platform targets, exact release/channel, signed archive length and SHA-256.
