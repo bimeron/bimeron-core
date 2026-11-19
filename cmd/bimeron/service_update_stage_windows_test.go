@@ -267,10 +267,18 @@ func TestWindowsUpdateSourceNameSurrogateIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	setTestReparsePoint(t, directory, reparseTagNameSurrogate|testReparseTag)
-	// A directory does not open without backup semantics, so the open itself
-	// refuses it before the reparse tag is read.
-	if err := copyUpdateSource(directory, staged); !errors.Is(err, errUpdateSourceNotRegular) {
+	// A directory does not open without backup semantics; a name-surrogate
+	// directory is still reported as a link.
+	if err := copyUpdateSource(directory, staged); !errors.Is(err, errUpdateSourceLink) {
 		t.Fatal("name-surrogate reparse directory", err)
+	}
+	cloudDirectory := filepath.Join(dir, "cloud")
+	if err := os.Mkdir(cloudDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	setTestReparsePoint(t, cloudDirectory, testReparseTag)
+	if err := copyUpdateSource(cloudDirectory, staged); !errors.Is(err, errUpdateSourceNotRegular) {
+		t.Fatal("non-surrogate reparse directory", err)
 	}
 	if _, err := os.Lstat(staged); !os.IsNotExist(err) {
 		t.Fatal("staged file created", err)
