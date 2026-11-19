@@ -137,6 +137,9 @@ can use an explicit `IdentityFile` or a password supplied through the local
 control challenge described below. An unavailable GUI means an interactive
 challenge times out after two minutes. There is no unattended password cache.
 
+The Apple packet tunnel provider also skips the agent and standard identity
+files. Set `IdentityFile` and `KnownHostsFile` in its SSH profile.
+
 ## Verify the SSH server
 
 Bimeron requires a matching entry in `known_hosts`. It never automatically
