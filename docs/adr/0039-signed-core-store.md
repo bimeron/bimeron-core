@@ -1,7 +1,7 @@
 # ADR 0039: Signed versioned core store and anti-rollback floor
 
-Status: proposed draft, revision 9 (final text), November 18, 2026. Follow-up questions
-Q10, Q11 and Q12 await the owner; the rest is decided. Not accepted. This
+Status: proposed, November 19, 2026. All design questions (Q1–Q12) are
+decided. The record becomes accepted when it is merged. Not accepted yet. This
 record authorizes no implementation. It amends
 [ADR 0002](0002-signed-service-updates.md) and the explicit-repair
 replacement policy of #140 in [REPAIR_SESSION.md](../REPAIR_SESSION.md).
@@ -366,15 +366,13 @@ stolen secret or lost device can lower a floor.
   - `F` counts only for the freshness index.
   - Historical keys are never removed, except by an epoch reset, so stored
     evidence keeps verifying.
-- **Desktop trust (Q10, recommended, pending).** Desktop accepts a manifest
-  that verifies under its embedded trust set, or under the trust set of the
-  newest committed store Core. That store Core was itself verified through
-  the bridge chain. Desktop is not the security boundary, so this widening is
+- **Desktop trust (Q10, decided).** Desktop verifies manifests with a single
+  trust set: the one of the higher-versioned binary among its pinned Core and
+  the newest committed store Core. That store Core was itself verified through
+  the bridge chain. Desktop is not the security boundary, so this is
   acceptable, and trust changes then need no Desktop package release.
-  - If Q10 is adopted, Desktop uses one trust set rather than the union of the
-    two: the set of the higher-versioned binary among its pinned Core and the
-    newest committed store Core. A union would keep accepting keys that the
-    newer set has retired.
+  - Desktop never uses the union of the two sets. A union would keep accepting
+    keys that the newer set has retired.
   - Desktop obtains that trust set from `version -json`, never by parsing the
     binary.
 
@@ -545,13 +543,15 @@ integers and never compare strings.
   users can always satisfy it.
 - Moving from beta to stable remains subject to "never below active": a
   machine on `0.5.0-beta.3` moves to stable only with `0.5.0` or later.
-- **Fix ancestry (Q11, recommended).** A version floor claims that every
+- **Fix ancestry (Q11, decided).** A version floor claims that every
   version at or above it contains the fix. `compatibility.json` records the
   fixing commit or commits for each floor. The publisher refuses to publish a
   floor, or any later release at or above it, unless every published tag at
   or above the floor contains those commits (`git merge-base --is-ancestor`).
-  As a consequence, a maintenance line below a raised floor can no longer
-  publish releases.
+  The check uses the publisher's own record of signed releases, not the tags
+  in the remote repository, so that nobody who can push a tag can block
+  publication. As a consequence, a maintenance line below a raised floor can
+  no longer publish releases.
 
 **Tests (shared by Core and Desktop)**
 
@@ -631,8 +631,7 @@ treats the store as read-only, refuses every elevated role except `status`,
 and reports `newer-component-required`. The only exception is finishing the
 post-`ready` steps of, paying the promotion debt of, or republishing, the
 active version itself, which lifts only the "version above own" trigger (see
-Finishing the active version with an older broker; pending owner decision
-Q12). "Ignored and
+Finishing the active version with an older broker; Q12). "Ignored and
 reported" applies only to records whose signatures fail under keys the verifier
 knows. An older package
 copy elevated after a rotation therefore cannot evade a newer elevation floor
@@ -966,8 +965,7 @@ reports `recovery-suspended`, and Desktop prompts the user to reconcile.
   the broker closes the journal without promotion. The installed image is
   then handled by the Repair rules.
 
-**Finishing the active version with an older broker (pending owner decision
-Q12).** After a commit, the only binary for the active version may sit in
+**Finishing the active version with an older broker (Q12, decided).** After a commit, the only binary for the active version may sit in
 staging, or it may have been quarantined from `versions/<active>`. In that
 case, every remaining broker may be below the active version. Under Effective
 floor, such a broker makes the store read-only.
@@ -1005,9 +1003,9 @@ The exception has strict limits:
   raised the elevation floor above every remaining broker, or added keys or a
   schema the broker cannot verify), the result is "package upgrade required".
 
-The alternative under Q12 is to have no exception: losing the active store
-copy then always requires a Desktop package release. That would tie Core
-recovery to Desktop releases again.
+The rejected alternative under Q12 was to have no exception. Losing the
+active store copy would then always require a Desktop package release, which
+would tie Core recovery to Desktop releases again.
 
 **"Installed"** always means the image at the path the current registration
 names.
@@ -1892,7 +1890,8 @@ merged or released until all of the following hold:
 
 ## Decisions
 
-All decided by the user on November 18, 2026:
+Decided by the user on November 18, 2026 (Q1–Q9) and November 19, 2026
+(Q10–Q12):
 
 | # | Decision |
 | --- | --- |
@@ -1905,33 +1904,9 @@ All decided by the user on November 18, 2026:
 | Q7 | Authenticode is deferred; constraints are reserved |
 | Q8 | "Never below active" is strict; there is no manual downgrade |
 | Q9 | Pre-store tools are intentionally unable to manage store-era services |
-
-Follow-up questions raised by the second adversarial review, with
-recommended defaults already written into this draft:
-
-- **Q10. Trust-set changes reaching Desktop.** Recommended: Desktop accepts a
-  manifest that verifies under its embedded trust set or under the trust set of
-  the newest committed store Core, which is itself verified through bridge
-  releases. Rotations and revocations then do not need a Desktop package
-  release. The alternative is to require a Desktop package release for every
-  trust change, which re-couples Core security updates to Desktop releases.
-- **Q11. Fix ancestry for version floors.** Recommended: the publisher refuses
-  a floor unless every published tag at or above it contains the recorded
-  fixing commits. The consequence is that maintenance lines below a raised
-  floor cannot publish. The alternative is a documented single-line release
-  model without the check. If the check is adopted, it is based on the
-  publisher's own record of signed releases, not on the tags in the remote
-  repository; otherwise anyone who can push a tag could block publication.
-
-- **Q12. Finishing the active version's store copy with an older broker.**
-  Recommended: a broker below the active version may only finish the
-  post-`ready` steps of a pending switch journal, pay a promotion debt, or
-  republish `versions/<active>` from a stream whose manifest digest equals the
-  active record's. All floor evidence must still verify under its own trust and
-  epoch rules. It must be at or above the committed
-  elevation floor. It never changes the service, the registration, or floor or
-  active evidence. The alternative is that losing the active store copy always
-  requires a Desktop package release.
+| Q10 | Desktop verifies with the trust set of the higher-versioned binary among its pinned Core and the newest committed store Core; never the union |
+| Q11 | Fix-ancestry check for floors, based on the publisher's own record of signed releases |
+| Q12 | A broker below the active version may only finish the post-`ready` steps of a pending journal, pay a promotion debt, or republish `versions/<active>` with a matching manifest digest. It never changes the service, the registration, or floor or active evidence |
 
 The remaining hardware detail is settled during the key ceremony. Each
 YubiKey uses PIV Ed25519 (firmware 5.7+) or OpenPGP Ed25519 (firmware
