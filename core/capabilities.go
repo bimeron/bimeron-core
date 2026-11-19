@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"bimeron/internal/config"
+	"bimeron/internal/wgconf"
 )
 
 // Capabilities describes what the current build supports on this platform.
@@ -37,6 +38,26 @@ type Capabilities struct {
 	// until an explicit stop, including recovery waits and failed, and that
 	// Status.KillSwitch publishes it.
 	KillSwitchHold bool `json:"kill_switch_hold"`
+	// WireGuard describes WireGuard and AmneziaWG upstream support. Older
+	// daemons omit it; treat absence as unsupported.
+	WireGuard *WireGuardCapabilities `json:"wireguard,omitempty"`
+}
+
+// WireGuardCapabilities reports build support for WireGuard and AmneziaWG
+// client profiles and the "bimeron wireguard" document bridge version.
+type WireGuardCapabilities struct {
+	Supported       bool     `json:"supported"`
+	Experimental    bool     `json:"experimental"`
+	Protocols       []string `json:"protocols"`
+	AWGVersions     []string `json:"awg_versions"`
+	URISchemes      []string `json:"uri_schemes"`
+	AllowedIPsModes []string `json:"allowed_ips_modes"`
+	DocumentAPI     int      `json:"document_api"`
+}
+
+// WireGuardSupport returns the static WireGuard capability object.
+func WireGuardSupport() *WireGuardCapabilities {
+	return &WireGuardCapabilities{Supported: true, Experimental: true, Protocols: []string{wgconf.ProtocolWireGuard, wgconf.ProtocolAmneziaWG}, AWGVersions: slices.Clone(wgconf.AWGVersions), URISchemes: []string{"vpn", "wireguard", "wg"}, AllowedIPsModes: slices.Clone(config.AllowedIPsModes), DocumentAPI: 1}
 }
 
 // IKEv2Capabilities applies only to the system backend. Top-level flags retain
@@ -64,7 +85,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport()}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}

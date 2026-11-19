@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +23,7 @@ import (
 	"bimeron/internal/routing"
 	"bimeron/internal/safefile"
 	"bimeron/internal/systemvpn"
+	"bimeron/internal/wgconf"
 )
 
 const (
@@ -44,7 +46,9 @@ type File struct {
 	ShadowTLS        *accesskey.ShadowTLS
 	// lines maps "Section", "Section.Field", "Rule<n>" and "Rule<n>.Field" to
 	// one-based profile lines for problem locations.
-	lines map[string]int
+	// AllowedIPsMode is [Routing] AllowedIPsMode; empty means direct.
+	AllowedIPsMode string
+	lines          map[string]int
 }
 type GeoData struct {
 	GeoIPFile   string
@@ -71,6 +75,7 @@ type Access struct {
 	KeyFile           string
 	Type              string
 	Parameters        *Parameters
+	WireGuard         *WireGuardOptions
 	Username          string
 	IdentityFile      string
 	KnownHostsFile    string
@@ -326,6 +331,7 @@ func parse(b []byte) (*File, error) {
 					v.ServerName = value
 				case "PublicKey":
 					v.PublicKey = value
+					c.Access.addWireGuard(key, value)
 				case "ShortID":
 					v.ShortID = value
 				case "Fingerprint":
@@ -389,6 +395,8 @@ func parse(b []byte) (*File, error) {
 						}
 						err = v.XHTTPOptions.SetXHTTPConfField(key, value)
 					}
+				} else if wgconf.AccessOption(key) {
+					c.Access.addWireGuard(key, value)
 				} else {
 					recognized = false
 				}
@@ -405,6 +413,8 @@ func parse(b []byte) (*File, error) {
 		case "Routing":
 			if key == "Default" {
 				c.Routing.Default = routing.Action(value)
+			} else if key == "AllowedIPsMode" {
+				c.AllowedIPsMode = value
 			} else {
 				recognized = false
 			}
@@ -545,7 +555,7 @@ func accessProblem(err error) error {
 // locate fills the profile line of a problem from recorded field positions.
 func (c *File) locate(err error) error {
 	p := problem.Of(err)
-	if p.Line != 0 || c == nil {
+	if p.Line != 0 || c == nil || p.Document != "" {
 		return p
 	}
 	section := p.Section
@@ -604,6 +614,9 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 		return nil, err
 	}
 	if _, err := loadBaseBytes(c, path, geoIP, geoSite); err != nil {
+		return nil, c.locate(err)
+	}
+	if err := c.validateAllowedIPsMode(); err != nil {
 		return nil, c.locate(err)
 	}
 	if c.ShadowTLS != nil {
@@ -778,6 +791,10 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	if c.Access.Type != "masque" && (c.Access.MASQUEPath != "" || c.Access.CAFile != "") {
 		return nil, problem.New("option_requires_type", "[AccessKey] MASQUEPath and CAFile require Type = masque").In("AccessKey").At(c.present("MASQUEPath", "CAFile")).Arg("type", "MASQUE")
 	}
+	if o := c.Access.WireGuard; o != nil && c.Access.Type != "wireguard" && slices.ContainsFunc(o.keys, wgconf.AccessOption) {
+		key := o.keys[slices.IndexFunc(o.keys, wgconf.AccessOption)]
+		return nil, problem.New("option_requires_type", "[AccessKey] WireGuard options require Type = wireguard").In("AccessKey").At(key).Arg("type", "WireGuard")
+	}
 	sources := 0
 	if c.Access.SS != "" {
 		sources++
@@ -849,6 +866,9 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
 			return nil, problem.New("option_requires_type", "[AccessKey] SSH file options require an SSH profile").In("AccessKey").At(c.present("IdentityFile", "KnownHostsFile")).Arg("type", "SSH")
 		}
+	}
+	if c.Access.Type == "wireguard" {
+		return c.explicitWireGuard()
 	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
 		if c.Access.Type == "" {
@@ -1096,7 +1116,11 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 		}
 		b, err := readFile(keyPath)
 		if err != nil {
-			return nil, c.keyProblem(err)
+			p := problem.Of(c.keyProblem(err))
+			return nil, p.At("File")
+		}
+		if ok, err := c.wireGuardFile(string(b)); ok {
+			return c, err
 		}
 		key = string(b)
 	}

@@ -59,6 +59,11 @@ func run(args []string) error {
 			return writeBridge(os.Stdout, bridgeResponse{}, fmt.Errorf("invalid arguments"))
 		}
 		return documentBridge(os.Stdin, os.Stdout)
+	case "wireguard":
+		if len(args) != 1 {
+			return writeWireGuard(os.Stdout, wireguardResponse{}, invalidWireGuardRequest("invalid arguments"))
+		}
+		return wireguardBridge(os.Stdin, os.Stdout)
 	case "geodata":
 		return geoDataBridge(args[1:], os.Stdout)
 	case "ikev2":

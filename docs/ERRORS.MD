@@ -32,6 +32,7 @@ A configuration problem is a JSON object:
 | `line` | optional | One-based profile line of the field, the source option or the section header. |
 | `value` | optional | `present` when the field had a non-empty value, `absent` otherwise. Never the value itself. |
 | `args` | optional | String-to-string map of safe placeholder values. |
+| `document` | optional | `wireguard` when the problem is located in WireGuard/AmneziaWG text (a file referenced by `[AccessKey] File` or text given to `bimeron wireguard`). `section`, `field` and `line` then refer to that text: sections `Interface`/`Peer` and wg-quick key names. See [WIREGUARD.MD](WIREGUARD.MD). |
 
 `args` and `message` never contain passwords, user IDs, keys, URIs, user-supplied
 host names, file paths or profile fragments. A client already holds the profile

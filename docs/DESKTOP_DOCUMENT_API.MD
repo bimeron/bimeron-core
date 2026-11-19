@@ -151,3 +151,13 @@ GeoData rule editing and catalogs share the identifier contract in
 Catalogs normalize case to lowercase; document edits preserve the supplied spelling.
 Bang is part of the stable ID, never negation. Attribute selectors, controls,
 non-ASCII, empty/oversized IDs and empty comma entries are rejected.
+
+## WireGuard and AmneziaWG text
+
+WireGuard/AmneziaWG files referenced by `[AccessKey] File` are edited with the
+separate `bimeron wireguard` bridge. It has the same framing and limits as this
+adapter and provides the `capabilities`, `detect`, `inspect`, `edit` and
+`import_uri` operations. `bimeron document` itself never reads the referenced
+file; `bimeron validate --json` does and reports problems with
+`"document": "wireguard"`. `[Routing] AllowedIPsMode` is edited here with
+`set_field`. The full contract is in [WIREGUARD.MD](WIREGUARD.MD#desktop-document-bridge).
