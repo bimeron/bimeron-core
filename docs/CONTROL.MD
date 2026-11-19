@@ -445,9 +445,16 @@ with `stop` followed by `start`, because a repeated `start` keeps the running
 session. Embedders without a profile path are compared by profile name.
 
 If the daemon or service fails while a `start` waits for a handover, the
-previous session's filters stay installed and the `start` fails; once the owner
-has abandoned the engine, no later `start` is accepted. A user's `stop` that is
-already in progress still releases protection.
+previous session's filters stay installed and the `start` is refused; a
+cleanup failure of the previous session is still reported in status first,
+otherwise the status becomes `disconnected` and the filters are then reported
+as residual. Once the owner has abandoned the engine, no later `start` is
+accepted; a response that still reaches the client carries
+`daemon_shutting_down`, although the connection usually closes first. A
+user's `stop` that is already in progress still releases protection. The
+daemon runs commands one at a time, so a `start` sent during a `stop` waits
+for it; an embedder whose `Engine.Stop` timed out gets `ErrSessionRunning`
+from `Start` until the stop has finished.
 
 Protection also stays installed when the daemon or service ends for a reason
 other than a stop, for example a failed control listener or a crash: the

@@ -360,6 +360,11 @@ func TestReconnectNowAndHeldStartGuards(t *testing.T) {
 	e.refuse = core.ErrKillSwitchHeld
 	e.mu.Unlock()
 	check(call("start", s.instance, ""), "kill_switch_held")
+	// An engine whose owner is exiting refuses with the shutdown code.
+	e.mu.Lock()
+	e.refuse = core.ErrEngineExiting
+	e.mu.Unlock()
+	check(call("start", s.instance, ""), "daemon_shutting_down")
 	e.mu.Lock()
 	e.refuse = nil
 	e.mu.Unlock()

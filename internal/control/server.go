@@ -425,6 +425,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 						answer.Error = "session_already_running"
 					} else if errors.Is(err, core.ErrKillSwitchHeld) {
 						answer.Error = "kill_switch_held"
+					} else if errors.Is(err, core.ErrEngineExiting) {
+						answer.Error = "daemon_shutting_down"
 					}
 				}
 			}

@@ -236,25 +236,54 @@ func TestListenerFailureAbandonsSessionBeforeCancel(t *testing.T) {
 	}
 }
 
-type panickingListener struct{}
+// panickingListener hands out queued connections, then panics.
+type panickingListener struct {
+	conns chan net.Conn
+	fail  chan struct{}
+}
 
-func (panickingListener) Accept() (net.Conn, error) { panic("accept") }
-func (panickingListener) Close() error              { return nil }
-func (panickingListener) Addr() net.Addr            { return &net.TCPAddr{} }
+func (l panickingListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.fail:
+		panic("accept")
+	}
+}
+func (panickingListener) Close() error   { return nil }
+func (panickingListener) Addr() net.Addr { return &net.TCPAddr{} }
 
 // A panic in Serve keeps kill switch protection: the session is marked
-// abandoned before it is stopped, and the panic is rethrown.
+// abandoned while its context is still live, then stopped, and the panic is
+// rethrown.
 func TestServePanicAbandonsSession(t *testing.T) {
-	e := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
-	defer func() {
-		if p := recover(); p != "accept" {
-			t.Fatal("panic not rethrown", p)
-		}
-		if !e.marked || !e.stopped {
-			t.Fatal("panic did not abandon the session", e.marked, e.stopped)
-		}
+	e := &abandonEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
+	l := panickingListener{conns: make(chan net.Conn), fail: make(chan struct{})}
+	panicked := make(chan any, 1)
+	go func() {
+		defer func() { panicked <- recover() }()
+		_ = s.Serve(context.Background(), l)
 	}()
-	_ = NewServer(e).Serve(context.Background(), panickingListener{})
+	client, server := net.Pipe()
+	l.conns <- server
+	path, _ := filepath.Abs("held.conf")
+	ctx, end := context.WithTimeout(context.Background(), 3*time.Second)
+	defer end()
+	if _, err := exchange(ctx, client, Request{Command: "start", Config: path}); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	close(l.fail)
+	if p := <-panicked; p != "accept" {
+		t.Fatal("panic not rethrown", p)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.marked || !e.liveAtMark || !e.stopped {
+		t.Fatal("panic did not abandon the live session", e.marked, e.liveAtMark, e.stopped)
+	}
 }
 
 // configEngine records the configuration of the last Start.
