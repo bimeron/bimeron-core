@@ -536,6 +536,21 @@ type protectionOwner interface {
 	ReleaseError() error
 }
 
+// Guard dispatch can precede run registration. Serialize each native cleanup
+// decision with MarkAbandon. Only the guard bookkeeping runs under mu.
+func (e *Engine) configureNativeCleanup(cfg *SessionConfig, claimed, commit func() bool) {
+	cfg.retainNativeProtection = func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.abandon || claimed()
+	}
+	cfg.commitNativeStop = func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return !e.abandon && commit()
+	}
+}
+
 func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	cfg.endpointChanged = func(endpoints sessionEndpoints) {
 		e.mu.Lock()
@@ -566,8 +581,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		cancelRun(errGuardedPanic)
 		return cleaned
 	})
-	cfg.nativeCrashClaimed = crashClaimed
-	cfg.commitNativeStop = commitStop
+	e.configureNativeCleanup(&cfg, crashClaimed, commitStop)
 	// Runs after the handler below, so a second panic during crash cleanup
 	// still waits for it.
 	defer unregister()

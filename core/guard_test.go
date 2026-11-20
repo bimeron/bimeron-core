@@ -127,7 +127,7 @@ func TestNativeCloseAfterStopThenCrashDuringSetup(t *testing.T) {
 		return dispatched
 	})
 	defer unregister()
-	s := &protectedIKEv2Session{setupContext: ctx, crashClaimed: claimed, commitStop: commit, native: protectionTestSession{steps: &steps}, guard: protectionTestGuard{&steps}, cleanupDNS: func() error { steps = append(steps, "dns"); return nil }}
+	s := &protectedIKEv2Session{setupContext: ctx, retainProtection: claimed, commitStop: commit, native: protectionTestSession{steps: &steps}, guard: protectionTestGuard{&steps}, cleanupDNS: func() error { steps = append(steps, "dns"); return nil }}
 	cancel(context.Canceled)
 	guard.Go(func() { panic("during setup") })
 	select {
@@ -140,5 +140,46 @@ func TestNativeCloseAfterStopThenCrashDuringSetup(t *testing.T) {
 	}
 	if err := s.Close(); err == nil || !reflect.DeepEqual(steps, []string{"ras", "retain-wfp"}) {
 		t.Fatalf("cleanup %v, error %v", steps, err)
+	}
+}
+
+// Model the interval after Start admits the run and before its goroutine
+// registers with the panic guard. The later cancellation has no panic cause.
+func TestNativeCleanupAfterMissedOwnerPanicDispatch(t *testing.T) {
+	waitNoSessions(t)
+	e := &Engine{active: true}
+	e.MarkAbandon()
+	var rethrown any
+	defer guard.SetRethrow(func(p any) { rethrown = p })()
+	func() {
+		defer guard.Recover()
+		panic("owner")
+	}()
+	claimed, commit, unregister := guard.RegisterSession(func(any) <-chan struct{} {
+		t.Fatal("unexpected dispatch")
+		return nil
+	})
+	defer unregister()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if rethrown != "owner" || claimed() || context.Cause(ctx) != context.Canceled {
+		t.Fatal("expected missed dispatch and ordinary cancellation")
+	}
+	var cfg SessionConfig
+	e.configureNativeCleanup(&cfg, claimed, commit)
+	var steps []string
+	status := NativeStatus{DNS: "active", WFP: "active"}
+	s := &protectedIKEv2Session{
+		setupContext: ctx, retainProtection: cfg.retainNativeProtection, commitStop: cfg.commitNativeStop,
+		native: protectionTestSession{steps: &steps}, guard: protectionTestGuard{&steps},
+		cleanupDNS: func() error { steps = append(steps, "dns"); return nil },
+		update:     func(f func(*NativeStatus)) { f(&status) },
+	}
+	err := s.Close()
+	if err == nil || !reflect.DeepEqual(steps, []string{"ras", "retain-wfp"}) || status.DNS != "retained" || status.WFP != "retained" || !status.RecoveryRequired {
+		t.Fatalf("cleanup %v, status %+v, error %v", steps, status, err)
+	}
+	if cfg.commitNativeStop() {
+		t.Fatal("WFP release committed after abandonment")
 	}
 }

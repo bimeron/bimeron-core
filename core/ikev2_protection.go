@@ -13,17 +13,17 @@ type retainedGuard interface {
 // Native protection is released only after an explicitly requested stop and
 // successful RAS/DNS cleanup. Unexpected loss keeps the persistent policy armed.
 type protectedIKEv2Session struct {
-	setupContext context.Context
-	commitStop   func() bool
-	crashClaimed func() bool
-	native       session
-	guard        retainedGuard
-	cleanupDNS   func() error
-	mu           sync.Mutex
-	lost         bool
-	once         sync.Once
-	closeErr     error
-	update       func(func(*NativeStatus))
+	setupContext     context.Context
+	commitStop       func() bool
+	retainProtection func() bool
+	native           session
+	guard            retainedGuard
+	cleanupDNS       func() error
+	mu               sync.Mutex
+	lost             bool
+	once             sync.Once
+	closeErr         error
+	update           func(func(*NativeStatus))
 }
 
 func (s *protectedIKEv2Session) Wait(ctx context.Context) error {
@@ -56,7 +56,7 @@ func (s *protectedIKEv2Session) Close() error {
 		s.mu.Unlock()
 		// Open may close this session before Wait observes a crash.
 		// Stop can win context cancellation before the guard claims a crash.
-		if err != nil || lost || (s.crashClaimed != nil && s.crashClaimed()) || (s.setupContext != nil && context.Cause(s.setupContext) == errGuardedPanic) {
+		if err != nil || lost || (s.retainProtection != nil && s.retainProtection()) || (s.setupContext != nil && context.Cause(s.setupContext) == errGuardedPanic) {
 			_ = s.guard.Retain()
 			update(func(n *NativeStatus) {
 				n.WFP = "retained"

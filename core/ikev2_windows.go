@@ -113,7 +113,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("ikev2_protection_install_failed", false)
 	}
 	c.updateNative(func(n *NativeStatus) { n.WFP = "active"; n.DNS = "installing" })
-	protected := &protectedIKEv2Session{setupContext: ctx, native: observed, guard: guard, crashClaimed: c.nativeCrashClaimed, commitStop: c.commitNativeStop, update: c.nativeUpdate, cleanupDNS: func() error {
+	protected := &protectedIKEv2Session{setupContext: ctx, native: observed, guard: guard, retainProtection: c.retainNativeProtection, commitStop: c.commitNativeStop, update: c.nativeUpdate, cleanupDNS: func() error {
 		cleanup, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		return windowsnet.CleanupIKEv2DNS(cleanup, tag, network.DNS)
