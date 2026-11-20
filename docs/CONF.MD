@@ -766,7 +766,11 @@ addresses without removing them from the profile, and every group must still
 have a usable address.
 
 Core dials the explicit IP through the VPN upstream and verifies TLS against
-the original URL hostname. It tries addresses within an endpoint before moving
+the original URL hostname. Windows and Apple use native system trust,
+including enterprise trust settings, with verification-time network fetch
+disabled. Linux and Android retain Go verification with local roots. If
+the server and local trust stores cannot supply a trusted chain, the
+attempt fails. Configure the HTTPS resolver to present its intermediates. It tries addresses within an endpoint before moving
 to the next resolver. A valid NXDOMAIN terminates the query. The query budget
 is eight seconds, shared among remaining addresses, with up to two seconds per
 attempt. Exhaustion returns SERVFAIL. Core does not use system name resolution,

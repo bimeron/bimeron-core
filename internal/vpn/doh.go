@@ -53,6 +53,7 @@ func NewDoHResolver(dialer transport.StreamDialer, endpoints []dnsconfig.DoHEndp
 					defer cancel()
 					return dialer.DialStream(dialCtx, target)
 				},
+				TLSClientConfig:        dohTLSConfig(),
 				TLSHandshakeTimeout:    dnsconfig.ExchangeTimeout,
 				ForceAttemptHTTP2:      true,
 				DisableCompression:     true,

@@ -334,6 +334,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Check native DoH TLS trust with an AIA witness
+        run: |
+          CGO_ENABLED=0 go test ./internal/vpn -run '^TestDoH' -count=1
+          CGO_ENABLED=1 go test ./internal/vpn -run '^TestDoHNativeTrust$' -count=1
       - name: Build system extension and check C ABI
         run: sh scripts/build-apple.sh
       - name: Build app extension and check C ABI

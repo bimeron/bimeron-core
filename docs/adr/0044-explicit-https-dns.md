@@ -22,6 +22,13 @@ inside the peer AllowedIPs and apply the same resolver to internal lookups.
 Physical bootstrap for the upstream transport and SSConf retains its
 existing behavior.
 
+Windows uses CryptoAPI SSL chain policy with cache-only URL retrieval and
+AIA disabled. macOS and iOS use Security.framework SSL trust evaluation
+with network fetch disabled. This retains platform trust and enterprise
+policy without requiring CA distribution. The Apple CLI resolves the public
+framework APIs at runtime to preserve cgo-free distribution builds. Linux
+and Android use Go's existing local trust verification.
+
 The resolver retries addresses within each endpoint, then moves to the next
 endpoint. It accepts validated NXDOMAIN as final. All attempts share a
 bounded deadline. Failure returns SERVFAIL to the captured client and leaves
