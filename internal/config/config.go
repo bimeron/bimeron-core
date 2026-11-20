@@ -705,47 +705,10 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {
 		return nil, problem.New("listen_invalid", "[Interface] Listen must be a loopback IP and port").In("Interface").At("Listen")
 	}
-	if c.Tunnel.KillSwitch {
-		for i, r := range c.Routing.Rules {
-			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
-				field := "Domain"
-				if r.GeoIP != "" {
-					field = "GeoIP"
-				} else if r.GeoSite != "" {
-					field = "GeoSite"
-				}
-				return nil, problem.New("kill_switch_cidr_only", fmt.Sprintf("rule %d: kill switch supports CIDR rules only", i+1)).In("Rule").At(field).AtRule(i + 1)
-			}
-		}
-	}
-	if path != "" {
-		needIP, needSite := false, false
-		for _, r := range c.Routing.Rules {
-			needIP = needIP || r.GeoIP != ""
-			needSite = needSite || r.GeoSite != ""
-		}
-		if needIP {
-			geoIP, err = readGeoData(path, c.GeoData.GeoIPFile, "geoip")
-			if err != nil {
-				return nil, err
-			}
-		}
-		if needSite {
-			geoSite, err = readGeoData(path, c.GeoData.GeoSiteFile, "geosite")
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	c.geoData, err = routing.DecodeGeoData(geoIP, geoSite)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := c.RoutingPolicy(); err != nil {
-		return nil, err
-	}
-	if c.Tunnel.Mode == "vpn" {
-		if _, err := c.VPNPolicy(); err != nil {
+	// The access key is resolved below. validateAllowedIPsMode rejects
+	// "only" for other transports once the peer type is known.
+	if c.AllowedIPsMode != "only" {
+		if err := c.validateRouting(path, geoIP, geoSite); err != nil {
 			return nil, err
 		}
 	}
@@ -1290,7 +1253,52 @@ func (c *File) VPNPolicy() (*routing.Policy, error) {
 
 // RoutingPolicy compiles against the immutable dataset snapshot loaded with this profile.
 func (c *File) RoutingPolicy() (*routing.Policy, error) {
+	if c.IsWireGuard() && c.AllowedIPsMode == "only" {
+		return routing.Compile(routing.Config{Default: routing.Proxy})
+	}
 	return routing.CompileWithGeoData(c.Routing, c.geoData)
+}
+
+func (c *File) validateRouting(path string, geoIP, geoSite []byte) error {
+	var err error
+	if c.Tunnel.KillSwitch {
+		for i, r := range c.Routing.Rules {
+			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
+				field := "Domain"
+				if r.GeoIP != "" {
+					field = "GeoIP"
+				} else if r.GeoSite != "" {
+					field = "GeoSite"
+				}
+				return problem.New("kill_switch_cidr_only", fmt.Sprintf("rule %d: kill switch supports CIDR rules only", i+1)).In("Rule").At(field).AtRule(i + 1)
+			}
+		}
+	}
+	if path != "" {
+		needIP, needSite := false, false
+		for _, r := range c.Routing.Rules {
+			needIP = needIP || r.GeoIP != ""
+			needSite = needSite || r.GeoSite != ""
+		}
+		if needIP {
+			geoIP, err = readGeoData(path, c.GeoData.GeoIPFile, "geoip")
+			if err != nil {
+				return err
+			}
+		}
+		if needSite {
+			geoSite, err = readGeoData(path, c.GeoData.GeoSiteFile, "geosite")
+			if err != nil {
+				return err
+			}
+		}
+	}
+	c.geoData, err = routing.DecodeGeoData(geoIP, geoSite)
+	if err != nil {
+		return err
+	}
+	_, err = c.RoutingPolicy()
+	return err
 }
 
 func readGeoData(profile, resource, kind string) ([]byte, error) {

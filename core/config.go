@@ -207,12 +207,6 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
-	if copy.AllowedIPsMode == "only" {
-		// Bimeron rules and Default do not apply; AllowedIPs alone decide.
-		if p, err = routing.Compile(routing.Config{Default: routing.Proxy}); err != nil {
-			return SessionConfig{}, err
-		}
-	}
 	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, MTU: mtu, adapterAlias: alias,
 		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }

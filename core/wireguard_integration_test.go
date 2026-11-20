@@ -15,6 +15,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/config"
+	"bimeron/internal/problem"
 	"bimeron/internal/proxy"
 	"bimeron/internal/telemetry"
 	"bimeron/internal/wgconf"
@@ -123,5 +124,63 @@ func TestWireGuardTextSetsAdapterMTUAndDNS(t *testing.T) {
 		if err != nil || s.MTU != tc.mtu || strings.Join(s.DNS, ",") != tc.dns {
 			t.Fatalf("%q/%q: mtu %d dns %v err %v", tc.wgExtra, tc.profileExtra, s.MTU, s.DNS, err)
 		}
+	}
+}
+
+func TestWireGuardOnlySavedRules(t *testing.T) {
+	dir := t.TempDir()
+	client := wgtest.NewKeyPair(t)
+	awg := wgtest.Profiles["awg-2.0"]
+	server := wgtest.StartAWG(t, client, awg.Server)
+	if err := os.WriteFile(filepath.Join(dir, "peer.conf"), []byte(server.ClientText(client, "10.77.0.0/24", awg.Client...)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "profile.conf")
+	for _, tc := range []struct{ mode, iface, want string }{
+		{"only", "Mode = vpn\nKillSwitch = true", ""},
+		{"direct", "Mode = vpn\nKillSwitch = true", "kill_switch_cidr_only"},
+		{"block", "Mode = proxy", "geodata_unreadable"},
+		{"only", "Mode = proxy", ""},
+	} {
+		t.Run(tc.mode+"/"+tc.iface, func(t *testing.T) {
+			text := "[Profile]\nVersion = 1\n[AccessKey]\nFile = peer.conf\n[Interface]\n" + tc.iface + "\n[Routing]\nAllowedIPsMode = " + tc.mode + "\n[GeoData]\nGeoSiteFile = absent.dat\n[Rule]\nDomain = internal.example\nAction = block\n[Rule]\nGeoSite = example\nAction = direct\n"
+			if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if tc.want != "" {
+				if err == nil || problem.Of(err).Code != tc.want {
+					t.Fatalf("want %s, got %v", tc.want, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.validate(); err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Policy.Config().Rules) != 0 {
+				t.Fatal("inactive rules reached session policy")
+			}
+			if cfg.Mode == "proxy" {
+				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.Listen = listener.Addr().String()
+				listener.Close()
+				engine := New(Options{})
+				if err := engine.Start(t.Context(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				defer engine.Stop(t.Context())
+				awaitState(t, engine, Connected)
+			}
+			saved, err := os.ReadFile(path)
+			if err != nil || string(saved) != text {
+				t.Fatal("profile changed")
+			}
+		})
 	}
 }
