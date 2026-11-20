@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -604,14 +605,33 @@ func (d *ConfigDocument) DeleteRule(index int) error {
 // SetSectionField patches a single non-Rule section without runtime validation.
 // Duplicate sections or keys in the target section are ambiguous and refused.
 func (d *ConfigDocument) SetSectionField(section, key, value string) error {
+	return d.changeSectionField(section, key, &value, false)
+}
+
+func (d *ConfigDocument) SetDoH(endpoints, bootstrap *string) error {
+	if (endpoints == nil) != (bootstrap == nil) {
+		return problem.New("doh_bootstrap_required", "DoH and DoHBootstrap must be set or cleared together")
+	}
+	next := ParseConfigDocument(d.Bytes())
+	if err := next.changeSectionField("Interface", "DoH", endpoints, true); err != nil {
+		return err
+	}
+	if err := next.changeSectionField("Interface", "DoHBootstrap", bootstrap, true); err != nil {
+		return err
+	}
+	*d = *next
+	return nil
+}
+
+func (d *ConfigDocument) changeSectionField(section, key string, value *string, preserveSpacing bool) error {
 	validName := func(s string) bool {
 		return s != "" && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "[]#;=\r\n\x00")
 	}
 	if !validName(section) || section == "Rule" || !validName(key) {
 		return problem.New("value_invalid", "invalid section field")
 	}
-	if strings.ContainsAny(value, "\r\n\x00") {
-		return problem.New("value_has_invalid_characters", "invalid section field").In(section).On(key, value)
+	if value != nil && strings.ContainsAny(*value, "\r\n\x00") {
+		return problem.New("value_has_invalid_characters", "invalid section field").In(section).On(key, *value)
 	}
 	original := string(d.Bytes())
 	// Refuse target fields beyond a disabled rule rather than creating duplicates.
@@ -673,7 +693,14 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 		}
 	}
 	// Quote every edited value so leading/trailing whitespace and delimiters round-trip.
-	replacement := strconv.Quote(value)
+	if value == nil {
+		if field >= 0 {
+			lines = slices.Delete(lines, field, field+1)
+			*d = *ParseConfigDocument([]byte(d.prefix + strings.Join(lines, "")))
+		}
+		return nil
+	}
+	replacement := strconv.Quote(*value)
 	eol := "\n"
 	if strings.Contains(original, "\r\n") {
 		eol = "\r\n"
@@ -698,8 +725,12 @@ func (d *ConfigDocument) SetSectionField(section, key, value string) error {
 		copy(lines[end+1:], lines[end:])
 		lines[end] = addition
 	}
-	// Locate only the edited section after insertion, including disabled boundaries.
 	text = strings.Join(lines, "")
+	if preserveSpacing {
+		*d = *ParseConfigDocument([]byte(d.prefix + text))
+		return nil
+	}
+	// Locate only the edited section after insertion, including disabled boundaries.
 	lines = documentLines(text)
 	start, end = -1, len(lines)
 	for i, line := range lines {

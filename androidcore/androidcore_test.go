@@ -246,3 +246,19 @@ func TestEmbeddedGeoDataRestrictions(t *testing.T) {
 		t.Fatalf("%+v", result)
 	}
 }
+
+func TestAndroidDoHProfile(t *testing.T) {
+	profile := []byte(testProfile + "[Interface]\nIPv6 = disable\nDoH = https://resolver.example/dns-query\nDoHBootstrap = 192.0.2.1|2001:db8::1\n")
+	session, err := NewSession(profile, &testProtector{allow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	bad := []byte(strings.ReplaceAll(string(profile), "192.0.2.1|", ""))
+	if _, err := NewSession(bad, &testProtector{allow: true}); err == nil {
+		t.Fatal("IPv6-only group accepted while IPv6 was disabled")
+	}
+}

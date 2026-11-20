@@ -22,6 +22,7 @@ import (
 // DNSResolver retries each DNS request in configured order through the upstream proxy.
 // A negative answer (NXDOMAIN) is definitive, not a reason to change resolver.
 type DNSResolver struct {
+	DoH         *DoHResolver
 	DisableIPv6 bool
 	Servers     []string
 	TCP         transport.StreamDialer
@@ -75,6 +76,9 @@ func (r DNSResolver) Exchange(ctx context.Context, query []byte, tcp bool) ([]by
 				return answer.Pack()
 			}
 		}
+	}
+	if r.DoH != nil {
+		return r.DoH.Exchange(ctx, query)
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {
@@ -199,7 +203,7 @@ func dnsFailure(query []byte) []byte {
 	return b
 }
 func (h *Handler) resolver() DNSResolver {
-	return DNSResolver{Servers: h.DNS, TCP: h.TCP, UDP: h.UDP, DisableIPv6: h.DisableIPv6}
+	return DNSResolver{DoH: h.DoH, Servers: h.DNS, TCP: h.TCP, UDP: h.UDP, DisableIPv6: h.DisableIPv6}
 }
 func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
 	h.start(c, func(_ func()) {
@@ -220,7 +224,7 @@ func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
 			} else {
 				answer, err = resolver.Exchange(h.ctx, query, true)
 			}
-			if err != nil && h.UDP != nil {
+			if err != nil && h.DoH == nil && h.UDP != nil {
 				udpErr := err
 				answer, err = resolver.Exchange(h.ctx, query, true)
 				if err != nil {

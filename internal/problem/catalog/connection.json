@@ -1,5 +1,10 @@
 {
   "codes": {
+    "doh_check_failed": {
+      "kind": "connection",
+      "en": "The VPN could not reach its configured DoH resolvers.",
+      "ru": "The VPN could not reach its configured DoH resolvers."
+    },
     "access_key_resolve_failed": {
       "kind": "connection",
       "en": "Could not get the access key from your provider. Check your internet connection and try again.",

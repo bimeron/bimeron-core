@@ -1,0 +1,15 @@
+[
+  {"name":"ordered endpoints and IPs","doh":"https://One.example/dns-query, https://two.example:8443/dns-query","bootstrap":"192.0.2.10|2001:db8::10, 192.0.2.20","disable_ipv6":true,"expected_urls":["https://One.example/dns-query","https://two.example:8443/dns-query"],"expected_ips":[["192.0.2.10","2001:db8::10"],["192.0.2.20"]]},
+  {"name":"independent IP limit","doh":"https://one.example/dns-query","bootstrap":"192.0.2.1|192.0.2.2|192.0.2.3|192.0.2.4|192.0.2.5","code":"doh_too_many_bootstrap_ips","field":"DoHBootstrap"},
+  {"name":"independent endpoint limit","doh":"https://a.example/d,https://b.example/d,https://c.example/d,https://d.example/d,https://e.example/d","bootstrap":"192.0.2.1","code":"doh_too_many_endpoints","field":"DoH"},
+  {"name":"missing bootstrap","doh":"https://one.example/dns-query","bootstrap":null,"code":"doh_bootstrap_required","field":"DoHBootstrap"},
+  {"name":"positional mismatch","doh":"https://one.example/dns-query","bootstrap":"192.0.2.1, 192.0.2.2","code":"doh_bootstrap_count_mismatch","field":"DoHBootstrap"},
+  {"name":"empty address","doh":"https://one.example/dns-query","bootstrap":"192.0.2.1|","code":"doh_invalid_bootstrap_ip","field":"DoHBootstrap"},
+  {"name":"IPv6-only group disabled","doh":"https://one.example/dns-query","bootstrap":"2001:db8::1","disable_ipv6":true,"code":"doh_no_usable_bootstrap_ip","field":"DoHBootstrap"},
+  {"name":"mapped address","doh":"https://one.example/dns-query","bootstrap":"::ffff:192.0.2.1","code":"doh_invalid_bootstrap_ip","field":"DoHBootstrap"},
+  {"name":"duplicate normalized IPv6","doh":"https://one.example/dns-query","bootstrap":"2001:db8::1|2001:db8:0:0:0:0:0:1","code":"doh_duplicate_bootstrap_ip","field":"DoHBootstrap"},
+  {"name":"duplicate endpoint","doh":"https://One.example/dns-query, https://one.example:443/dns-query","bootstrap":"192.0.2.1,192.0.2.2","code":"doh_duplicate_endpoint","field":"DoH"},
+  {"name":"downgrade URL","doh":"http://one.example/dns-query","bootstrap":"192.0.2.1","code":"doh_invalid_endpoint","field":"DoH"},
+  {"name":"userinfo","doh":"https://user@one.example/dns-query","bootstrap":"192.0.2.1","code":"doh_invalid_endpoint","field":"DoH"},
+  {"name":"numeric endpoint URL","doh":"https://192.0.2.1/dns-query","bootstrap":"192.0.2.1","code":"doh_invalid_endpoint","field":"DoH"}
+]

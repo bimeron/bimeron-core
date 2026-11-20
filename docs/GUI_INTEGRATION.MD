@@ -955,3 +955,12 @@ The GUI range in `release/compatibility.json` is widened to include Desktop
   `status`: an attempt has already started or the session changed.
 - On `start` with `kill_switch_held`, explain that protection is held by the
   failed session and offer Disconnect before connecting with that profile.
+
+## Explicit DNS over HTTPS
+
+Read the additive `doh` capability before enabling the DoH editor. An older
+Core rejects active DoH fields at validation or startup. Preserve them when
+displaying an existing profile, and only clear them on an explicit switch to
+plain DNS. See [the document API](DESKTOP_DOCUMENT_API.MD) for patching and
+[the profile reference](CONF.MD#explicit-dns-over-https) for validation rules.
+An unavailable DoH resolver can surface as `doh_check_failed` during startup.

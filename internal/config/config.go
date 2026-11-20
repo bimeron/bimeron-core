@@ -33,6 +33,7 @@ const (
 )
 
 type File struct {
+	DoHEndpoints     []dnsconfig.DoHEndpoint
 	Version          int
 	Name             string
 	Access           Access
@@ -96,13 +97,14 @@ type Parameters struct {
 	Prefix   string
 }
 type Tunnel struct {
-	KillSwitch bool
-	IPv6       string
-	Mode       string
-	Name       string
-	MTU        int
-	DNS        string
-	Listen     string
+	DoH, DoHBootstrap *string
+	KillSwitch        bool
+	IPv6              string
+	Mode              string
+	Name              string
+	MTU               int
+	DNS               string
+	Listen            string
 	// ListenUsername and ListenPassword optionally require RFC 1929
 	// authentication on the local SOCKS5 listener. Both or neither.
 	ListenUsername string
@@ -198,7 +200,7 @@ func parse(b []byte) (*File, error) {
 		}
 		// An empty ListenUsername/ListenPassword means "no authentication", so
 		// a GUI can switch it off with set_field.
-		optional := key == "Name" || key == "Prefix" || section == "Interface" && (key == "ListenUsername" || key == "ListenPassword")
+		optional := key == "Name" || key == "Prefix" || section == "Interface" && (key == "ListenUsername" || key == "ListenPassword" || key == "DoH" || key == "DoHBootstrap")
 		if value == "" && !optional {
 			return nil, c.inRule(problem.New("value_required", fmt.Sprintf("invalid configuration at line %d", line)).In(section).On(key, "").AtLine(line), section)
 		}
@@ -248,6 +250,10 @@ func parse(b []byte) (*File, error) {
 				c.Tunnel.MTU, err = number()
 			case "IPv6":
 				c.Tunnel.IPv6 = value
+			case "DoH":
+				c.Tunnel.DoH = &value
+			case "DoHBootstrap":
+				c.Tunnel.DoHBootstrap = &value
 			case "DNS":
 				c.Tunnel.DNS = value
 			case "Listen":
@@ -636,6 +642,11 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 	if err := c.validateAllowedIPsMode(); err != nil {
 		return nil, c.locate(err)
 	}
+	if c.profile != nil && c.profile.WireGuard != nil {
+		if err := dnsconfig.ValidateDoHScope(c.DoHEndpoints, c.profile.WireGuard.Peer.AllowedIPs, c.Tunnel.IPv6 == "disable"); err != nil {
+			return nil, c.locate(err)
+		}
+	}
 	c.normalizeTrustPaths()
 	if c.ShadowTLS != nil {
 		if err := c.ShadowTLS.Validate(); err != nil {
@@ -678,6 +689,9 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 		return nil, problem.New("profile_version_unsupported", "[Profile] Version must be 1").In("Profile").At("Version").Arg("version", "1")
 	}
 	if c.IKEv2 != nil {
+		if c.Tunnel.DoH != nil || c.Tunnel.DoHBootstrap != nil {
+			return nil, dnsconfig.DoHProblem("doh_unsupported_mode", "DoH", "DoH requires a Core packet VPN")
+		}
 		if err := c.IKEv2.Validate(); err != nil {
 			p := problem.Of(err)
 			if p.Section == "" {
@@ -718,6 +732,11 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	}
 	if _, err := dnsconfig.Parse(c.Tunnel.DNS); err != nil {
 		return nil, problem.Of(err).In("Interface").At("DNS")
+	}
+	var dohErr error
+	c.DoHEndpoints, dohErr = dnsconfig.ParseDoH(c.Tunnel.DoH, c.Tunnel.DoHBootstrap, c.Tunnel.Mode == "vpn", c.Tunnel.IPv6 == "disable")
+	if dohErr != nil {
+		return nil, dohErr
 	}
 	address, err := netip.ParseAddrPort(c.Tunnel.Listen)
 	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {

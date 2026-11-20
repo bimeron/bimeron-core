@@ -150,7 +150,11 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 		return p.manager.Recover(cleanCtx, p.killSwitch)
 	})
 	report("network_setup", "Configuring Linux policy routes and tunnel DNS")
-	if err = p.manager.Configure(ctx, d.Name(), c.MTU, len(c.DNS), c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
+	dnsBudget := len(c.DNS)
+	if len(c.doh) != 0 {
+		dnsBudget = 2
+	} // Two legacy resolver pairs provide a nine-second stub timeout.
+	if err = p.manager.Configure(ctx, d.Name(), c.MTU, dnsBudget, c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
 		return nil, codeFault(err, "linux_network_setup_failed", false)
 	}
 	if c.KillSwitch {
