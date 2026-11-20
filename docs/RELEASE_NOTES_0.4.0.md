@@ -1,6 +1,6 @@
 # Bimeron Core v0.4.0
 
-Core v0.4.0 is a stable-channel release. Existing Windows and Linux service installations can receive it through Desktop 0.3.1 and 0.3.2. Both versions trust the hardware release keys and support IPC 1 and profile format 1.
+Core v0.4.0 is a stable-channel release. Desktop 0.3.1 supports this update for Windows and Linux service installations. Desktop 0.3.2 compatibility was checked against the unpublished `release/0.3.2` branch. Both versions trust the hardware release keys and support IPC 1 and profile format 1.
 
 ## Changes since v0.4.0-beta.2
 
