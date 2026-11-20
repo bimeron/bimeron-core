@@ -17,6 +17,7 @@ import (
 	"bimeron/internal/problem"
 	"bimeron/internal/routing"
 	"bimeron/internal/safefile"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
 	"bimeron/internal/telemetry"
@@ -42,12 +43,16 @@ type SessionConfig struct {
 	IKEv2                  *IKEv2Config
 	ProfileID, ProfileName string
 	Mode, Name, Listen     string
-	MTU                    int
-	DNS                    []string
-	DisableIPv6            bool
-	KillSwitch             bool
-	Policy                 *Policy
-	Resolve                func(context.Context) (Profile, error)
+	// ListenUsername and ListenPassword optionally require RFC 1929
+	// username/password authentication on the proxy-mode SOCKS5 listener.
+	// Set both or neither; they never appear in status, events or problems.
+	ListenUsername, ListenPassword string
+	MTU                            int
+	DNS                            []string
+	DisableIPv6                    bool
+	KillSwitch                     bool
+	Policy                         *Policy
+	Resolve                        func(context.Context) (Profile, error)
 	// ResolveOnNetwork is used by the VPN control plane while tunnel routes remain
 	// installed. Custom key providers should use this transport for their requests.
 	ResolveOnNetwork func(context.Context, http.RoundTripper) (Profile, error)
@@ -210,7 +215,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
-	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, MTU: mtu, adapterAlias: alias,
+	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, ListenUsername: copy.Tunnel.ListenUsername, ListenPassword: copy.Tunnel.ListenPassword, MTU: mtu, adapterAlias: alias,
 		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 
@@ -243,7 +248,7 @@ func (c SessionConfig) validate() error {
 			return err
 		}
 		policy := c.Policy.Config()
-		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
+		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || c.ListenUsername != "" || c.ListenPassword != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
 			return problem.New("ikev2_exclusive", "ikev2_unsupported_session_options").In("IKEv2")
 		}
 		return nil
@@ -265,6 +270,10 @@ func (c SessionConfig) validate() error {
 	}
 	if c.Resolve == nil {
 		return problem.New("access_key_missing", "missing access key resolver").In("AccessKey")
+	}
+	// Like the profile parser, check listener credentials in every mode.
+	if err := socksauth.Validate(c.ListenUsername, c.ListenPassword); err != nil {
+		return err
 	}
 	if c.Mode != "vpn" && c.Mode != "proxy" {
 		return problem.New("choice_invalid", "mode must be vpn or proxy").In("Interface").At("Mode").Arg("allowed", "vpn, proxy")

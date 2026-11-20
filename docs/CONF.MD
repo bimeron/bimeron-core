@@ -682,8 +682,31 @@ This section is optional; missing options receive defaults.
 | `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853), LLMNR (5355) and NetBIOS names (UDP 137) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
 | `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
+| `ListenUsername` | empty | Optional username for the local SOCKS5 listener (RFC 1929). Set together with `ListenPassword`. 1–255 bytes, no control characters. Unused in `vpn` mode. |
+| `ListenPassword` | empty | Password for `ListenUsername`. Same limits. When both are empty, the listener requires no authentication. |
 
 Values are validated even when unused in the selected mode.
+
+The local SOCKS5 listener accepts connections only on a loopback address, but
+every local application and user account on the computer can reach that
+address. Without `ListenUsername`/`ListenPassword`, any of them can use the
+session. With both set, clients must authenticate with RFC 1929
+username/password, for example `curl --proxy socks5h://alice:secret@127.0.0.1:1080`
+(percent-encode `:`, `@` and `%` in such URLs); clients that offer only "no
+authentication" are refused. Use a long random password: failed attempts are
+not rate limited. Credentials are compared in constant time and never appear in
+logs, status or error output. Empty values mean no authentication. SOCKS5 UDP
+datagrams carry no credentials: with a client that announces UDP port 0, the
+first local datagram claims a UDP association, so authentication fully
+protects TCP only.
+
+```ini
+[Interface]
+Mode = proxy
+Listen = 127.0.0.1:1080
+ListenUsername = alice
+ListenPassword = "use a long random value"
+```
 
 System VPN DNS always goes through the selected upstream transport, regardless of `Default` and rules.
 

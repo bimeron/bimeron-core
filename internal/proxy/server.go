@@ -15,6 +15,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/routing"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/ss2022"
 	"bimeron/internal/streamtransport"
 	"bimeron/internal/telemetry"
@@ -86,10 +87,12 @@ type Server struct {
 	Packet transport.PacketListener
 	Policy *routing.Policy
 	Stats  *telemetry.Counters
+	// Auth, when set, requires RFC 1929 username/password authentication.
+	Auth *socksauth.Credentials
 }
 
 // Serve owns the listener and closes every client on cancellation. Only loopback
-// binding is supported because this initial SOCKS service has no authentication.
+// binding is supported, with or without Auth.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	defer l.Close()
 	address, ok := l.Addr().(*net.TCPAddr)
@@ -147,25 +150,9 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
 	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
-	var h [2]byte
-	if _, err := io.ReadFull(c, h[:]); err != nil || h[0] != 5 || h[1] == 0 {
-		return
-	}
-	methods := make([]byte, int(h[1]))
-	if _, err := io.ReadFull(c, methods); err != nil {
-		return
-	}
-	anonymous := false
-	for _, m := range methods {
-		if m == 0 {
-			anonymous = true
-		}
-	}
-	if !anonymous {
-		_, _ = c.Write([]byte{5, 255})
-		return
-	}
-	if _, err := c.Write([]byte{5, 0}); err != nil {
+	if !socksauth.Negotiate(c, s.Auth) {
+		// Let a refused client read the reply before the close.
+		finishReply(c)
 		return
 	}
 	var request [4]byte

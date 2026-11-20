@@ -96,6 +96,8 @@ jobs:
         run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check shared, VLESS, VMess, and Trojan transport races
         run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
+      - name: Fuzz SOCKS5 listener authentication
+        run: go test ./internal/socksauth -run '^$' -fuzz '^FuzzNegotiate$' -fuzztime=10s
       - name: Check MASQUE interoperability and transport races
         run: |
           CGO_ENABLED=1 go test -race ./internal/masque -count=1 -v

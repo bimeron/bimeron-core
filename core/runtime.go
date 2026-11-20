@@ -16,6 +16,7 @@ import (
 	"bimeron/internal/masque"
 	"bimeron/internal/naive"
 	"bimeron/internal/proxy"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/ssplugin"
 	"bimeron/internal/trojan"
@@ -599,7 +600,7 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	report("proxy_listen", fmt.Sprintf("SOCKS5 %s listening on %s", protocols, l.Addr()))
 	go func() {
-		s.err = (&proxy.Server{Proxy: d, Packet: packets, Policy: c.Policy, Stats: c.stats}).Serve(serveCtx, l)
+		s.err = (&proxy.Server{Proxy: d, Packet: packets, Policy: c.Policy, Stats: c.stats, Auth: socksauth.New(c.ListenUsername, c.ListenPassword)}).Serve(serveCtx, l)
 		close(s.done)
 	}()
 	return s, nil

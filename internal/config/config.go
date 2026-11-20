@@ -22,6 +22,7 @@ import (
 	"bimeron/internal/problem"
 	"bimeron/internal/routing"
 	"bimeron/internal/safefile"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/systemvpn"
 	"bimeron/internal/wgconf"
 )
@@ -102,6 +103,10 @@ type Tunnel struct {
 	MTU        int
 	DNS        string
 	Listen     string
+	// ListenUsername and ListenPassword optionally require RFC 1929
+	// authentication on the local SOCKS5 listener. Both or neither.
+	ListenUsername string
+	ListenPassword string
 }
 
 var interfaceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`)
@@ -186,7 +191,10 @@ func parse(b []byte) (*File, error) {
 			}
 			value = decoded
 		}
-		if value == "" && key != "Name" && key != "Prefix" {
+		// An empty ListenUsername/ListenPassword means "no authentication", so
+		// a GUI can switch it off with set_field.
+		optional := key == "Name" || key == "Prefix" || section == "Interface" && (key == "ListenUsername" || key == "ListenPassword")
+		if value == "" && !optional {
 			return nil, c.inRule(problem.New("value_required", fmt.Sprintf("invalid configuration at line %d", line)).In(section).On(key, "").AtLine(line), section)
 		}
 		number := func() (int, error) {
@@ -239,6 +247,10 @@ func parse(b []byte) (*File, error) {
 				c.Tunnel.DNS = value
 			case "Listen":
 				c.Tunnel.Listen = value
+			case "ListenUsername":
+				c.Tunnel.ListenUsername = value
+			case "ListenPassword":
+				c.Tunnel.ListenPassword = value
 			default:
 				recognized = false
 			}
@@ -705,6 +717,9 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	address, err := netip.ParseAddrPort(c.Tunnel.Listen)
 	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {
 		return nil, problem.New("listen_invalid", "[Interface] Listen must be a loopback IP and port").In("Interface").At("Listen")
+	}
+	if err := socksauth.Validate(c.Tunnel.ListenUsername, c.Tunnel.ListenPassword); err != nil {
+		return nil, err
 	}
 	// The access key is resolved below. validateAllowedIPsMode rejects
 	// "only" for other transports once the peer type is known.

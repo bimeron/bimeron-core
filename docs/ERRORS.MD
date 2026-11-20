@@ -49,7 +49,8 @@ the same `field` whether the value came from explicit parameters or from a URI;
 in the URI case `source` names the URI option.
 
 - `Profile`: `Version`, `Name`.
-- `Interface`: `Mode`, `Name`, `MTU`, `DNS`, `IPv6`, `KillSwitch`, `Listen`.
+- `Interface`: `Mode`, `Name`, `MTU`, `DNS`, `IPv6`, `KillSwitch`, `Listen`,
+  `ListenUsername`, `ListenPassword`.
 - `Routing`: `Default`, `AllowedIPsMode`. `Rule`: `CIDR`, `Domain`, `GeoIP`, `GeoSite`, `Action`.
 - `GeoData`: `GeoIPFile`, `GeoSiteFile`. `ShadowTLS`: `ServerName`, `Password`.
 - `IKEv2`: the option names documented in [IKEV2.MD](IKEV2.MD).

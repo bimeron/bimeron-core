@@ -38,6 +38,9 @@ type Capabilities struct {
 	// until an explicit stop, including recovery waits and failed, and that
 	// Status.KillSwitch publishes it.
 	KillSwitchHold bool `json:"kill_switch_hold"`
+	// SOCKSAuth reports optional RFC 1929 username/password authentication
+	// on the proxy-mode listener ([Interface] ListenUsername/ListenPassword).
+	SOCKSAuth bool `json:"socks_auth"`
 	// WireGuard describes WireGuard and AmneziaWG upstream support. Older
 	// daemons omit it; treat absence as unsupported.
 	WireGuard *WireGuardCapabilities `json:"wireguard,omitempty"`
@@ -88,7 +91,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport()}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport(), SOCKSAuth: true}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}

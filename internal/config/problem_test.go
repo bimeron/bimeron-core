@@ -52,6 +52,7 @@ func uriSeeds() map[string]string {
 		seeds["uri-"+name] = "[Profile]\nVersion = 1\nName = Seed\n\n[AccessKey]\n" + key + "\n\n[Interface]\nMode = " + mode + "\n\n[Routing]\nDefault = proxy\n\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n\n[Rule]\nDomain = example.org\nAction = proxy\n"
 	}
 	seeds["explicit-ss-shadowtls"] = "[Profile]\nVersion = 1\n\n[AccessKey]\nType = shadowsocks\nServer = example.com\nPort = 443\nMethod = aes-256-gcm\nPassword = " + sentinel + "\n\n[ShadowTLS]\nServerName = handshake.example.com\nPassword = " + sentinel + "\n\n[Interface]\nMode = vpn\nIPv6 = disable\nKillSwitch = true\nMTU = 1400\nDNS = 1.1.1.1, 8.8.8.8\nName = Tun0\n"
+	seeds["proxy-listen-auth"] = "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:" + sentinel + "@example.com:8388\n\n[Interface]\nMode = proxy\nListen = 127.0.0.1:1080\nListenUsername = alice\nListenPassword = " + sentinel + "\n"
 	uuid := "123e4567-e89b-12d3-a456-426614174000"
 	explicit := map[string]string{
 		"hysteria2":     "Type = hysteria2\nServer = example.com\nPort = 443\nPassword = " + sentinel + "\nServerName = front.example\nALPN = h3\nFingerprint = chrome",
@@ -187,7 +188,7 @@ func mutations(profile string) []string {
 var canonicalFields = map[string]bool{}
 
 func init() {
-	for _, f := range strings.Fields(`Version Name Mode MTU DNS IPv6 KillSwitch Listen Default CIDR Domain GeoIP GeoSite Action
+	for _, f := range strings.Fields(`Version Name Mode MTU DNS IPv6 KillSwitch Listen ListenUsername ListenPassword Default CIDR Domain GeoIP GeoSite Action
 		GeoIPFile GeoSiteFile ServerName Password WindowsProfile
 		File Key SS SSConf SOCKS5 HTTP VLESS VMess Trojan Naive Hysteria2 AnyTLS SSH TUIC MASQUE
 		Type Server Port Method Prefix Username Plugin PluginOpts IdentityFile KnownHostsFile MASQUEPath CAFile
@@ -289,6 +290,8 @@ func TestProblemLocations(t *testing.T) {
 		line, rule                                  int
 	}{
 		{"interface name", "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Interface]\nName = 1bad\n", "interface_name_invalid", "Interface", "Name", "", 8, 0},
+		{"listen auth incomplete", "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Interface]\nMode = proxy\nListenUsername = alice\n", "listen_auth_incomplete", "Interface", "ListenPassword", "", 7, 0},
+		{"listen auth invalid", "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Interface]\nListenUsername = alice\nListenPassword = \"bad\\tvalue\"\n", "listen_auth_invalid", "Interface", "ListenPassword", "", 9, 0},
 		{"unknown option", "[Profile]\nVersion = 1\nColor = red\n", "option_unknown", "Profile", "", "", 3, 0},
 		{"rule kill switch", "[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:s@example.com:8388\n\n[Interface]\nKillSwitch = true\n\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n\n[Rule]\nDomain = example.org\nAction = direct\n", "kill_switch_cidr_only", "Rule", "Domain", "", 15, 2},
 		{"uri scheme", "[Profile]\nVersion = 1\n\n[AccessKey]\nVLESS = trojan://x@example.com:443\n", "uri_scheme_invalid", "AccessKey", "", "VLESS", 5, 0},

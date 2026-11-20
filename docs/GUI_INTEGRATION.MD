@@ -224,6 +224,7 @@ Example `hello` response from Windows (capability values vary by platform;
     "access_conversion": true,
     "reconnect_now": true,
     "kill_switch_hold": true,
+    "socks_auth": true,
     "wireguard": {"supported": true, "experimental": true, "protocols": ["wireguard", "amneziawg"], "awg_versions": ["1.0", "1.5", "2.0", "3.0", "3.1"], "uri_schemes": ["vpn", "wireguard", "wg"], "allowed_ips_modes": ["direct", "block", "ignore", "only"], "document_api": 1}
   }
 }
@@ -237,6 +238,11 @@ core omits the field and supports only the first nine entries.
 `reconnect_now` and `kill_switch_hold` describe the recovery contract (see
 [Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold));
 older cores omit them.
+
+`socks_auth` reports optional username/password authentication on the local
+SOCKS5 listener (see [Local proxy authentication](#local-proxy-authentication)).
+An older core omits it and rejects the `ListenUsername`/`ListenPassword`
+options as unknown.
 
 `access_conversion` reports the `bimeron document` operations `access_to_fields`
 and `access_to_uri`, which convert `[AccessKey]` between a share URI and explicit
@@ -646,6 +652,42 @@ server-name override or insecure TLS switch. Plain `http://` and `Type = http`
 remain available but do not encrypt proxy credentials. Both variants carry TCP
 only; VPN DNS uses TCP and other proxied UDP is dropped. The local listener
 remains SOCKS5. See [configuration](CONF.MD#remote-http-connect-proxy).
+
+### Local proxy authentication
+
+With `[Interface] Mode = proxy`, a profile may require RFC 1929
+username/password authentication on its local SOCKS5 listener. Edit the options
+with `set_field` in `[Interface]`; offer them only when `socks_auth` is true.
+
+| Option | Contract |
+|---|---|
+| `ListenUsername` | 1–255 bytes of UTF-8 without control characters. |
+| `ListenPassword` | Same limits. Secret: mask it in the editor and never log it. |
+
+- Set both or leave both empty. Empty means no authentication, exactly as
+  before. Values are validated in every mode, like the other `[Interface]`
+  options; `[IKEv2]` profiles reject them (`ikev2_exclusive`).
+- Problems: `listen_auth_incomplete` at the missing field (with the other field
+  in `related`), and `listen_auth_invalid` at the offending field with
+  `args.max = 255`. Problems never carry the values.
+- With credentials, the listener accepts only clients that offer the
+  username/password method and send matching credentials. A client that offers
+  only "no authentication" receives method `0xFF`; wrong credentials receive
+  status `0x01`, and the connection closes. A UDP ASSOCIATE request (MASQUE
+  profiles only) must authenticate too, but SOCKS5 datagrams carry no
+  credentials: when the client announces port 0, the first datagram from any
+  local port claims the association. Tell users that authentication fully
+  protects TCP, and that UDP relies on the client announcing its UDP port.
+- Clearing both fields with `set_field` (empty values) turns authentication
+  off; empty values are accepted for these two options.
+- Core compares credentials in constant time and never includes them in
+  status, events, statistics, doctor output or problems. The CLI has no flags
+  for them; they come only from the profile.
+- Suggested UI: a "Require password" switch, a username field, a masked
+  password field with a "Generate" action (random, at least 16 characters),
+  and the connection hint (`socks5://user:password@127.0.0.1:1080`) shown only
+  on request. Without authentication, tell the user that any local application
+  or account on this computer can use the proxy.
 
 ### Remote SOCKS5 and Shadowsocks profile editors
 

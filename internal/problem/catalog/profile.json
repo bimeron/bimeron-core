@@ -80,6 +80,16 @@
       "en": "Enter a local address and port, for example 127.0.0.1:1080.",
       "ru": "Укажите локальный адрес и порт, например 127.0.0.1:1080."
     },
+    "listen_auth_incomplete": {
+      "kind": "config",
+      "en": "Enter both a username and a password for the local proxy, or leave both empty.",
+      "ru": "Укажите для локального прокси и имя пользователя, и пароль или оставьте оба поля пустыми."
+    },
+    "listen_auth_invalid": {
+      "kind": "config",
+      "en": "Use 1 to {max} bytes without control characters.",
+      "ru": "Используйте от 1 до {max} байт без управляющих символов."
+    },
     "dns_too_many": {
       "kind": "config",
       "en": "Specify at most {max} DNS servers.",
