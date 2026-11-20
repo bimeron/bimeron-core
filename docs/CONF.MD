@@ -708,6 +708,14 @@ ListenUsername = alice
 ListenPassword = "use a long random value"
 ```
 
+Relayed TCP connections, in both `vpn` and `proxy` mode, are closed after 30
+minutes without data in either direction. Once one side has finished sending,
+the connection is closed after 1 minute without data in the remaining
+direction; data still flowing that way keeps it open for as long as it lasts.
+This releases connections whose peer stopped responding. Applications that keep
+long idle connections, such as SSH sessions, should enable keepalives (for
+example `ServerAliveInterval`).
+
 System VPN DNS always goes through the selected upstream transport, regardless of `Default` and rules.
 
 Each query starts with the first server. A network error, timeout (2 seconds per

@@ -200,7 +200,7 @@ func (h *Handler) resolver() DNSResolver {
 	return DNSResolver{Servers: h.DNS, TCP: h.TCP, UDP: h.UDP, DisableIPv6: h.DisableIPv6}
 }
 func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
-	h.start(c, func() {
+	h.start(c, func(_ func()) {
 		buffer := make([]byte, 16*1024)
 		for {
 			_ = c.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -245,7 +245,7 @@ func (h *Handler) handleDNSUDP(c adapter.UDPConn) {
 	})
 }
 func (h *Handler) handleDNSTCP(c adapter.TCPConn) {
-	h.start(c, func() {
+	h.start(c, func(_ func()) {
 		for {
 			_ = c.SetDeadline(time.Now().Add(60 * time.Second))
 			var size [2]byte
