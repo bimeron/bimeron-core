@@ -6,11 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/telemetry"
 )
 
 type State string
+
+var errGuardedPanic = errors.New("guarded goroutine panicked")
 
 var ErrSessionRunning = errors.New("session already running")
 
@@ -99,11 +102,13 @@ type backend interface {
 	Open(context.Context, SessionConfig, func(string, string)) (session, error)
 }
 type stageError struct {
+	cause error // Only sanitized sentinels may be exposed to callers.
 	code  string
 	retry bool
 	stage string
 }
 
+func (e *stageError) Unwrap() error       { return e.cause }
 func (e *stageError) Error() string       { return e.code }
 func fault(code string, retry bool) error { return &stageError{code: code, retry: retry} }
 func retryable(err error) bool            { var e *stageError; return errors.As(err, &e) && e.retry }
@@ -147,6 +152,10 @@ type Engine struct {
 	protected bool // the run owns kill switch protection
 	handover  bool // the held run exits for a new Start and keeps protection
 	abandon   bool // the run exits without a user stop and keeps protection
+	// stopRequested records Stop for the current run. The published state is
+	// not evidence of it: a run entering the held failed state can publish
+	// failed over stopping.
+	stopRequested bool
 	// exiting is set for good once the owner abandons the engine: no later
 	// Start may install, and then release, protection.
 	exiting   bool
@@ -357,7 +366,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	}
 	// The owner may have failed while this Start waited for the lock.
 	if e.exiting {
-		return errEngineExiting
+		return ErrEngineExiting
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -369,6 +378,11 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	// A repeated start of the running profile (for example a double click)
 	// never interrupts a live session; a held failure may always be retried.
 	switching := e.holding || !sameProfile(e.status.Session, info)
+	// A stop in progress, for example after the caller's Stop timed out, is
+	// never turned into a handover: Start waits until it has finished.
+	if e.active && e.stopRequested {
+		return ErrSessionRunning
+	}
 	if e.active && (e.holding || e.protected) && keepsProtection && switching {
 		// Hand the installed protection over: the previous run closes its
 		// session and releases its lock but keeps the persistent filters for
@@ -379,18 +393,30 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		e.mu.Unlock()
 		<-previous.done // bounded by the previous session's cleanup
 		e.mu.Lock()
-		// The previous run kept its filters for the handover; if the owner
-		// failed meanwhile, leave them installed (residual) and start nothing.
-		if e.exiting {
-			return errEngineExiting
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if previous.err != nil && cleanupFailed(previous.err) {
-			// The previous teardown left state behind; report it, never mask it.
+		// The previous teardown left state behind: report it, never mask it,
+		// even when the owner fails or the caller gives up meanwhile.
+		failedCleanup := previous.err != nil && cleanupFailed(previous.err)
+		if failedCleanup {
 			e.status.Session = nil
 			e.transitionLocked(Failed, previous.err)
+		}
+		// The previous run kept its filters for the handover; if the owner
+		// failed or the caller gave up meanwhile, leave them installed
+		// (residual), end the stopping state and start nothing.
+		var refused error
+		if e.exiting {
+			refused = ErrEngineExiting
+		} else {
+			refused = ctx.Err()
+		}
+		if refused != nil {
+			if !failedCleanup {
+				e.status.Session = nil
+				e.transitionLocked(Disconnected, nil)
+			}
+			return refused
+		}
+		if failedCleanup {
 			return previous.err
 		}
 	}
@@ -402,7 +428,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	ctx, e.cancel = context.WithCancel(ctx)
 	e.runResult = &runResult{done: make(chan struct{}), acquired: make(chan struct{})}
 	e.active = true
-	e.holding, e.handover, e.protected, e.abandon = false, false, false, false
+	e.holding, e.handover, e.protected, e.abandon, e.stopRequested = false, false, false, false, false
 	e.residual = false // the run owns or replaces any earlier protection
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
@@ -448,7 +474,7 @@ func (e *Engine) MarkAbandon() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.exiting = true
-	userStop := e.status.State == Stopping && !e.handover
+	userStop := e.stopRequested && !e.handover
 	if e.active && !userStop {
 		e.abandon = true
 	}
@@ -462,6 +488,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 	e.lifecycle.Lock()
 	e.mu.Lock()
 	if e.active {
+		e.stopRequested = true
 		e.cancel()
 		if e.status.State != Stopping {
 			e.status.State = Stopping
@@ -509,6 +536,21 @@ type protectionOwner interface {
 	ReleaseError() error
 }
 
+// Guard dispatch can precede run registration. Serialize each native cleanup
+// decision with MarkAbandon. Only the guard bookkeeping runs under mu.
+func (e *Engine) configureNativeCleanup(cfg *SessionConfig, claimed, commit func() bool) {
+	cfg.retainNativeProtection = func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.abandon || claimed()
+	}
+	cfg.commitNativeStop = func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return !e.abandon && commit()
+	}
+}
+
 func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	cfg.endpointChanged = func(endpoints sessionEndpoints) {
 		e.mu.Lock()
@@ -524,17 +566,48 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	release := func() {}
 	var owner protectionOwner
 	acquired := sync.OnceFunc(func() { close(r.acquired) })
+	// A panic in a guarded Core goroutine (relays, DNS, transport loops) ends
+	// the run through the same crash path as a panic on this goroutine.
+	ctx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
+	crash := make(chan any, 1)
+	cleaned := make(chan struct{})
+	finished := sync.OnceFunc(func() { close(cleaned) })
+	crashClaimed, commitStop, unregister := guard.RegisterSession(func(p any) <-chan struct{} {
+		select {
+		case crash <- p:
+		default:
+		}
+		cancelRun(errGuardedPanic)
+		return cleaned
+	})
+	e.configureNativeCleanup(&cfg, crashClaimed, commitStop)
+	// Runs after the handler below, so a second panic during crash cleanup
+	// still waits for it.
+	defer unregister()
 	defer func() {
 		acquired()
-		if p := recover(); p != nil {
+		p := recover()
+		guarded := false
+		if p == nil && !commitStop() {
+			p = <-crash
+			guarded = true
+		}
+		if p != nil {
 			// A crash keeps persistent protection, as after process termination.
 			if owner != nil {
 				owner.RetainProtection()
 			}
 			release()
-			e.repanic(p)
+			finished()
+			if !guarded {
+				e.repanic(p)
+			}
+			// A guarded goroutine rethrows its own panic, with the original
+			// stack, once cleaned is closed.
 			return
 		}
+		defer finished()
 		e.mu.Lock()
 		handover := e.handover
 		e.mu.Unlock()
@@ -615,6 +688,11 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 // a handover to a new Start, or ReconnectNow. It reports whether to retry.
 func (e *Engine) hold(ctx context.Context, err error) bool {
 	e.mu.Lock()
+	// Stop or a handover cancels under mu: never publish failed over it.
+	if ctx.Err() != nil {
+		e.mu.Unlock()
+		return false
+	}
 	e.transitionLocked(Failed, err)
 	drain(e.wake)
 	e.holding = true

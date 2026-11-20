@@ -207,8 +207,8 @@ the Windows VPN process must still run with administrator privileges.
 | `administrator_required` | Run the command from an administrator CMD. |
 | `wintun_dll_missing` | `wintun.dll` is missing next to the executable. |
 | `session_lock_failed` | Could not acquire the exclusive VPN lock; check for another instance. |
-| `adapter_name_in_use` | Another adapter already uses the tunnel name. On Windows, a stale Bimeron Wintun interface left by an unclean exit (killed process, power loss) does not count: the session reuses it under its original GUID and a clean disconnect removes it. |
-| `conflicting_dns_policy` | Incompatible NRPT rules were detected. |
+| `adapter_name_in_use` | Another adapter already uses the tunnel name. On Windows, a stale Bimeron Wintun interface left by an unclean exit (killed process, power loss) does not count: the session reuses it under its original GUID and a clean disconnect removes it. Windows identifies the created adapter by its GUID and LUID, never by name; if another interface took the name meanwhile, the attempt ends with this code instead of configuring that interface. |
+| `conflicting_dns_policy` | Incompatible NRPT rules were detected, or Windows does not apply the session's local `.` rule: local rules of other software; the Group Policy NRPT key (`HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient\DnsPolicyConfig`), which makes Windows ignore every local rule even when it holds no rules; or an effective NRPT policy that does not send all names to the tunnel DNS within about 5 seconds after setup. |
 | `macos_dns_changed_externally` | Another macOS provider became the effective DNS provider; the session closes and cleans up Bimeron-owned settings. An initial connection fails; an established session retries in recovery cycles. |
 | `access_key_resolve_failed` | Could not read or resolve the key/ssconf. |
 | `endpoint_dns_failed` | Could not resolve the upstream server address. |
@@ -230,6 +230,10 @@ the Windows VPN process must still run with administrator privileges.
 | `hysteria2_unknown` | Connection setup failed without a safely identifiable cause. |
 | `ssh_network_failed` | The SSH server was unreachable: timeout, refused or reset connection, unreachable route, or DNS failure. Retryable. |
 | `ssh_connection_failed` | SSH host-key verification, authentication, or transport setup failed. Terminal. Sessions that opt in to accept-new or run profile-only report `ssh_host_key_*` and `ssh_known_hosts_missing` instead (see `docs/android-ssh-auth.md`). |
+| `wireguard_handshake_timeout` | The WireGuard or AmneziaWG peer did not complete a handshake within 20 seconds. Retryable. See [WIREGUARD.MD](WIREGUARD.MD). |
+| `wireguard_socket_failed` | The outbound WireGuard UDP socket or a fixed `ListenPort` could not be opened. Retryable. |
+| `wireguard_platform_limit` | AmneziaWG packet sizes exceed this platform's engine buffers. Terminal. |
+| `invalid_wireguard_transport` | The WireGuard device could not be started from the profile. Terminal. |
 | `dns_failed` | Event only. An individual DNS query failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |

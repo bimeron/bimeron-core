@@ -96,7 +96,12 @@ characters in their paths. For example, `/` becomes `%2F` and a space becomes
 paths refer to files on the device that connects. A selected GUI key path can
 also be saved as `IdentityFile` beside an `SSH = ssh://...` line, and it takes
 precedence over `identity=`. `KnownHostsFile` similarly overrides
-`known_hosts=`. Unknown or duplicate query options are rejected. URI passwords
+`known_hosts=`. On Windows, network and device paths (`\\server\share`,
+WebDAV `\\host@SSL\...`, `\\?\`, `\\.\`) in these options are rejected with
+`file_path_not_local`. Because a shared URI can choose the trust store,
+a GUI must show these files and get the user's confirmation on import; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files). Unknown or duplicate query
+options are rejected. URI passwords
 are rejected; do not put a password or private-key content in a URI or `.conf`.
 
 ## Identity selection and prompts
@@ -106,7 +111,9 @@ order:
 
 1. The explicitly selected `IdentityFile`, if any.
 2. Available identities from SSH agent. The agent performs signatures without
-   sending private-key bytes to Bimeron.
+   sending private-key bytes to Bimeron. Connecting to the agent and listing
+   its identities must finish within 5 seconds, otherwise the agent is
+   skipped; a signature request ends with the connection attempt.
 3. When no identity file was selected, existing standard files named
    `id_ed25519`, `id_ecdsa`, and `id_rsa` under the current user's `~/.ssh`.
    Bimeron does not scan other filenames.
@@ -115,16 +122,23 @@ order:
 
 An encrypted key causes a **key passphrase** prompt. This is separate from the
 SSH account password. Foreground CLI prompts require an interactive terminal;
-secret input is hidden. Bimeron does not save passwords, passphrases, or
-keyboard-interactive answers. Authentication can be requested again on a new
-connection. Multiple rejected keys may hit a server's authentication-attempt
-limit; select a specific identity when that happens.
+secret input is hidden. Keyboard-interactive prompts are shown without control
+characters, as described for the GUI below. Bimeron does not save passwords,
+passphrases, or keyboard-interactive answers. Authentication can be requested
+again on a new connection. Multiple rejected keys may hit a server's
+authentication-attempt limit; select a specific identity when that happens.
 
-The control daemon does not search the service account's standard identity
-files: those are often unrelated to the GUI user. It can use an explicit
-`IdentityFile`, a reachable agent, or a password supplied through the local
+The control daemon and the service do not search the service account's
+standard identity files and never use an SSH agent: the account's files and
+the agent reachable from a privileged process are not reliably the GUI
+user's. This also applies to an elevated console daemon that runs as the user;
+use a foreground CLI command for agent sign-in. The daemon and the service
+can use an explicit `IdentityFile` or a password supplied through the local
 control challenge described below. An unavailable GUI means an interactive
 challenge times out after two minutes. There is no unattended password cache.
+
+The Apple packet tunnel provider also skips the agent and standard identity
+files. Set `IdentityFile` and `KnownHostsFile` in its SSH profile.
 
 ## Verify the SSH server
 
@@ -190,8 +204,21 @@ ordinary control response. If no input is needed, `auth` is absent. Valid
 `kind` values are `key_passphrase`, `password`, and `keyboard_interactive`.
 `prompts` and `echo` arrays have the same length; `false` means masked input.
 Keyboard-interactive prompts originate at the SSH server and should be shown
-as untrusted text. Each prompt is limited to 256 bytes; at most eight prompts
-are accepted. The GUI sends one answer for each prompt:
+as untrusted plain text. Core cleans them before any consumer sees them:
+
+- CR LF, a lone CR and the Unicode line and paragraph separators (U+2028,
+  U+2029) become LF (U+000A). LF and TAB (U+0009) are kept; a prompt can span
+  several lines.
+- Every other C0 control, DEL, every C1 control (U+0080 to U+009F) and the
+  bidirectional formatting characters U+061C, U+200E, U+200F, U+202A to
+  U+202E and U+2066 to U+2069 become U+FFFD. Invalid UTF-8 becomes U+FFFD as
+  well.
+- Trailing line breaks are removed.
+
+The server's name and instruction fields are not shown. Each prompt is limited
+to 256 bytes after cleaning, and a replacement can make a prompt longer than
+the server sent it; at most eight prompts are accepted. The GUI sends
+one answer for each prompt:
 
 ```json
 {"version":1,"command":"auth_reply","challenge_id":"0123456789abcdef0123456789abcdef","answers":["user input"]}

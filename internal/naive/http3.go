@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+
+	"bimeron/internal/guard"
 )
 
 // Each QUIC connection owns its UDP socket. Failed handshakes and terminated
@@ -64,6 +66,7 @@ func (c *Client) quicDialer(dialer net.Dialer) func(context.Context, string, *tl
 			return nil, fmt.Errorf("NaiveProxy QUIC handshake failed")
 		}
 		go func() {
+			defer guard.Recover()
 			<-conn.Context().Done()
 			release()
 		}()

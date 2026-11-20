@@ -57,6 +57,7 @@ SOCKS5 listener accepts TCP `CONNECT`; MASQUE profiles also expose UDP `ASSOCIAT
 | Remote HTTP CONNECT | TCP, TLS | No; DNS is forwarded over TCP |
 | MASQUE | HTTP/3 CONNECT and CONNECT-UDP over QUIC | QUIC DATAGRAM; also available through local SOCKS5 |
 | SSH | TCP forwarding | No; DNS is forwarded over TCP |
+| [WireGuard, AmneziaWG 1.0–3.1](docs/WIREGUARD.MD) (experimental) | Userspace WireGuard over UDP; SOCKS5 mode is TCP only | Yes |
 
 Optional [ShadowTLS v3](docs/SHADOWTLS.MD) wraps the encrypted TCP upstreams
 listed in its compatibility matrix. It preserves inner encryption and UDP-over-stream;
@@ -65,12 +66,15 @@ wrapped Shadowsocks is TCP-only, with DNS forwarded over TCP in VPN mode.
 Transport and security combinations vary. See [configuration](docs/CONF.MD),
 [Shadowsocks transports](docs/SHADOWSOCKS_TRANSPORTS.MD),
 [VLESS transports](docs/VLESS_TRANSPORTS.MD), [VMess transports](docs/VMESS_TRANSPORTS.MD),
-[Trojan transports](docs/TROJAN_TRANSPORTS.MD), [MASQUE](docs/MASQUE.MD), and [SSH](docs/SSH.MD) for exact support. The embedded
+[Trojan transports](docs/TROJAN_TRANSPORTS.MD), [MASQUE](docs/MASQUE.MD), [SSH](docs/SSH.MD), and [WireGuard and AmneziaWG](docs/WIREGUARD.MD) for exact support. The embedded
 NaiveProxy-compatible client does not claim Chromium-identical TLS, HTTP/2, or QUIC behavior.
 Connections to a remote SOCKS5 upstream are not encrypted by the core. HTTP CONNECT accepts
 `https://` proxies with certificate and server-name verification. With `http://`, proxy traffic
 and Basic credentials use plaintext transport. Not every combination has passed live
 interoperability testing.
+
+To start a VPN or a local SOCKS5 proxy from a WireGuard file, follow the
+[WireGuard CLI guide](docs/WIREGUARD_CLI.MD).
 
 On Windows, an [experimental IKEv2/IPsec backend](docs/IKEV2.MD) controls a pre-provisioned
 system profile instead of an upstream from the table. It requires an elevated foreground process

@@ -140,8 +140,12 @@ Verify the server before writing the first byte, as described in
 - The process ID binding does not identify the server of an individual pipe
   instance. Only the server principal may create instances: the user has
   `0x0012019B` (read and write without `FILE_CREATE_PIPE_INSTANCE`) on the
-  service, console daemon and IKEv2 foreground pipes. Open them with
+  service, console daemon and IKEv2 foreground pipes, and so do Administrators
+  on the readiness pipe and the caller on the repair pipe (see the DACL table in
+  [CONTROL.MD](CONTROL.MD#server-identity)). Open them with
   `GENERIC_READ | GENERIC_WRITE` as before.
+- Do not try to keep a handle to the service process: a standard user cannot
+  open a LocalSystem process, and the check above does not need one.
 - IKEv2 foreground and repair pipes: follow the checks in the same section.
 - Unix sockets: the peer credentials (`SO_PEERCRED`, `getpeereid` or
   `LOCAL_PEERCRED`) must report UID 0. Check the runtime directory with `lstat`
@@ -216,10 +220,13 @@ Example `hello` response from Windows (capability values vary by platform;
     "kill_switch": true,
     "daemon": true,
     "ikev2": {"supported": true, "foreground_only": true, "kill_switch": true, "dns_protection": true, "stats": false},
-    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"],
+    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic", "wireguard"],
     "access_conversion": true,
     "reconnect_now": true,
-    "kill_switch_hold": true
+    "kill_switch_hold": true,
+    "socks_auth": true,
+    "default_dns": ["1.1.1.1", "1.0.0.1"],
+    "wireguard": {"supported": true, "experimental": true, "protocols": ["wireguard", "amneziawg"], "awg_versions": ["1.0", "1.5", "2.0", "3.0", "3.1"], "uri_schemes": ["vpn", "wireguard", "wg"], "allowed_ips_modes": ["direct", "block", "ignore", "only"], "document_api": 1}
   }
 }
 ```
@@ -233,11 +240,33 @@ core omits the field and supports only the first nine entries.
 [Reconnect recovery and kill switch hold](#reconnect-recovery-and-kill-switch-hold));
 older cores omit them.
 
+`socks_auth` reports optional username/password authentication on the local
+SOCKS5 listener (see [Local proxy authentication](#local-proxy-authentication)).
+An older core omits it and rejects the `ListenUsername`/`ListenPassword`
+options as unknown.
+
+`default_dns` lists, in priority order, the DNS servers Core uses when a
+profile omits `[Interface] DNS`. Show it as the default instead of a
+hard-coded value, and omit the option when the user keeps the default. It
+does not apply to `[IKEv2]` profiles, which take DNS from the native
+connection. An older core omits the field; its default is `1.1.1.1` alone.
+
 `access_conversion` reports the `bimeron document` operations `access_to_fields`
 and `access_to_uri`, which convert `[AccessKey]` between a share URI and explicit
 parameters (see [DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD)). An older core
 omits it; the mobile libraries report `false` because they have no document
 bridge.
+
+`wireguard` reports experimental WireGuard and AmneziaWG support: the
+`protocols`, `awg_versions`, link `uri_schemes` and
+`[Routing] AllowedIPsMode` values (`allowed_ips_modes`) the core accepts, and
+`document_api`, the version of the `bimeron wireguard` bridge that reads,
+edits and imports WireGuard text. Show WireGuard import and editing only when
+`supported` is `true`, and label it experimental while `experimental` is
+`true`. An older core omits the object; treat absence as unsupported. A
+WireGuard session can fail with `wireguard_handshake_timeout`,
+`wireguard_socket_failed` (both retried), `wireguard_platform_limit` or
+`invalid_wireguard_transport`. See [WIREGUARD.MD](WIREGUARD.MD).
 
 `geoip_split`, `geosite_split`, and `geodata_schema` describe GeoIP/GeoSite rule
 support (see [GEODATA.MD](GEODATA.MD)). `ikev2` describes the native Windows IKEv2
@@ -471,7 +500,8 @@ On macOS, use `KillSwitch = false`: a profile requesting it fails at start with
 - Keys are stored in plaintext: restrict ACLs and permissions, and keep keys out
   of logs, analytics, Git, and crash reports.
 - `DNS` takes 1 to 4 distinct unicast IPv4 addresses separated by commas; the
-  default is `1.1.1.1`.
+  default is `1.1.1.1, 1.0.0.1`. To follow the Core default, omit the option
+  instead of writing it.
 - `Routing.Default` is `proxy`, `direct`, or `block`. `Rule.CIDR` accepts single
   IPs, CIDR ranges, and lists. Rules are checked top to bottom until the first
   match. More specific existing OS routes can bypass the tunnel.
@@ -507,11 +537,28 @@ The GUI can import `ssh://user@host:22` as `SSH = ...` or write explicit
 `Type = ssh`, `Server`, `Port`, and `Username` fields. Provide file pickers for
 the identity and `known_hosts`; save absolute paths as `IdentityFile` and
 `KnownHostsFile`. The service account may have a different home directory, so do
-not rely on its `~/.ssh` defaults. Save the `.conf` atomically before `start`.
+not rely on its `~/.ssh` defaults. Sessions started through the service or the
+daemon never use an SSH agent, so offer an identity file (with its key
+passphrase prompt), a password or keyboard-interactive sign-in, and do not
+offer agent sign-in. Save the `.conf` atomically before `start`.
+An imported `ssh://` URI or `.conf` file can name its own identity and
+`known_hosts` files, and a `masque://` URI or MASQUE profile its own CA file.
+Before saving an import, run `bimeron validate --json` and confirm every
+`trust_files` entry with the user, and confirm again when the set changes; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files).
 
 While connecting, poll the protected local control socket with
 `{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
 each `prompts` entry with masking controlled by its matching `echo` value.
+Keyboard-interactive prompts come from the SSH server. Render them as plain
+text, never as markup, each in its own bidirectionally isolated block (for
+example `dir="auto"` or FSI/PDI), and keep them visually separate from
+GUI-owned text so that a server cannot imitate it. Current cores clean them
+(see [SSH.MD](SSH.MD#gui-and-local-control-ipc)): a prompt contains no C0
+control other than LF (a line break) and TAB, no DEL, no C1 control and no
+bidirectional formatting character, and replaced characters appear as U+FFFD.
+Older cores pass the server's text through, so the GUI must apply the same
+filter itself instead of relying on the core version.
 Send `{"version":1,"command":"auth_reply","challenge_id":"...","answers":["..."]}`.
 The supported challenge kinds are `key_passphrase`, `password`, and
 `keyboard_interactive`. An answer is used once and is never stored in the
@@ -613,6 +660,42 @@ server-name override or insecure TLS switch. Plain `http://` and `Type = http`
 remain available but do not encrypt proxy credentials. Both variants carry TCP
 only; VPN DNS uses TCP and other proxied UDP is dropped. The local listener
 remains SOCKS5. See [configuration](CONF.MD#remote-http-connect-proxy).
+
+### Local proxy authentication
+
+With `[Interface] Mode = proxy`, a profile may require RFC 1929
+username/password authentication on its local SOCKS5 listener. Edit the options
+with `set_field` in `[Interface]`; offer them only when `socks_auth` is true.
+
+| Option | Contract |
+|---|---|
+| `ListenUsername` | 1–255 bytes of UTF-8 without control characters. |
+| `ListenPassword` | Same limits. Secret: mask it in the editor and never log it. |
+
+- Set both or leave both empty. Empty means no authentication, exactly as
+  before. Values are validated in every mode, like the other `[Interface]`
+  options; `[IKEv2]` profiles reject them (`ikev2_exclusive`).
+- Problems: `listen_auth_incomplete` at the missing field (with the other field
+  in `related`), and `listen_auth_invalid` at the offending field with
+  `args.max = 255`. Problems never carry the values.
+- With credentials, the listener accepts only clients that offer the
+  username/password method and send matching credentials. A client that offers
+  only "no authentication" receives method `0xFF`; wrong credentials receive
+  status `0x01`, and the connection closes. A UDP ASSOCIATE request (MASQUE
+  profiles only) must authenticate too, but SOCKS5 datagrams carry no
+  credentials: when the client announces port 0, the first datagram from any
+  local port claims the association. Tell users that authentication fully
+  protects TCP, and that UDP relies on the client announcing its UDP port.
+- Clearing both fields with `set_field` (empty values) turns authentication
+  off; empty values are accepted for these two options.
+- Core compares credentials in constant time and never includes them in
+  status, events, statistics, doctor output or problems. The CLI has no flags
+  for them; they come only from the profile.
+- Suggested UI: a "Require password" switch, a username field, a masked
+  password field with a "Generate" action (random, at least 16 characters),
+  and the connection hint (`socks5://user:password@127.0.0.1:1080`) shown only
+  on request. Without authentication, tell the user that any local application
+  or account on this computer can use the proxy.
 
 ### Remote SOCKS5 and Shadowsocks profile editors
 

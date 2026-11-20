@@ -26,5 +26,5 @@ func versionCommand(args []string) error {
 	if a.Core == nil {
 		return fmt.Errorf("running core does not report build information; update the service")
 	}
-	return json.NewEncoder(os.Stdout).Encode(a.Core)
+	return writeDaemonJSON(os.Stdout, a.Core)
 }

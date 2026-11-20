@@ -16,3 +16,12 @@ This module replaces apernet/quic-go with the adjacent local snapshot and pins
 uTLS to the root project's version so standalone tests use the intended code.
 Run `go test ./client ./server` here. The independent fixture under
 `internal/hysteria2/testdata/reference-server` deliberately has no replacements.
+
+`client.(*clientImpl).TCPContext` (and `TCP`, which now calls it with a
+background context) resets the request stream with `CancelRead`/`CancelWrite`
+when the context ends, so an abandoned dial no longer keeps a goroutine and a
+QUIC stream until the server answers. The wire format is unchanged.
+The server returns the stream credit when it finishes with the reset
+stream. `internal/integration_tests/tcp_context_test.go` checks that cancelled
+dials return promptly, leave no waiting goroutines and keep the connection
+usable.

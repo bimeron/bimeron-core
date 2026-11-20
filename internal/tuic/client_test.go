@@ -1,6 +1,7 @@
 package tuic
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -14,10 +15,12 @@ import (
 	"math/big"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/vpn"
 	"github.com/quic-go/quic-go"
 )
 
@@ -319,5 +322,326 @@ func TestCloseDoesNotWaitForInFlightConnect(t *testing.T) {
 	}
 	if _, err := client.ListenPacket(context.Background()); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("ListenPacket after Close: %v", err)
+	}
+}
+
+func TestDNSExchangeWithNoDissociateStreamCredit(t *testing.T) {
+	for _, outcome := range []string{"answer", "refused", "deadline"} {
+		t.Run(outcome, func(t *testing.T) {
+			cert, roots := testTLS(t)
+			listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+			defer cancel()
+			client := newLocalClient(t, listener.Addr().(*net.UDPAddr).Port, roots)
+			defer client.Close()
+			session, _, err := client.acquire(ctx, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.release(session)
+			peer, err := listener.Accept(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			auth, err := peer.AcceptUniStream(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, auth); err != nil {
+				t.Fatal(err)
+			}
+			query := []byte{0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 'a', 0, 0, 1, 0, 1}
+			answer := append([]byte(nil), query...)
+			answer[2] |= 0x80
+			if outcome == "refused" {
+				answer[3] = 5
+			}
+			r := vpn.DNSResolver{Servers: []string{"192.0.2.1"}, UDP: client, TCP: client, Timeout: 350 * time.Millisecond}
+			type result struct {
+				data []byte
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() { b, err := r.Exchange(ctx, query, false); done <- result{b, err} }()
+			packet, err := peer.AcceptUniStream(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Leave the query unread to hold the only incoming stream credit.
+			var hdr [10]byte
+			if _, err := io.ReadFull(packet, hdr[:]); err != nil {
+				t.Fatal(err)
+			}
+			addr, err := readAddress(packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome != "deadline" {
+				out, err := peer.OpenUniStreamSync(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := addressBytes(addr.String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				frame := append(hdr[:], encoded...)
+				if _, err := out.Write(append(frame, answer...)); err != nil {
+					t.Fatal(err)
+				}
+				if err := out.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case got := <-done:
+				switch outcome {
+				case "answer":
+					if got.err != nil || !bytes.Equal(got.data, answer) {
+						t.Fatalf("answer %x, %v", got.data, got.err)
+					}
+				case "refused":
+					if got.err == nil || !strings.Contains(got.err.Error(), "UDP response failed") {
+						t.Fatalf("fallback error: %v", got.err)
+					}
+				case "deadline":
+					if got.err == nil || !strings.Contains(got.err.Error(), "UDP read timeout") {
+						t.Fatalf("deadline error: %v", got.err)
+					}
+				}
+			case <-time.After(700 * time.Millisecond):
+				t.Fatal("DNS delivery or fallback blocked on dissociation credit")
+			}
+			if outcome != "answer" {
+				// Exercise TCP fallback while the peer still holds UDP stream credit.
+				answer[3] = 0
+				go func() {
+					b, err := r.Exchange(ctx, query, true)
+					done <- result{b, err}
+				}()
+				tcp, err := peer.AcceptStream(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = tcp.SetDeadline(time.Now().Add(time.Second))
+				address, err := addressBytes("192.0.2.1:53")
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := append([]byte{version, 1}, address...)
+				want = binary.BigEndian.AppendUint16(want, uint16(len(query)))
+				want = append(want, query...)
+				got := make([]byte, len(want))
+				if _, err := io.ReadFull(tcp, got); err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("TCP query %x, %v", got, err)
+				}
+				frame := binary.BigEndian.AppendUint16(nil, uint16(len(answer)))
+				if _, err := tcp.Write(append(frame, answer...)); err != nil {
+					t.Fatal(err)
+				}
+				if err := tcp.Close(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case got := <-done:
+					if got.err != nil || !bytes.Equal(got.data, answer) {
+						t.Fatalf("TCP answer %x, %v", got.data, got.err)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			if _, err := io.Copy(io.Discard, packet); err != nil {
+				t.Fatal(err)
+			}
+			control, err := peer.AcceptUniStream(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := control.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(io.LimitReader(control, 5))
+			want := []byte{version, 3, hdr[2], hdr[3]}
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("Dissociate = %x, %v; want %x", got, err, want)
+			}
+			client.mu.Lock()
+			defer client.mu.Unlock()
+			if len(session.packets) != 0 {
+				t.Fatal("association still registered after exchange")
+			}
+		})
+	}
+}
+
+func associationTestPeer(t *testing.T, credit int64) (context.Context, *Client, *quic.Listener) {
+	t.Helper()
+	cert, roots := testTLS(t)
+	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: credit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	client := newLocalClient(t, listener.Addr().(*net.UDPAddr).Port, roots)
+	t.Cleanup(func() { client.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	return ctx, client, listener
+}
+
+func openAssociation(t *testing.T, ctx context.Context, client *Client) *packetConn {
+	t.Helper()
+	p, err := client.ListenPacket(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.(*packetConn)
+}
+
+func TestMoreThan256LiveAssociations(t *testing.T) {
+	ctx, client, listener := associationTestPeer(t, 0)
+	var live []*packetConn
+	seen := make(map[uint16]bool)
+	for i := 0; i < 300; i++ {
+		p := openAssociation(t, ctx, client)
+		if seen[p.id] {
+			t.Fatalf("duplicate live ID %d", p.id)
+		}
+		seen[p.id] = true
+		live = append(live, p)
+	}
+	peer, err := listener.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := peer.AcceptUniStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, auth); err != nil {
+		t.Fatal(err)
+	}
+	target := &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 53}
+	for _, p := range live {
+		if _, err := p.WriteTo([]byte{42}, target); err != nil {
+			t.Fatal(err)
+		}
+		stream, err := peer.AcceptUniStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame, err := io.ReadAll(stream)
+		if err != nil || len(frame) < 11 || frame[1] != 2 || binary.BigEndian.Uint16(frame[2:4]) != p.id || frame[len(frame)-1] != 42 {
+			t.Fatalf("association %d delivered %x, %v", p.id, frame, err)
+		}
+	}
+}
+
+func TestAssociationRotationDrainsOriginalPeer(t *testing.T) {
+	ctx, client, listener := associationTestPeer(t, 1)
+	old := openAssociation(t, ctx, client)
+	accept := func() *quic.Conn {
+		t.Helper()
+		conn, err := listener.Accept(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	original := accept()
+	// Leave authentication unread to hold the sole control-stream credit.
+	auth, err := original.AcceptUniStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, err := client.DialStream(ctx, "192.0.2.1:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTCP, err := original.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Skip the intermediate IDs, then issue the final ID through ListenPacket.
+	client.mu.Lock()
+	old.session.nextID = associationIDs - 1
+	client.mu.Unlock()
+	last := openAssociation(t, ctx, client)
+	if last.id != 0 || last.session != old.session {
+		t.Fatal("last ID was not issued on original connection")
+	}
+	if err := last.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fresh := openAssociation(t, ctx, client)
+	replacement := accept()
+	if fresh.id != old.id || fresh.session == old.session {
+		t.Fatal("expected overlapping IDs on distinct connections")
+	}
+
+	send := func(peer *quic.Conn, p *packetConn, payload byte) {
+		t.Helper()
+		out, err := peer.OpenUniStreamSync(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame := binary.BigEndian.AppendUint16([]byte{version, 2}, p.id)
+		frame = append(frame, 0, 1, 1, 0, 0, 1)
+		addr, err := addressBytes("192.0.2.1:53")
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame = append(frame, addr...)
+		if _, err := out.Write(append(frame, payload)); err != nil {
+			t.Fatal(err)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(original, old, 'a')
+	send(replacement, fresh, 'b')
+	for p, want := range map[*packetConn]byte{old: 'a', fresh: 'b'} {
+		var got [1]byte
+		_ = p.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if n, _, err := p.ReadFrom(got[:]); err != nil || n != 1 || got[0] != want {
+			t.Fatalf("UDP response %q, %v; want %c", got, err, want)
+		}
+	}
+	if _, err := serverTCP.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	var reply [2]byte
+	_ = tcp.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.ReadFull(tcp, reply[:]); err != nil || string(reply[:]) != "ok" {
+		t.Fatalf("TCP response %q, %v", reply, err)
+	}
+	_ = old.Close()
+	if _, err := io.Copy(io.Discard, auth); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []uint16{last.id, old.id} {
+		stream, err := original.AcceptUniStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame [4]byte
+		if _, err := io.ReadFull(stream, frame[:]); err != nil || !bytes.Equal(frame[:], binary.BigEndian.AppendUint16([]byte{version, 3}, id)) {
+			t.Fatalf("Dissociate %x, %v; want ID %d", frame, err, id)
+		}
+	}
+	_ = tcp.Close()
+	select {
+	case <-original.Context().Done():
+	case <-ctx.Done():
+		t.Fatal("original connection did not drain")
+	}
+	if replacement.Context().Err() != nil {
+		t.Fatal("draining original connection closed replacement")
 	}
 }

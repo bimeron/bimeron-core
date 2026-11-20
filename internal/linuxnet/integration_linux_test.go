@@ -93,7 +93,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 		}
 	}
 	guard := os.Getenv("BIMERON_NFT_BIN") != ""
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, guard); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, guard); err != nil {
 		t.Fatal(err)
 	}
 	defer m.Recover(context.Background(), false)
@@ -168,7 +168,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 			}
 			return next(ctx, name, input, args...)
 		}
-		err = m.Configure(ctx, "Bimeron", 1420, nil, true, true)
+		err = m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true)
 		m.Run = next
 		if err == nil {
 			t.Fatal("injected setup failure ignored")
@@ -200,7 +200,7 @@ func TestNativeNetworkConfigureRecover(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := m.Configure(ctx, "Bimeron", 1420, policy, true, true); err != nil {
+		if err := m.Configure(ctx, "Bimeron", 1420, 2, policy, true, true); err != nil {
 			t.Fatal(err)
 		}
 		if err := m.Recover(ctx, true); err != nil {

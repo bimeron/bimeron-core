@@ -30,7 +30,11 @@ terminal: fix the profile (import a known_hosts file or enable accept-new).
 strings scoped to the Session/request. Kinds are password, key_passphrase, and
 keyboard_interactive. There are 1–8 prompts, each at most 1 KiB UTF-8, at most
 8 KiB combined. Invalid UTF-8, control/format characters and Unicode line/paragraph
-separators are rejected, never truncated. Echo count matches prompt count.
+separators are rejected, never truncated. Before the bridge sees a
+keyboard-interactive prompt, Core has already replaced its control and
+bidirectional formatting characters with U+FFFD and kept line feeds and tabs
+([SSH.MD](SSH.MD)); the bridge still rejects a prompt that contains a line
+feed, a tab or another format character. Echo count matches prompt count.
 Serialized pending JSON cannot exceed 16 KiB, including JSON escaping.
 
 `ReplyAuth(sessionID, requestID, answersJSON)` accepts a JSON string array matching

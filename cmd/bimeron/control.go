@@ -3,6 +3,7 @@ package main
 import (
 	core "bimeron/core"
 	"bimeron/internal/control"
+	"bimeron/internal/displaytext"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,21 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// shown prepares daemon-supplied text for one terminal line. A genuine daemon
+// sends no control characters, but the CLI does not rely on that.
+func shown[T ~string](s T) string { return displaytext.Line(string(s)) }
+
+// writeDaemonJSON writes v, which holds daemon-supplied text, as one JSON line
+// with control and bidirectional formatting characters escaped.
+func writeDaemonJSON(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(displaytext.EscapeJSON(b), '\n'))
+	return err
+}
 
 func controlCommand(command string, args []string) error {
 	r := control.Request{Command: command}
@@ -35,51 +51,57 @@ func controlCommand(command string, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s (attempt %d)\n", a.Status.State, a.Status.Attempt)
+	printControlResult(os.Stdout, command, a)
+	return nil
+}
+
+// printControlResult prints the daemon's answer to a control command.
+func printControlResult(out io.Writer, command string, a control.Response) {
+	fmt.Fprintf(out, "%s (attempt %d)\n", shown(a.Status.State), a.Status.Attempt)
 	if command == "status" && a.Status.Session != nil {
 		s := a.Status.Session
-		fmt.Printf("Session: %s; active: %t; mode: %s; IPv6: %s; kill switch requested: %t\n", s.ID, s.Active, s.Mode, s.IPv6, s.KillSwitchRequested)
+		fmt.Fprintf(out, "Session: %s; active: %t; mode: %s; IPv6: %s; kill switch requested: %t\n", shown(s.ID), s.Active, shown(s.Mode), shown(s.IPv6), s.KillSwitchRequested)
 		if s.ProfileName != "" {
-			fmt.Printf("Profile: %s\n", s.ProfileName)
+			fmt.Fprintf(out, "Profile: %s\n", shown(s.ProfileName))
 		}
 		if s.ProfileID != "" {
-			fmt.Printf("Profile ID: %s\n", s.ProfileID)
+			fmt.Fprintf(out, "Profile ID: %s\n", shown(s.ProfileID))
 		}
 		if s.ServerTCP != "" {
-			fmt.Printf("Server TCP: %s", s.ServerTCP)
+			fmt.Fprintf(out, "Server TCP: %s", shown(s.ServerTCP))
 			if s.ServerTCPName != "" {
-				fmt.Printf(" (%s)", s.ServerTCPName)
+				fmt.Fprintf(out, " (%s)", shown(s.ServerTCPName))
 			}
-			fmt.Println()
+			fmt.Fprintln(out)
 		}
 		if s.ServerUDP != "" {
-			fmt.Printf("Server UDP: %s", s.ServerUDP)
+			fmt.Fprintf(out, "Server UDP: %s", shown(s.ServerUDP))
 			if s.ServerUDPName != "" {
-				fmt.Printf(" (%s)", s.ServerUDPName)
+				fmt.Fprintf(out, " (%s)", shown(s.ServerUDPName))
 			}
-			fmt.Println()
+			fmt.Fprintln(out)
 		}
 	}
 	if a.Status.LastError != "" {
-		fmt.Println("Last error:", a.Status.LastError)
+		fmt.Fprintln(out, "Last error:", shown(a.Status.LastError))
 	}
 	if a.Status.KillSwitch == core.KillSwitchHolding {
-		fmt.Println("Kill switch holding: traffic outside the tunnel stays blocked until connection or stop.")
+		fmt.Fprintln(out, "Kill switch holding: traffic outside the tunnel stays blocked until connection or stop.")
 	}
 	if a.Status.State == core.Reconnecting && !a.Status.NextAttemptAt.IsZero() {
-		fmt.Println("Next attempt:", a.Status.NextAttemptAt.Local().Format(time.TimeOnly))
+		fmt.Fprintln(out, "Next attempt:", a.Status.NextAttemptAt.Local().Format(time.TimeOnly))
 	}
 	if command == "start" {
-		fmt.Println("Start accepted. Use bimeron status or watch to follow connection.")
+		fmt.Fprintln(out, "Start accepted. Use bimeron status or watch to follow connection.")
 	}
 	if command == "stop" {
-		fmt.Println("Session disconnected. Daemon remains running.")
+		fmt.Fprintln(out, "Session disconnected. Daemon remains running.")
 	}
 	if command == "shutdown" {
-		fmt.Println("Daemon shutdown accepted; session cleanup completed.")
+		fmt.Fprintln(out, "Daemon shutdown accepted; session cleanup completed.")
 	}
-	return nil
 }
+
 func statsControl(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: bimeron stats")
@@ -93,7 +115,7 @@ func statsControl(args []string) error {
 	if a.Stats == nil {
 		return fmt.Errorf("daemon did not report statistics")
 	}
-	return json.NewEncoder(os.Stdout).Encode(a.Stats)
+	return writeDaemonJSON(os.Stdout, a.Stats)
 }
 
 func capabilitiesControl(args []string) error {
@@ -157,12 +179,12 @@ func watchEvents(ctx context.Context, call func(context.Context, control.Request
 			}
 			instance = a.Instance
 			if a.Dropped {
-				fmt.Fprintln(out, "Some events were skipped; current state:", a.Status.State)
+				fmt.Fprintln(out, "Some events were skipped; current state:", shown(a.Status.State))
 			}
 			for _, e := range a.Events {
-				fmt.Fprintf(out, "%s [%s] %s\n", e.Event.Time.Format("15:04:05"), e.Event.State, e.Event.Message)
+				fmt.Fprintf(out, "%s [%s] %s\n", e.Event.Time.Format("15:04:05"), shown(e.Event.State), shown(e.Event.Message))
 				if e.Event.LastError != "" {
-					fmt.Fprintln(out, "Reason:", e.Event.LastError)
+					fmt.Fprintln(out, "Reason:", shown(e.Event.LastError))
 				}
 			}
 			cursor = a.Cursor

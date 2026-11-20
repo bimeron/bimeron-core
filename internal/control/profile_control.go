@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bimeron/internal/guard"
 	"bimeron/internal/systemvpn"
 	"context"
 	"errors"
@@ -51,6 +52,7 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 				operation = "previewing"
 				tasks.Add(1)
 				go func() {
+					defer guard.Recover()
 					defer tasks.Done()
 					result, e := preview(cfg)
 					if e == nil && remove {
@@ -93,6 +95,7 @@ func (s *Server) bindProfileControl(cfg systemvpn.Config, remove bool, preview f
 			operation = "applying"
 			tasks.Add(1)
 			go func() {
+				defer guard.Recover()
 				defer tasks.Done()
 				result, e := apply(cfg, remove, expected)
 				mu.Lock()

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/streamtransport"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -104,7 +105,8 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 	}
 	if x.mode == "stream-one" {
 		x.reader, x.writer = io.Pipe()
-		go x.download(x.base, x.reader)
+		base, reader := x.base, x.reader
+		guard.Go(func() { x.download(base, reader) })
 	} else {
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
@@ -121,11 +123,12 @@ func (c *Client) xhttpStream(ctx context.Context) (net.Conn, error) {
 			}
 			x.upload = make(chan []byte, buffered)
 		}
-		go x.download(x.downloadURL(), nil)
+		target := x.downloadURL()
+		guard.Go(func() { x.download(target, nil) })
 		if mode == "stream-up" {
-			go x.uploadStream()
+			guard.Go(func() { x.uploadStream() })
 		} else {
-			go x.uploadPackets()
+			guard.Go(func() { x.uploadPackets() })
 		}
 	}
 	return x, nil

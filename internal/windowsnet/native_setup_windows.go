@@ -67,7 +67,7 @@ func nativeBegin(c Config) error {
 	if err := windows.GetIfEntry2Ex(windows.MibIfTableNormalWithoutStatistics, &adapter); err != nil {
 		return err
 	}
-	if windows.UTF16ToString(adapter.Alias[:]) != c.Name {
+	if windows.UTF16ToString(adapter.Alias[:]) != c.Name || c.GUID != (windows.GUID{}) && adapter.InterfaceGuid != c.GUID {
 		return fmt.Errorf("tunnel adapter identity changed")
 	}
 	ownedNative.Lock()

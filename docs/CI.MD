@@ -69,6 +69,11 @@ tests build an independent, unmodified v2.13.0 reference server with `GOWORK=off
 and exercise simultaneous named presets over TCP and fragmented UDP. This
 requires the Go toolchain and the fixture module's pinned dependencies.
 
+The Linux job runs the WireGuard and AmneziaWG packages with the race
+detector against in-process upstream `wireguard-go` and `amneziawg-go`
+reference servers on 127.0.0.1, then fuzzes `FuzzParse`, `FuzzEdit` and
+`FuzzImportURI` for 20 seconds each. See [WIREGUARD.MD](WIREGUARD.MD#tests).
+
 The Linux job builds Caddy v2.11.7 with klzgrad/forwardproxy at
 `c096d6a00cb28e019cc1995b04bdc6a9311d8024` outside the core module. The
 NaiveProxy test verifies authenticated HTTP/2 and HTTP/3 CONNECT, padded large payloads,
@@ -312,6 +317,30 @@ loss and retransmission, reset/shutdown cleanup, and GOAWAY after response EOF.
 MASQUE lifecycle tests additionally delay the server's application read until
 after transport ACK, check CloseRead/CloseWrite, and bound cleanup while client
 QUIC packets are dropped.
+
+## WireGuard and AmneziaWG reference servers
+
+The Linux `test` job runs the WireGuard packages in two steps. The first
+runs `internal/wgconf` and `internal/wireguard/...` with the race detector,
+including in-process upstream `wireguard-go` and `amneziawg-go` servers on
+127.0.0.1, and three 20-second fuzz campaigns (`FuzzParse`, `FuzzEdit`,
+`FuzzImportURI`).
+
+The second step tests against real server processes in Docker containers.
+It builds upstream `wireguard-go` and `amneziawg-go` from the module cache
+at the versions pinned in `go.mod` (`GOWORK=off`, `-mod=readonly`, static,
+`CGO_ENABLED=0`), plus the `internal/wireguard/wgtest/refserver` entry
+point. `docker import` turns the three binaries into a local image without
+a Dockerfile or a registry pull. `TestReferenceContainers` then starts one
+container per server with `--cap-add NET_ADMIN --device /dev/net/tun`. Each
+server uses a kernel TUN device and is configured through its UAPI socket;
+no `wg` or `awg` tools are used. The test runs with the race detector and
+checks upstream `wireguard-go`, `amneziawg-go` without options, and AWG 1.0,
+1.5, 2.0 and 3.1: handshake, TCP and UDP echo over IPv4 and IPv6, a UDP
+datagram larger than the tunnel MTU, and handshake failures with mismatched
+AWG options. Keys are generated for each run. The step removes the image
+afterwards. [WireGuard](WIREGUARD.MD#reference-servers-in-containers) has
+the commands to repeat it locally.
 
 ## Foreground owner lifecycle and installer guard
 

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/displaytext"
+	"bimeron/internal/guard"
 	"bimeron/internal/safefile"
 	"bimeron/internal/sshtunnel/knownhosts"
 	"bimeron/internal/streamtransport"
@@ -35,9 +37,8 @@ type Challenge struct {
 type Prompt func(context.Context, Challenge) ([]string, error)
 
 type Client struct {
-	ssh   *ssh.Client
-	agent net.Conn
-	once  sync.Once
+	ssh  *ssh.Client
+	once sync.Once
 }
 type streamConn struct {
 	net.Conn
@@ -193,6 +194,48 @@ type Options struct {
 	// connection fails with HostKeyError KnownHostsMissing. The Android
 	// embedding always sets it.
 	ProfileOnly bool
+	// NoAgent never consults an SSH agent. The control daemon and the service
+	// set it: the agent reachable from a privileged process may not be the
+	// GUI user's agent. ProfileOnly implies it.
+	NoAgent bool
+}
+
+// agentListTimeout bounds connecting to the SSH agent and listing its
+// identities together. Signing during the handshake is bounded by the
+// attempt budget.
+var agentListTimeout = 5 * time.Second
+
+// dialAgent connects to the platform SSH agent. Tests replace it.
+var dialAgent = dialPlatformAgent
+
+// agentSigners returns the agent's identities and a function that releases
+// the agent connection, or no signers when no usable agent answers in time.
+// The connection is also closed when ctx ends, so a stalled agent cannot
+// block the handshake beyond the attempt budget. The caller releases it after
+// the handshake.
+func agentSigners(ctx context.Context) ([]ssh.Signer, func()) {
+	deadline := time.Now().Add(agentListTimeout)
+	dialCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	conn, err := dialAgent(dialCtx)
+	if err != nil {
+		return nil, func() {}
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { conn.Close() }) }
+	stop := context.AfterFunc(ctx, release)
+	if conn.SetDeadline(deadline) != nil {
+		stop()
+		release()
+		return nil, func() {}
+	}
+	signers, err := agent.NewClient(conn).Signers()
+	if err != nil || len(signers) == 0 || conn.SetDeadline(time.Time{}) != nil {
+		stop()
+		release()
+		return nil, func() {}
+	}
+	return signers, func() { stop(); release() }
 }
 
 // NewWithOptions connects like New with explicit options.
@@ -262,16 +305,12 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		}
 		methods = append(methods, ssh.PublicKeys(s))
 	}
-	agentConn, err := net.Conn(nil), fmt.Errorf("SSH agent disabled")
-	if !o.ProfileOnly {
-		agentConn, err = dialAgent(ctx)
-	}
-	if err == nil {
-		if signers, e := agent.NewClient(agentConn).Signers(); e == nil && len(signers) > 0 {
+	if !o.ProfileOnly && !o.NoAgent {
+		signers, release := agentSigners(ctx)
+		// The agent signs only during the handshake.
+		defer release()
+		if len(signers) > 0 {
 			methods = append(methods, ssh.PublicKeys(signers...))
-		} else {
-			agentConn.Close()
-			agentConn = nil
 		}
 	}
 	if identity == "" && defaultKeys {
@@ -300,13 +339,17 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 			if len(questions) == 0 || len(questions) > 8 {
 				return nil, fmt.Errorf("unsupported SSH authentication challenge")
 			}
-			return prompt(ctx, Challenge{Kind: "keyboard_interactive", Prompts: questions, Echo: echoes})
+			// The server chooses the prompt text. Every consumer (terminal,
+			// GUI, embedded host) receives it without control characters and
+			// without trailing line breaks.
+			prompts := make([]string, len(questions))
+			for i, q := range questions {
+				prompts[i] = strings.TrimRight(displaytext.Text(q), "\n")
+			}
+			return prompt(ctx, Challenge{Kind: "keyboard_interactive", Prompts: prompts, Echo: echoes})
 		}))
 	}
 	if len(methods) == 0 {
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		return nil, fmt.Errorf("SSH authentication method unavailable")
 	}
 	address := net.JoinHostPort(p.TCP.Host, strconv.Itoa(p.TCP.Port))
@@ -314,9 +357,6 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	dialCtx := ctx
 	conn, err := streamtransport.Dial(dialCtx, dialer, address, p.ShadowTLS, nil)
 	if err != nil {
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		if a.network(err) {
 			return nil, ErrNetwork
 		}
@@ -343,9 +383,6 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	stop()
 	if err != nil {
 		conn.Close()
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		if policy != nil {
 			if e := policy.result(); e != nil {
 				return nil, e
@@ -358,7 +395,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		}
 		return nil, fmt.Errorf("SSH handshake or host-key verification failed")
 	}
-	return &Client{ssh: ssh.NewClient(sshConn, chans, reqs), agent: agentConn}, nil
+	return &Client{ssh: ssh.NewClient(sshConn, chans, reqs)}, nil
 }
 
 func (c *Client) DialStream(ctx context.Context, target string) (transport.StreamConn, error) {
@@ -370,6 +407,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		err  error
 	}, 1)
 	go func() {
+		defer guard.Recover()
 		conn, err := c.ssh.Dial("tcp", target)
 		result <- struct {
 			conn net.Conn
@@ -389,6 +427,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		return streamConn{Conn: r.conn, closeWrite: stream.CloseWrite}, nil
 	case <-ctx.Done():
 		go func() {
+			defer guard.Recover()
 			r := <-result
 			if r.conn != nil {
 				r.conn.Close()
@@ -402,9 +441,6 @@ func (c *Client) Close() error {
 	var err error
 	c.once.Do(func() {
 		err = c.ssh.Close()
-		if c.agent != nil {
-			c.agent.Close()
-		}
 	})
 	return err
 }

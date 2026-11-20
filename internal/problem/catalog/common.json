@@ -1,6 +1,6 @@
 {
   "secret_fields": [
-    "Password", "ID", "Key", "PluginOpts",
+    "Password", "ListenPassword", "ID", "Key", "PluginOpts",
     "SS", "SSConf", "SOCKS5", "HTTP", "VLESS", "VMess", "Trojan", "Naive",
     "Hysteria2", "AnyTLS", "SSH", "TUIC", "MASQUE"
   ],

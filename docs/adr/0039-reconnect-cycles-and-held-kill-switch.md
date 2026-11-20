@@ -1,6 +1,8 @@
 # ADR 0039: Reconnect cycles and a held kill switch
 
-Status: accepted, November 18, 2026. Tracked by Core issue #162.
+Status: accepted, November 18, 2026. Tracked by Core issue #162. Point 5 and
+the consequence about service stops are refined for client-requested service
+updates by [ADR 0041](0041-kill-switch-across-service-updates.md).
 
 ## Context
 

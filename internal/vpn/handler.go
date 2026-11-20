@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/guard"
+	"bimeron/internal/relay"
 	"bimeron/internal/routing"
 	"bimeron/internal/telemetry"
 
@@ -37,13 +39,15 @@ type Handler struct {
 	closed bool
 	wg     sync.WaitGroup
 	slots  chan struct{}
+	// idle and halfIdle override the relay idle limits in tests.
+	idle, halfIdle time.Duration
 }
 
 func NewHandler(ctx context.Context) *Handler {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Handler{ctx: ctx, cancel: cancel, slots: make(chan struct{}, 512), Metadata: NewDNSMetadata()}
 }
-func (h *Handler) start(c net.Conn, run func()) {
+func (h *Handler) start(c net.Conn, run func(closeLocal func())) {
 	h.mu.Lock()
 	if h.closed || h.ctx.Err() != nil {
 		h.mu.Unlock()
@@ -60,12 +64,14 @@ func (h *Handler) start(c net.Conn, run func()) {
 	h.wg.Add(1)
 	h.mu.Unlock()
 	go func() {
+		defer guard.Recover()
 		defer h.wg.Done()
 		defer func() { <-h.slots }()
-		defer c.Close()
-		stop := context.AfterFunc(h.ctx, func() { _ = c.Close() })
+		closeLocal := sync.OnceFunc(func() { _ = c.Close() })
+		defer closeLocal()
+		stop := context.AfterFunc(h.ctx, closeLocal)
 		defer stop()
-		run()
+		run(closeLocal)
 	}()
 }
 func (h *Handler) Close() { h.mu.Lock(); h.closed = true; h.cancel(); h.mu.Unlock(); h.wg.Wait() }
@@ -97,7 +103,7 @@ func (h *Handler) HandleTCP(c adapter.TCPConn) {
 		h.handleDNSTCP(c)
 		return
 	}
-	h.start(c, func() {
+	h.start(c, func(closeLocal func()) {
 		target, action, err := h.target(c.LocalAddr().String())
 		h.Stats.RouteDecided(action)
 		if err != nil || action == routing.Block {
@@ -120,25 +126,41 @@ func (h *Handler) HandleTCP(c adapter.TCPConn) {
 		}
 		h.Stats.EstablishTCP()
 		defer h.Stats.EndTCP()
-		defer upstream.Close()
-		stop := context.AfterFunc(h.ctx, func() { _ = upstream.Close() })
+		closeUpstream := sync.OnceFunc(func() { _ = upstream.Close() })
+		defer guard.CloseOnExit(closeUpstream)
+		stop := context.AfterFunc(h.ctx, closeUpstream)
 		defer stop()
+		idleLimit, halfIdle := relay.IdleTimeout, relay.HalfClosedIdleTimeout
+		if h.idle > 0 {
+			idleLimit, halfIdle = h.idle, h.halfIdle
+		}
+		closeFlow := func() { closeLocal(); closeUpstream() }
+		idle := relay.Watch(idleLimit, closeFlow)
+		defer idle.Stop()
 		done := make(chan struct{})
-		go func() { _, _ = h.Stats.CopyUp(upstream, c); _ = upstream.CloseWrite(); close(done) }()
-		_, _ = h.Stats.CopyDown(c, upstream)
-		// Allow a bounded half-close, then release both sides. Never strand a goroutine.
+		go func() {
+			defer guard.Recover()
+			defer close(done)
+			_, _ = h.Stats.CopyUp(idle.Writer(upstream), c)
+			idle.SetLimit(halfIdle)
+			_ = upstream.CloseWrite()
+		}()
+		_, err = h.Stats.CopyDown(idle.Writer(c), upstream)
+		idle.SetLimit(halfIdle)
+		// After upstream EOF the upload may continue until it has been idle
+		// for the half-closed limit. Never strand a goroutine.
 		if half, ok := c.(interface{ CloseWrite() error }); ok {
 			_ = half.CloseWrite()
+		}
+		if err != nil {
+			// A failed download (reset, transport error) ends the flow, as in
+			// the SOCKS5 relay.
+			closeFlow()
 		}
 		select {
 		case <-done:
 		case <-h.ctx.Done():
-			_ = c.Close()
-			_ = upstream.Close()
-			<-done
-		case <-time.After(5 * time.Second):
-			_ = c.Close()
-			_ = upstream.Close()
+			closeFlow()
 			<-done
 		}
 	})
@@ -148,7 +170,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 		h.handleDNSUDP(c)
 		return
 	}
-	h.start(c, func() {
+	h.start(c, func(_ func()) {
 		target, action, err := h.target(c.LocalAddr().String())
 		h.Stats.RouteDecided(action)
 		if err != nil || action == routing.Block {
@@ -166,7 +188,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 				h.Stats.FailUDP()
 				return
 			}
-			defer direct.Close()
+			defer guard.CloseOnExit(func() { _ = direct.Close() })
 		} else {
 			if h.UDP == nil {
 				return
@@ -176,7 +198,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 				h.Stats.FailUDP()
 				return
 			}
-			defer upstream.Close()
+			defer guard.CloseOnExit(func() { _ = upstream.Close() })
 		}
 		h.Stats.EstablishUDP()
 		defer h.Stats.EndUDP()
@@ -195,6 +217,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 		defer stop()
 		done := make(chan struct{})
 		go func() {
+			defer guard.Recover()
 			defer close(done)
 			defer c.Close()
 			buffer := make([]byte, 16*1024)

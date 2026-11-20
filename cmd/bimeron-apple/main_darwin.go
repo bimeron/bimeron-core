@@ -57,6 +57,7 @@ func create(c core.SessionConfig, err error) C.ulonglong {
 	if err != nil || core.ValidateEmbeddedHost(c) != nil {
 		return 0
 	}
+	c.SSHDefaultKeys, c.SSHNoAgent = false, true
 	i := &instance{config: c}
 	e, p, err := core.NewPacketEngine(core.Options{}, core.PacketOptions{MTU: c.MTU, Outbound: func(ctx context.Context) (core.PacketNetwork, error) {
 		if err := ctx.Err(); err != nil {
@@ -280,7 +281,7 @@ func RLValidateConfigWithGeoData(data unsafe.Pointer, size C.int, geoIP unsafe.P
 //export RLCapabilities
 func RLCapabilities() *C.char {
 	c := core.PlatformCapabilities()
-	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema, ExplicitAccess: c.ExplicitAccess}
+	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema, ExplicitAccess: c.ExplicitAccess, WireGuard: embeddedWireGuard(c.WireGuard)}
 	b, _ := json.Marshal(c)
 	return C.CString(string(b))
 }
@@ -292,4 +293,17 @@ func problems(err error) []*core.Problem {
 		return nil
 	}
 	return core.Problems(err)
+}
+
+// embeddedWireGuard reports WireGuard for the packet backend. Profiles use
+// explicit Type = wireguard options: an in-memory profile cannot read a
+// referenced file, and the "bimeron wireguard" CLI bridge does not exist here.
+func embeddedWireGuard(w *core.WireGuardCapabilities) *core.WireGuardCapabilities {
+	if w == nil {
+		return nil
+	}
+	embedded := *w
+	embedded.DocumentAPI = 0
+	embedded.KeyOperations = nil
+	return &embedded
 }

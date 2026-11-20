@@ -17,8 +17,8 @@
     },
     "file_path_not_local": {
       "kind": "config",
-      "en": "The profile or key file must be on a local drive. Network shares, mapped network drives, device paths and reserved device names are not supported.",
-      "ru": "Файл профиля или ключа должен находиться на локальном диске. Сетевые папки, подключённые сетевые диски, пути устройств и зарезервированные имена устройств не поддерживаются."
+      "en": "The file must be on a local drive. Network shares (including WebDAV), mapped network drives, device paths and reserved device names are not supported.",
+      "ru": "Файл должен находиться на локальном диске. Сетевые папки (включая WebDAV), подключённые сетевые диски, пути устройств и зарезервированные имена устройств не поддерживаются."
     },
     "file_not_utf8": {
       "kind": "config",
@@ -79,6 +79,16 @@
       "kind": "config",
       "en": "Enter a local address and port, for example 127.0.0.1:1080.",
       "ru": "Укажите локальный адрес и порт, например 127.0.0.1:1080."
+    },
+    "listen_auth_incomplete": {
+      "kind": "config",
+      "en": "Enter both a username and a password for the local proxy, or leave both empty.",
+      "ru": "Укажите для локального прокси и имя пользователя, и пароль или оставьте оба поля пустыми."
+    },
+    "listen_auth_invalid": {
+      "kind": "config",
+      "en": "Use 1 to {max} bytes without control characters.",
+      "ru": "Используйте от 1 до {max} байт без управляющих символов."
     },
     "dns_too_many": {
       "kind": "config",

@@ -24,6 +24,14 @@ func ValidName(name string) bool {
 	return regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,14}$`).MatchString(name)
 }
 
+// dnsFirewall limits physical-link DNS while leaving other session traffic alone.
+func dnsFirewall(name string) string {
+	return fmt.Sprintf(`create table inet %[1]s { comment %[2]q; }
+add chain inet %[1]s output { type filter hook output priority -10; policy accept; }
+add rule inet %[1]s output oifname != "lo" oifname != %[3]q meta mark != %[4]s meta l4proto { tcp, udp } th dport { 53, 853 } drop
+`, FirewallTable, Owner, name, MarkText)
+}
+
 // Firewall permits the core's marked sockets, never all root processes.
 // No generic established permit is used in output: old connections must not leak.
 func Firewall(name string, policy *routing.Policy, disableIPv6, replace bool) (string, error) {

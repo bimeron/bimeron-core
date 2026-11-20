@@ -1,6 +1,7 @@
 package linuxnet
 
 import (
+	"bimeron/internal/dnsconfig"
 	"bimeron/internal/routing"
 	"bytes"
 	"context"
@@ -32,6 +33,7 @@ type State struct {
 	Index        int
 	Routing      bool
 	Guard        bool
+	DNSGuard     bool
 	DNSMethod    string
 	DNSPath      string
 	DNSOriginal  []byte
@@ -76,7 +78,7 @@ func (m *Manager) Load() (*State, error) {
 		return nil, err
 	}
 	var s State
-	if json.Unmarshal(b, &s) != nil || s.Version != 1 || !ValidName(s.Name) {
+	if json.Unmarshal(b, &s) != nil || (s.Version != 1 && s.Version != 2) || !ValidName(s.Name) {
 		return nil, fmt.Errorf("invalid Bimeron recovery journal")
 	}
 	return &s, nil
@@ -218,7 +220,8 @@ func (m *Manager) guardPresent(ctx context.Context) (bool, error) {
 			}
 			// nftables 1.0.6 preserves table comments but omits them from JSON.
 			text, textErr := m.command(ctx, "nft", "list", "table", "inet", FirewallTable)
-			if textErr == nil && bytes.Contains(text, []byte(`comment "`+Owner+`"`)) {
+			header, body, _ := strings.Cut(string(text), "{")
+			if textErr == nil && strings.TrimSpace(header) == "table inet "+FirewallTable && strings.HasPrefix(strings.TrimSpace(body), `comment "`+Owner+`"`) {
 				return true, nil
 			}
 			return false, fmt.Errorf("nftables table bimeron_core belongs to another owner")
@@ -237,7 +240,7 @@ func (m *Manager) Guard(ctx context.Context, name string, p *routing.Policy, dis
 	if err != nil {
 		return err
 	}
-	if old != nil && (old.Routing || old.DNSMethod != "") {
+	if old != nil && (old.DNSGuard || old.Routing || old.DNSMethod != "") {
 		return fmt.Errorf("Bimeron network recovery is pending")
 	}
 	present, err := m.guardPresent(ctx)
@@ -257,7 +260,7 @@ func (m *Manager) Guard(ctx context.Context, name string, p *routing.Policy, dis
 	return nil
 }
 
-func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routing.Policy, disableIPv6, guard bool) (err error) {
+func (m *Manager) Configure(ctx context.Context, name string, mtu, dnsServerCount int, p *routing.Policy, disableIPv6, guard bool) (err error) {
 	old, err := m.Load()
 	if err != nil {
 		return err
@@ -348,10 +351,10 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 			}
 		}
 	}
-	return m.configureDNS(ctx, s)
+	return m.configureDNS(ctx, s, dnsServerCount)
 }
 
-func (m *Manager) configureDNS(ctx context.Context, s *State) error {
+func (m *Manager) configureDNS(ctx context.Context, s *State, dnsServerCount int) error {
 	// Use resolved only when applications actually use its stub/uplink resolv.conf.
 	path, err := filepath.EvalSymlinks(m.Resolver)
 	if err != nil {
@@ -361,8 +364,26 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 	if err != nil {
 		return fmt.Errorf("cannot read resolv.conf")
 	}
-	resolved := strings.HasPrefix(path, "/run/systemd/resolve/") || bytes.Contains(original, []byte("nameserver 127.0.0.53")) || bytes.Contains(original, []byte("nameserver 127.0.0.54"))
+	resolved := strings.HasPrefix(path, "/run/systemd/resolve/") || usesResolvedStub(string(original))
 	if resolved {
+		if !s.Guard {
+			present, err := m.guardPresent(ctx)
+			if err != nil {
+				return err
+			}
+			if present {
+				return fmt.Errorf("nftables table %s is already in use", FirewallTable)
+			}
+			// Older recovery code cannot remove a DNS-only guard.
+			s.Version = 2
+			s.DNSGuard = true
+			if err := m.save(s); err != nil {
+				return err
+			}
+			if _, err := m.Run(ctx, "nft", dnsFirewall(s.Name), "-f", "-"); err != nil {
+				return fmt.Errorf("cannot install nftables DNS guard: %w", err)
+			}
+		}
 		s.DNSMethod = "resolved"
 		if err = m.save(s); err != nil {
 			return err
@@ -382,7 +403,10 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 	s.DNSPath = path
 	s.DNSOriginal = original
 	s.DNSMode = uint32(info.Mode().Perm())
-	s.DNSInstalled = []byte("# Bimeron Core; restored on stop/recover\nnameserver 198.18.0.2\noptions timeout:2 attempts:2\n")
+	// Keep the client socket open through both transport passes and reply delivery.
+	budget := 2*time.Duration(dnsServerCount)*dnsconfig.ExchangeTimeout + time.Second
+	seconds := (budget + time.Second - 1) / time.Second
+	s.DNSInstalled = []byte(fmt.Sprintf("# Bimeron Core; restored on stop/recover\nnameserver 198.18.0.2\noptions timeout:%d attempts:2\n", int(seconds)))
 	if err = m.save(s); err != nil {
 		return err
 	}
@@ -501,7 +525,7 @@ func (m *Manager) Recover(ctx context.Context, preserveGuard bool) error {
 		}
 	}
 	// Keep protection if another cleanup operation failed.
-	if s.Guard && !preserveGuard && len(failures) == 0 {
+	if (s.DNSGuard || s.Guard && !preserveGuard) && len(failures) == 0 {
 		present, e := m.guardPresent(ctx)
 		if e == nil && present {
 			_, e = m.command(ctx, "nft", "delete", "table", "inet", FirewallTable)
@@ -510,6 +534,7 @@ func (m *Manager) Recover(ctx context.Context, preserveGuard bool) error {
 			failures = append(failures, e)
 		} else {
 			s.Guard = false
+			s.DNSGuard = false
 		}
 	}
 	if e := m.save(s); e != nil {
@@ -539,15 +564,30 @@ func (m *Manager) BootstrapDNS(ctx context.Context, device string) []string {
 	}
 	return dns
 }
+func nameserverAddress(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) >= 2 && fields[0] == "nameserver" {
+		return fields[1]
+	}
+	return ""
+}
+
+func usesResolvedStub(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		switch nameserverAddress(line) {
+		case "127.0.0.53", "127.0.0.54":
+			return true
+		}
+	}
+	return false
+}
+
 func nameservers(text string) []string {
 	var result []string
 	for _, line := range strings.Split(text, "\n") {
-		f := strings.Fields(line)
-		if len(f) >= 2 && f[0] == "nameserver" {
-			a, e := netip.ParseAddr(f[1])
-			if e == nil && a.Is4() && !a.IsLoopback() && a.String() != "198.18.0.2" {
-				result = append(result, a.String())
-			}
+		a, err := netip.ParseAddr(nameserverAddress(line))
+		if err == nil && a.Is4() && !a.IsLoopback() && a.String() != "198.18.0.2" {
+			result = append(result, a.String())
 		}
 	}
 	return result

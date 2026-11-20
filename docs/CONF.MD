@@ -63,12 +63,35 @@ File = test.key
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
 `ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
-`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key. Relative paths are resolved against the `.conf` directory,
+`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key,
+or WireGuard text (see below). Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
 allowed. The maximum key-file size is 64 KiB. See [Referenced files](#referenced-files)
 for the rules that apply to every path in a profile.
+
+### WireGuard and AmneziaWG (experimental)
+
+To use a standalone WireGuard file from the terminal, see the
+[WireGuard CLI guide](WIREGUARD_CLI.MD).
+
+```ini
+[AccessKey]
+File = home.wg.conf
+```
+
+When the file holds wg-quick or AmneziaWG text (a `[Peer]` section or an
+`[Interface]` `PrivateKey`, and no Bimeron section), Core reads it as a
+WireGuard profile with exactly one `[Peer]`. The text is used as written,
+including whitespace, and Core never rewrites it. The same options may
+instead be written directly in `[AccessKey]` with `Type = wireguard`; this is
+the only form for in-memory profiles. For these profiles only the WireGuard
+`DNS` and `MTU` apply (the MTU also sets the adapter MTU); `[Interface] DNS`
+and `MTU` are ignored. `Mode = proxy` carries TCP only.
+`[Routing] AllowedIPsMode` controls how AllowedIPs combines with rules. See
+[WIREGUARD.MD](WIREGUARD.MD) for accepted keys, AmneziaWG versions, links and
+the desktop bridge.
 
 ### Inline static key
 
@@ -657,18 +680,55 @@ This section is optional; missing options receive defaults.
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
 | `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853), LLMNR (5355) and NetBIOS names (UDP 137) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
-| `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
+| `DNS` | `1.1.1.1, 1.0.0.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
+| `ListenUsername` | empty | Optional username for the local SOCKS5 listener (RFC 1929). Set together with `ListenPassword`. 1–255 bytes, no control characters. Unused in `vpn` mode. |
+| `ListenPassword` | empty | Password for `ListenUsername`. Same limits. When both are empty, the listener requires no authentication. |
 
 Values are validated even when unused in the selected mode.
+
+The local SOCKS5 listener accepts connections only on a loopback address, but
+every local application and user account on the computer can reach that
+address. Without `ListenUsername`/`ListenPassword`, any of them can use the
+session. With both set, clients must authenticate with RFC 1929
+username/password, for example `curl --proxy socks5h://alice:secret@127.0.0.1:1080`
+(percent-encode `:`, `@` and `%` in such URLs); clients that offer only "no
+authentication" are refused. Use a long random password: failed attempts are
+not rate limited. Credentials are compared in constant time and never appear in
+logs, status or error output. Empty values mean no authentication. SOCKS5 UDP
+datagrams carry no credentials: with a client that announces UDP port 0, the
+first local datagram claims a UDP association, so authentication fully
+protects TCP only.
+
+```ini
+[Interface]
+Mode = proxy
+Listen = 127.0.0.1:1080
+ListenUsername = alice
+ListenPassword = "use a long random value"
+```
+
+Relayed TCP connections, in both `vpn` and `proxy` mode, are closed after 30
+minutes without data in either direction. Once one side has finished sending,
+the connection is closed after 1 minute without data in the remaining
+direction; data still flowing that way keeps it open for as long as it lasts.
+This releases connections whose peer stopped responding. Applications that keep
+long idle connections, such as SSH sessions, should enable keepalives (for
+example `ServerAliveInterval`).
 
 System VPN DNS always goes through the selected upstream transport, regardless of `Default` and rules.
 
 Each query starts with the first server. A network error, timeout (2 seconds per
 server), or error response such as `SERVFAIL` or `REFUSED` causes a retry with
 the next server. `NXDOMAIN` is final and does not trigger fallback. If every
-server is unavailable, the client receives `SERVFAIL`. DNS over UDP and TCP is
-supported. If `DNS` is omitted, `1.1.1.1` is used. IPv6 server addresses,
+server is unavailable, the client receives `SERVFAIL`. Over UDP each server is
+tried in turn before the same order is tried over TCP. With two servers, UDP
+can take 4 seconds before TCP starts, and TCP can take another 4 seconds.
+When Core writes Linux `resolv.conf`, each client attempt allows 4 seconds per
+configured server plus 1 second for reply delivery (5 seconds for one server,
+9 for two). This keeps the Go resolver socket open for a late TCP fallback
+answer. The client can retry once if the reply is lost. DNS over UDP and TCP is
+supported. If `DNS` is omitted, `1.1.1.1, 1.0.0.1` is used. IPv6 server addresses,
 DoH, and DoT are not yet supported by this option. Servers must be reachable from
 the upstream server.
 
@@ -686,6 +746,7 @@ on the upstream server.
 | Option | Default | Meaning |
 |---|---|---|
 | `Default` | `proxy` | Action for connections matching no rule. Allowed values: `proxy`, `direct`, `block`. |
+| `AllowedIPsMode` | `direct` | WireGuard profiles only. How AllowedIPs combines with rules: `direct`, `block`, `ignore` or `only`; see [AllowedIPs priority](WIREGUARD.MD#allowedips-priority). |
 
 | Action | Behavior |
 |---|---|
@@ -807,6 +868,8 @@ On Windows, Bimeron also rejects these paths before opening them:
 
 - network shares (`\\server\share`, `//server/share`);
 - device-namespace paths (`\\?\`, `\\.\`, `\??\`);
+- drive-relative paths such as `C:file.key`, which depend on the current
+  directory of that drive;
 - reserved device names such as `NUL`, `CON`, or `COM1.txt` in any path element;
 - alternate data streams (`file.txt:stream`).
 
@@ -840,6 +903,16 @@ A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
 has the code `geodata_unreadable` or `geodata_limit`. SSH and MASQUE files are
 read when a connection starts. A failure there is reported as an unavailable
 identity, `known_hosts`, or CA file, or as a file that exceeds its size limit.
+On Windows, a network or device path in `IdentityFile`, `KnownHostsFile`,
+`CAFile` or the `identity`, `known_hosts` and `ca` URI options is already
+refused when the profile is loaded or validated, with `file_path_not_local`
+and the option as the problem field.
+
+Identity, `known_hosts` and CA files decide which servers Bimeron trusts and
+which key it uses, so a profile from someone else can choose them.
+`bimeron validate --json` lists them as `trust_files`; a GUI shows them and
+asks the user to confirm before it saves an imported profile (see
+[DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD#trust-files)).
 
 ## Commands
 

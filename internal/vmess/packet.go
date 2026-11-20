@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"bimeron/internal/guard"
 )
 
 type datagram struct {
@@ -87,7 +89,7 @@ func (p *packetConn) WriteTo(b []byte, address net.Addr) (int, error) {
 			}
 			s = candidate
 			p.sessions[key] = s
-			go p.readSession(key, s, address)
+			guard.Go(func() { p.readSession(key, s, address) })
 		} else {
 			_ = conn.Close()
 		}

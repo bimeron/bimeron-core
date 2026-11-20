@@ -140,7 +140,11 @@ func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, call
 
 func validateUpdatedHello(a control.Response, wantVersion string) error {
 	if a.Error != "" || a.Version != control.Version || a.Core == nil || a.Core.Version != wantVersion {
-		return fmt.Errorf("service reported core %v and protocol %d, expected %s and %d", a.Core, a.Version, wantVersion, control.Version)
+		reported := "none"
+		if a.Core != nil {
+			reported = shown(a.Core.Version)
+		}
+		return fmt.Errorf("service reported core %s and protocol %d, expected %s and %d", reported, a.Version, wantVersion, control.Version)
 	}
 	return nil
 }

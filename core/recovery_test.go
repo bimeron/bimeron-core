@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -784,14 +786,17 @@ func TestRunPanicRetainsProtection(t *testing.T) {
 	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { panic("open") }}}
 	e := testEngine(b)
 	panicked := make(chan any, 1)
-	e.repanic = func(p any) { panicked <- p }
+	var stack []byte
+	e.repanic = func(p any) { stack = debug.Stack(); panicked <- p }
 	if err := e.Start(testDeadline(t), killSwitchConfig()); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case p := <-panicked:
-		if p != "open" {
-			t.Fatal(p)
+		// The value is rethrown unchanged while the frames where the panic
+		// happened are still on the stack, so the crash traceback shows them.
+		if p != "open" || !strings.Contains(string(stack), "TestRunPanicRetainsProtection.func1") {
+			t.Fatalf("panic lost its value or origin: %v\n%s", p, stack)
 		}
 	case <-testDeadline(t).Done():
 		t.Fatal("panic not observed")
@@ -849,7 +854,7 @@ func TestNextAttemptAtIsNotEarly(t *testing.T) {
 func TestStartAfterAbandonIsRefused(t *testing.T) {
 	e := testEngine(&protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { return fakeSession{}, nil }}})
 	e.MarkAbandon()
-	if err := e.Start(testDeadline(t), killSwitchConfig()); !errors.Is(err, errEngineExiting) {
+	if err := e.Start(testDeadline(t), killSwitchConfig()); !errors.Is(err, ErrEngineExiting) {
 		t.Fatal(err)
 	}
 }
@@ -873,11 +878,111 @@ func TestAbandonDuringHandoverKeepsProtection(t *testing.T) {
 	e.MarkAbandon()
 	cancel()
 	close(release)
-	if err := <-result; err == nil {
-		t.Fatal("handover started after the owner failed")
+	if err := <-result; !errors.Is(err, ErrEngineExiting) {
+		t.Fatal("handover started after the owner failed", err)
 	}
 	if acquires, _, retains, installed := b.snapshot(); acquires != 1 || retains != 1 || !installed {
 		t.Fatal("protection released", acquires, retains, installed)
+	}
+}
+
+// The sticky exiting flag alone stops a handover: with the owner's context
+// still live, the new run is not started and the filters stay installed.
+func TestAbandonDuringHandoverWithoutCancelKeepsProtection(t *testing.T) {
+	release := make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { <-release; return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	result := make(chan error, 1)
+	go func() { result <- e.Start(ctx, otherKillSwitchProfile()) }()
+	awaitStatus(t, e, func(s Status) bool { return s.State == Stopping })
+	// A second Start races the owner failure while handover owns lifecycle.
+	queued := make(chan error, 1)
+	go func() { queued <- e.Start(ctx, killSwitchConfig()) }()
+	e.MarkAbandon()
+	close(release)
+	if err := <-result; !errors.Is(err, ErrEngineExiting) {
+		t.Fatal("handover started after the owner failed", err)
+	}
+	if err := <-queued; !errors.Is(err, ErrEngineExiting) {
+		t.Fatal("concurrent start admitted after owner failure", err)
+	}
+	if acquires, _, retains, installed := b.snapshot(); acquires != 1 || retains != 1 || !installed {
+		t.Fatal("protection released", acquires, retains, installed)
+	}
+	if s := e.Status(); s.State != Disconnected || s.KillSwitch != "" || s.Session != nil {
+		t.Fatal("abandoned handover left a stale state", s)
+	}
+}
+
+// A Stop whose caller timed out is never turned into a handover: a Start
+// waits until the stop has finished, then runs normally.
+func TestStartDuringTimedOutStopIsRefused(t *testing.T) {
+	release := make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { <-release; return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	short, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	if err := e.Stop(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if err := e.Start(ctx, otherKillSwitchProfile()); !errors.Is(err, ErrSessionRunning) {
+		t.Fatal("start replaced a stopping session", err)
+	}
+	close(release)
+	if err := e.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 0 || installed {
+		t.Fatal("stop did not release protection", releases, retains, installed)
+	}
+	if err := e.Start(ctx, otherKillSwitchProfile()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A cleanup failure of the previous session stays visible when the owner
+// exits while a handover waits for it.
+func TestAbandonDuringHandoverReportsPreviousCleanupFailure(t *testing.T) {
+	release := make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { <-release; return fault("cleanup_failed_run_recover", false) }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	result := make(chan error, 1)
+	go func() { result <- e.Start(ctx, otherKillSwitchProfile()) }()
+	awaitStatus(t, e, func(s Status) bool { return s.State == Stopping })
+	e.MarkAbandon()
+	close(release)
+	if err := <-result; !errors.Is(err, ErrEngineExiting) {
+		t.Fatal(err)
+	}
+	if s := e.Status(); s.State != Failed || s.LastError != "cleanup_failed_run_recover" {
+		t.Fatal("previous cleanup failure hidden", s)
+	}
+	if _, _, retains, installed := b.snapshot(); retains != 1 || !installed {
+		t.Fatal("protection released", retains, installed)
 	}
 }
 
@@ -904,5 +1009,57 @@ func TestAbandonDoesNotOverrideUserStop(t *testing.T) {
 	}
 	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 0 || installed {
 		t.Fatal("user stop did not release protection", releases, retains, installed)
+	}
+}
+
+// A user's stop is recognized even when the published state no longer says
+// stopping, as when a run entering the held failed state publishes failed at
+// the same moment.
+func TestAbandonAfterStopWithFailedStateReleasesProtection(t *testing.T) {
+	closing, release := make(chan struct{}), make(chan struct{})
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error { close(closing); <-release; return nil }}, nil
+	}}}
+	e := testEngine(b)
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, killSwitchConfig()); err != nil {
+		t.Fatal(err)
+	}
+	awaitStatus(t, e, func(s Status) bool { return s.State == Connected })
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.Stop(ctx) }()
+	// The run has published its own stopping state and is closing the session.
+	<-closing
+	e.mu.Lock()
+	e.transitionLocked(Failed, fault("access_key_unavailable", false))
+	e.mu.Unlock()
+	e.MarkAbandon()
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if _, releases, retains, installed := b.snapshot(); releases != 1 || retains != 0 || installed {
+		t.Fatal("user stop kept protection", releases, retains, installed)
+	}
+}
+
+// A stop that lands while a failed run is about to hold is not overwritten
+// by the held failed state: the run ends as a stop and releases protection.
+func TestHoldAfterStopDoesNotPublishFailed(t *testing.T) {
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return nil, fault("access_key_unavailable", false)
+	}}}
+	e := testEngine(b)
+	ctx, cancel := context.WithCancel(testDeadline(t))
+	defer cancel()
+	e.mu.Lock()
+	e.status.State = Stopping
+	e.mu.Unlock()
+	cancel()
+	if e.hold(ctx, fault("access_key_unavailable", false)) {
+		t.Fatal("hold retried after a stop")
+	}
+	if s := e.Status(); s.State != Stopping || e.holding {
+		t.Fatal("hold published failed over a stop", s.State, e.holding)
 	}
 }

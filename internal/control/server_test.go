@@ -2,12 +2,15 @@ package control
 
 import (
 	core "bimeron/core"
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/telemetry"
 	"context"
 	"errors"
 	"net"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -236,23 +239,101 @@ func TestListenerFailureAbandonsSessionBeforeCancel(t *testing.T) {
 	}
 }
 
-type panickingListener struct{}
+type panickingListener struct{ scriptedListener }
 
-func (panickingListener) Accept() (net.Conn, error) { panic("accept") }
-func (panickingListener) Close() error              { return nil }
-func (panickingListener) Addr() net.Addr            { return &net.TCPAddr{} }
+func (l panickingListener) Accept() (net.Conn, error) {
+	c, err := l.scriptedListener.Accept()
+	if err != nil {
+		panic("accept")
+	}
+	return c, nil
+}
 
-// A panic in Serve keeps kill switch protection: the session is marked
-// abandoned before it is stopped, and the panic is rethrown.
-func TestServePanicAbandonsSession(t *testing.T) {
-	e := &abandonEngine{fakeEngine: fakeEngine{events: make(chan core.Event)}}
-	defer func() {
-		if p := recover(); p != "accept" {
-			t.Fatal("panic not rethrown", p)
-		}
-		if !e.marked || !e.stopped {
-			t.Fatal("panic did not abandon the session", e.marked, e.stopped)
-		}
+func TestServeDispatchesListenerPanicBeforeSessionCancellation(t *testing.T) {
+	e := &abandonEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
+	l := panickingListener{scriptedListener{conns: make(chan net.Conn), fail: make(chan struct{})}}
+	dispatched := false
+	var stack string
+	defer guard.Register(func(p any) <-chan struct{} {
+		stack = string(debug.Stack())
+		e.mu.Lock()
+		dispatched = p == "accept" && e.liveAtMark && e.marked && !e.stopped && e.session != nil && e.session.Err() == nil
+		e.mu.Unlock()
+		done := make(chan struct{})
+		close(done)
+		return done
+	})()
+	result := make(chan any, 1)
+	go func() {
+		defer func() { result <- recover() }()
+		_ = s.Serve(context.Background(), l)
 	}()
-	_ = NewServer(e).Serve(context.Background(), panickingListener{})
+	client, server := net.Pipe()
+	l.conns <- server
+	path, _ := filepath.Abs("held.conf")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := exchange(ctx, client, Request{Command: "start", Config: path})
+	client.Close()
+	close(l.fail)
+	select {
+	case p := <-result:
+		if !strings.Contains(stack, "panickingListener.Accept(") {
+			t.Fatalf("listener panic frame missing at guard dispatch:\n%s", stack)
+		}
+		// The session already ran its crash cleanup through the guard; a real
+		// engine's Stop would wait for a run that never finishes.
+		if err != nil || p != "accept" || !dispatched || e.stopped {
+			t.Fatalf("start=%v panic=%v live at dispatch=%v marked=%v stopped=%v", err, p, dispatched, e.marked, e.stopped)
+		}
+	case <-ctx.Done():
+		t.Fatal("listener panic stalled")
+	}
+}
+
+// configEngine records the configuration of the last Start.
+type configEngine struct {
+	fakeEngine
+	started chan core.SessionConfig
+}
+
+func (e *configEngine) Start(ctx context.Context, c core.SessionConfig) error {
+	e.started <- c
+	return e.fakeEngine.Start(ctx, c)
+}
+
+// Sessions started through the daemon never use the daemon account's home
+// keys or SSH agent, whatever the loaded configuration says.
+func TestStartDisablesDaemonSSHFallbacks(t *testing.T) {
+	e := &configEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}, started: make(chan core.SessionConfig, 1)}
+	s := NewServer(e)
+	s.load = func(string) (core.SessionConfig, error) {
+		c := core.DefaultConfig()
+		c.SSHDefaultKeys = true
+		return c, nil
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Serve(ctx, l)
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	callCtx, end := context.WithTimeout(context.Background(), 3*time.Second)
+	defer end()
+	path, _ := filepath.Abs("test.conf")
+	if _, err := exchange(callCtx, c, Request{Command: "start", Config: path}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := <-e.started
+	if cfg.SSHDefaultKeys || !cfg.SSHNoAgent || cfg.SSHPrompt == nil {
+		t.Fatalf("daemon session SSH settings: default keys %t, no agent %t, prompt %t", cfg.SSHDefaultKeys, cfg.SSHNoAgent, cfg.SSHPrompt != nil)
+	}
 }

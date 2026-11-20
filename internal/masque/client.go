@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/safefile"
 	"github.com/dunglas/httpsfv"
 	"github.com/quic-go/quic-go"
@@ -97,7 +98,7 @@ func New(p accesskey.Profile, d net.Dialer) (*Client, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{profile: p, dialer: d, roots: roots, template: template, authority: authority, ctx: ctx, cancel: cancel, packets: make(map[*packetConn]struct{}), slots: make(chan struct{}, maxTunnels), connecting: make(chan struct{}, 1), outgoing: make(chan datagramWrite, 32), senderDone: make(chan struct{}), generations: make(map[*http3.ClientConn]*connectionGeneration)}
-	go c.sendPackets()
+	guard.Go(func() { c.sendPackets() })
 	return c, nil
 }
 
@@ -431,6 +432,7 @@ func (s *streamConn) Close() error {
 			s.writeMu.Unlock()
 			deadline := time.Now().Add(closeSendTimeout)
 			go func() {
+				defer guard.Recover()
 				defer s.release()
 				s.readMu <- struct{}{}
 				defer func() { <-s.readMu }()

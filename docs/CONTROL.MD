@@ -9,6 +9,15 @@ such profiles with `ikev2_requires_foreground_user_session`. The optional
 `capabilities.ikev2` object describes native support independently of the
 top-level packet capabilities. Older daemons may omit it. See [IKEV2.MD](IKEV2.MD).
 
+The optional `capabilities.wireguard` object reports experimental WireGuard
+and AmneziaWG support: `supported`, `experimental`, `protocols`,
+`awg_versions`, `uri_schemes`, `allowed_ips_modes` and `document_api` (the
+`bimeron wireguard` bridge version). Older daemons omit it; treat absence as
+unsupported. WireGuard sessions report the connection codes
+`wireguard_handshake_timeout`, `wireguard_socket_failed`,
+`wireguard_platform_limit` and `invalid_wireguard_transport`. See
+[WIREGUARD.MD](WIREGUARD.MD).
+
 Native Go API sessions add optional Session fields `backend: "ikev2"` and
 `stats_unavailable: true`, use `ipv6: "system"`, and mark stats snapshots
 `unavailable: true`. Unsupported counters must not be interpreted as zero traffic.
@@ -98,6 +107,13 @@ free text. English and Russian texts come from the catalog described in
 [ERRORS.MD](ERRORS.MD). `ErrorStage` and progress event codes are not catalog
 codes.
 
+Display response strings as plain text. A client cannot tell a genuine daemon
+from an impostor by its text, so the CLI replaces control and bidirectional
+formatting characters in every daemon string it prints as text, including
+error codes, and escapes them as `\u` sequences in its JSON output
+(`stats`, `version -daemon`, `doctor`).
+SSH prompts follow [SSH.MD](SSH.MD#gui-and-local-control-ipc).
+
 Changes to required fields or existing command semantics require a new version.
 
 ## Server identity
@@ -117,7 +133,7 @@ Object owners set by Core:
 | `\\.\pipe\Bimeron.Core.Readiness` | BimeronCore service (LocalSystem) | `S-1-5-18` (SYSTEM) |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | Elevated console daemon of the user | `S-1-5-32-544` (Administrators) |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | Elevated foreground owner of the user | `S-1-5-32-544` (Administrators) |
-| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | No explicit owner (the elevated token default, normally Administrators) |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | `S-1-5-32-544` (Administrators) |
 | `/run/bimeron/control.sock` (Linux), `/var/run/bimeron/control.sock` (macOS) | Root daemon or service | Socket file owned by the control owner UID or root; listener credentials are root |
 | `/run/bimeron-repair/<nonce>.sock` | Root repair broker | Socket file owned by the caller UID; listener credentials are root |
 
@@ -138,14 +154,18 @@ FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`, and without
 | Endpoint | DACL (protected) |
 |---|---|
 | `\\.\pipe\Bimeron.Core.Service` | SYSTEM: full; control owner: `0x0012019B` |
-| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: full |
+| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: `0x0012019B` |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4` |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4`; medium no-write-up label |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | SYSTEM: full; Administrators: full; caller: `0x0012019B` |
 
 The console daemon and the IKEv2 foreground owner run elevated as the user, so
 the user and Administrators entries together give them the rights to serve
 further instances. Non-elevated processes of the user hold Administrators only
-as a deny-only group and cannot serve the pipe.
+as a deny-only group and cannot serve the pipe. Only SYSTEM serves the
+readiness pipe; administrators can connect to it but cannot add instances.
+The repair broker runs elevated and serves its pipe through the
+Administrators entry; the caller that launched it can only connect.
 
 ### Windows service pipe
 
@@ -166,6 +186,13 @@ as a deny-only group and cannot serve the pipe.
 
 Do not open the server process token. Standard users cannot open a LocalSystem
 token, so a check that requires it fails for a normal GUI.
+
+Unlike the console daemon and IKEv2 foreground clients, a service pipe client
+keeps no handle to the server process. A LocalSystem process grants standard
+users no access, so `OpenProcess` fails for a normal GUI, and the check does
+not need a handle: only SYSTEM can create instances of the service pipe, so
+every instance a client connects to is served by a SYSTEM process, and the
+SCM process ID binds the pipe to the BimeronCore service.
 
 A service built before explicit owners leaves the pipe owned by Administrators
 (`S-1-5-32-544`). Clients with this check reject it until the service is
@@ -418,9 +445,16 @@ with `stop` followed by `start`, because a repeated `start` keeps the running
 session. Embedders without a profile path are compared by profile name.
 
 If the daemon or service fails while a `start` waits for a handover, the
-previous session's filters stay installed and the `start` fails; once the owner
-has abandoned the engine, no later `start` is accepted. A user's `stop` that is
-already in progress still releases protection.
+previous session's filters stay installed and the `start` is refused; a
+cleanup failure of the previous session is still reported in status first,
+otherwise the status becomes `disconnected` and the filters are then reported
+as residual. Once the owner has abandoned the engine, no later `start` is
+accepted; a response that still reaches the client carries
+`daemon_shutting_down`, although the connection usually closes first. A
+user's `stop` that is already in progress still releases protection. The
+daemon runs commands one at a time, so a `start` sent during a `stop` waits
+for it; an embedder whose `Engine.Stop` timed out gets `ErrSessionRunning`
+from `Start` until the stop has finished.
 
 Protection also stays installed when the daemon or service ends for a reason
 other than a stop, for example a failed control listener or a crash: the
@@ -483,8 +517,13 @@ omitted.
   shown), and `Session.active` is not `true`. Connecting a profile with the
   kill switch replaces the filters; `recover` removes them. Inspected at most
   every 5 seconds while idle. Protection owned by another running session, such
-  as a foreground `bimeron connect` that holds the session lock, is not
-  reported as residual.
+  as a foreground `bimeron connect` that holds the session lock or a live
+  foreground owner that retains native protection, is not reported as
+  residual, and protection removed by such a session while it stops is checked
+  again before it is reported. On Windows the probe reads the
+  session lock state without taking the lock; on Linux it takes the lock for
+  an instant, and `run`, `connect`, `recover` and repair retry the lock briefly
+  instead of failing on it.
 - `LastErrorPermanent` (boolean): `LastError` is a failure that retrying alone
   does not fix, for example `access_key_unavailable` (a rejected or removed
   key) or a TLS rejection. It ends an initial connection at once; after loss of

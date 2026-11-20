@@ -8,7 +8,7 @@ The `.conf` format is the same as on Windows: see [CONF.MD](CONF.MD).
 ## Requirements and startup
 
 Requirements: Linux with `/dev/net/tun`, root privileges, and `iproute2`.
-`KillSwitch = true` requires nftables 1.0+. A physical IPv4 default route in
+VPN sessions using systemd-resolved or the kill switch require nftables 1.0+. A physical IPv4 default route in
 the `main` table is used. Interface names may contain at most 15 ASCII
 characters; the default `Bimeron` fits. Build the appropriate binary as
 `bin/bimeron-linux-amd64` or `bin/bimeron-linux-arm64`.
@@ -81,7 +81,9 @@ rules are also rejected to prevent bypass.
 Core sockets receive `SO_MARK = 0x524c` and bind to the physical interface,
 allowing ssconf fetching, Outline connections, and `direct` traffic without
 looping back into TUN. Incoming TUN replies support strict `rp_filter`.
-Do not use this mark for other applications' sockets.
+Do not use this mark for other applications' sockets. The WireGuard UDP socket
+is a core socket and gets the same mark; wg-quick `FwMark` and `Table` are
+rejected in WireGuard text.
 
 All local TCP/UDP except loopback and the machine's own addresses enters the
 shared policy handler. Local networks also follow IP/CIDR rules: add their ranges
@@ -134,7 +136,16 @@ administrator.
 If the OS uses systemd-resolved through its stub/uplink resolv.conf, DNS is
 configured only on the new TUN through `resolvectl`, with routing domain `~.`.
 Shutdown performs `revert` on that interface. Other interfaces' DNS is not
-rewritten. Otherwise, the original contents of the file targeted by
+rewritten. A more specific DNS domain on another link (for example, a DHCP
+search domain) can take precedence over `~.`. Queries sent to a physical link
+for that domain are blocked and resolution can fail. Even with the kill switch
+off, Core installs a session-owned `inet bimeron_core` output filter before
+configuring resolved. It drops TCP and UDP traffic to ports 53 and 853 except
+on loopback, on the tunnel, or from sockets carrying the core mark. Other
+traffic follows normal routing. Setup fails if the filter cannot be installed.
+Stop or crash recovery removes the DNS filter after restoring network settings.
+
+For a regular resolver file, the original contents of the file targeted by
 `/etc/resolv.conf` are saved, then DNS is set to `198.18.0.2`.
 The shared core handles multiple upstream DNS servers from `.conf` through Outline.
 

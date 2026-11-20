@@ -31,6 +31,9 @@ func TestReadRejectsNonLocalWindowsPaths(t *testing.T) {
 		filepath.Join(dir, "LPT1"),
 		filepath.Join(dir, "CONOUT$"),
 		regular + ":stream",
+		"C:profile.conf",
+		"C:",
+		filepath.VolumeName(regular) + "regular",
 	} {
 		if _, err := Read(path, 16); !errors.Is(err, ErrNotLocal) {
 			t.Errorf("Read(%q) = %v", path, err)

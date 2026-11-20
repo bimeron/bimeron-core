@@ -14,7 +14,10 @@ import (
 	"unicode/utf8"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
+	"bimeron/internal/relay"
 	"bimeron/internal/routing"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/ss2022"
 	"bimeron/internal/streamtransport"
 	"bimeron/internal/telemetry"
@@ -86,10 +89,14 @@ type Server struct {
 	Packet transport.PacketListener
 	Policy *routing.Policy
 	Stats  *telemetry.Counters
+	// Auth, when set, requires RFC 1929 username/password authentication.
+	Auth *socksauth.Credentials
+	// idle and halfIdle override the relay idle limits in tests.
+	idle, halfIdle time.Duration
 }
 
 // Serve owns the listener and closes every client on cancellation. Only loopback
-// binding is supported because this initial SOCKS service has no authentication.
+// binding is supported, with or without Auth.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	defer l.Close()
 	address, ok := l.Addr().(*net.TCPAddr)
@@ -123,7 +130,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 			continue
 		}
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
+		go func() { defer guard.Recover(); defer wg.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
 	}
 }
 func reply(c net.Conn, code byte) error {
@@ -143,29 +150,14 @@ func finishReply(c net.Conn) {
 	}
 }
 func (s *Server) handle(ctx context.Context, c net.Conn) {
-	defer c.Close()
-	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	closeLocal := sync.OnceFunc(func() { _ = c.Close() })
+	defer closeLocal()
+	stop := context.AfterFunc(ctx, closeLocal)
 	defer stop()
 	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
-	var h [2]byte
-	if _, err := io.ReadFull(c, h[:]); err != nil || h[0] != 5 || h[1] == 0 {
-		return
-	}
-	methods := make([]byte, int(h[1]))
-	if _, err := io.ReadFull(c, methods); err != nil {
-		return
-	}
-	anonymous := false
-	for _, m := range methods {
-		if m == 0 {
-			anonymous = true
-		}
-	}
-	if !anonymous {
-		_, _ = c.Write([]byte{5, 255})
-		return
-	}
-	if _, err := c.Write([]byte{5, 0}); err != nil {
+	if !socksauth.Negotiate(c, s.Auth) {
+		// Let a refused client read the reply before the close.
+		finishReply(c)
 		return
 	}
 	var request [4]byte
@@ -247,32 +239,41 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	}
 	s.Stats.EstablishTCP()
 	defer s.Stats.EndTCP()
-	defer upstream.Close()
-	stopUpstream := context.AfterFunc(ctx, func() { _ = upstream.Close() })
+	closeUpstream := sync.OnceFunc(func() { _ = upstream.Close() })
+	defer guard.CloseOnExit(closeUpstream)
+	stopUpstream := context.AfterFunc(ctx, closeUpstream)
 	defer stopUpstream()
 	if err := reply(c, 0); err != nil {
 		return
 	}
 	_ = c.SetDeadline(time.Time{})
-	done := make(chan error, 1)
-	go func() { _, err := s.Stats.CopyUp(upstream, c); _ = upstream.CloseWrite(); done <- err }()
-	_, err = s.Stats.CopyDown(c, upstream)
+	idleLimit, halfIdle := relay.IdleTimeout, relay.HalfClosedIdleTimeout
+	if s.idle > 0 {
+		idleLimit, halfIdle = s.idle, s.halfIdle
+	}
+	closeFlow := func() { closeLocal(); closeUpstream() }
+	idle := relay.Watch(idleLimit, closeFlow)
+	defer idle.Stop()
+	done := make(chan struct{})
+	go func() {
+		defer guard.Recover()
+		defer close(done)
+		_, _ = s.Stats.CopyUp(idle.Writer(upstream), c)
+		idle.SetLimit(halfIdle)
+		_ = upstream.CloseWrite()
+	}()
+	_, err = s.Stats.CopyDown(idle.Writer(c), upstream)
+	idle.SetLimit(halfIdle)
 	if tcp, ok := c.(*net.TCPConn); ok {
 		_ = tcp.CloseWrite()
 	}
 	if err != nil && !errors.Is(err, net.ErrClosed) {
-		_ = c.Close()
-		_ = upstream.Close()
+		closeFlow()
 	}
 	select {
 	case <-done:
 	case <-ctx.Done():
-		_ = c.Close()
-		_ = upstream.Close()
-		<-done
-	case <-time.After(5 * time.Second):
-		_ = c.Close()
-		_ = upstream.Close()
+		closeFlow()
 		<-done
 	}
 }

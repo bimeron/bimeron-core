@@ -96,6 +96,8 @@ jobs:
         run: go test -race ./androidcore ./internal/sshtunnel
       - name: Check shared, VLESS, VMess, and Trojan transport races
         run: CGO_ENABLED=1 go test -race ./internal/streamtransport ./internal/vless ./internal/vmess ./internal/trojan
+      - name: Fuzz SOCKS5 listener authentication
+        run: go test ./internal/socksauth -run '^$' -fuzz '^FuzzNegotiate$' -fuzztime=10s
       - name: Check MASQUE interoperability and transport races
         run: |
           CGO_ENABLED=1 go test -race ./internal/masque -count=1 -v
@@ -144,8 +146,36 @@ jobs:
           for target in internal/config:FuzzParseData internal/accesskey:FuzzParseURI internal/accesskey:FuzzParseConfig internal/accesskey:FuzzParseSSPlugin core:FuzzConfigDocument internal/anytls:FuzzWire internal/vless:FuzzWire internal/tuic:FuzzReadAddress internal/proxy:FuzzReadSocksAddress; do
             go test "./${target%%:*}" -run '^$' -fuzz "^${target#*:}\$" -fuzztime=20000x
           done
+      - name: Display text fuzz targets
+        run: |
+          go test ./internal/displaytext -run '^$' -fuzz '^FuzzText$' -fuzztime=5s
+          go test ./internal/displaytext -run '^$' -fuzz '^FuzzEscapeJSON$' -fuzztime=5s
       - name: Check CLI, core, and control races
         run: CGO_ENABLED=1 go test -race ./cmd/bimeron ./core ./internal/control ./internal/linuxnet ./internal/vpn ./internal/proxy ./internal/routing ./internal/systemvpn
+      - name: WireGuard and AmneziaWG reference servers, races and fuzzing
+        # In-process upstream wireguard-go and amneziawg-go 1.x/2.0/3.1
+        # servers on 127.0.0.1; see docs/WIREGUARD.MD.
+        run: |
+          CGO_ENABLED=1 go test -race -count=1 ./internal/wgconf ./internal/wireguard/...
+          for target in FuzzParse FuzzEdit FuzzImportURI; do
+            go test ./internal/wgconf -run '^$' -fuzz "^${target}\$" -fuzztime=20s
+          done
+      - name: WireGuard and AmneziaWG reference servers in containers
+        # Upstream wireguard-go and amneziawg-go, at the versions pinned in
+        # go.mod, as separate processes with kernel TUN devices, one Docker
+        # container per server; see docs/WIREGUARD.MD.
+        run: |
+          image_dir="$RUNNER_TEMP/wireguard-reference"
+          mkdir -p "$image_dir"
+          go mod download golang.zx2c4.com/wireguard github.com/amnezia-vpn/amneziawg-go/v3
+          for pair in golang.zx2c4.com/wireguard:wireguard-go github.com/amnezia-vpn/amneziawg-go/v3:amneziawg-go; do
+            module_dir="$(go list -m -f '{{.Dir}}' "${pair%%:*}")"
+            GOWORK=off CGO_ENABLED=0 go -C "$module_dir" build -mod=readonly -trimpath -o "$image_dir/${pair##*:}" .
+          done
+          CGO_ENABLED=0 go build -trimpath -o "$image_dir/refserver" ./internal/wireguard/wgtest/refserver
+          tar -C "$image_dir" -c . | docker import -c 'ENTRYPOINT ["/refserver"]' - bimeron-wireguard-reference:ci
+          BIMERON_WG_REFERENCE_IMAGE=bimeron-wireguard-reference:ci CGO_ENABLED=1 go test -race ./internal/wireguard -run '^TestReferenceContainers$' -count=1 -v
+          docker image rm bimeron-wireguard-reference:ci
       - name: VLESS and VMess transport interoperability with Xray
         run: |
           xray_dir="$(go mod download -json github.com/xtls/xray-core@v1.260327.0 | jq -r .Dir)"
@@ -346,6 +376,9 @@ jobs:
       - name: Hysteria client and server tests
         working-directory: third_party/hysteria-core
         run: go test ./client ./server
+      - name: Hysteria stream cancellation integration test
+        working-directory: third_party/hysteria-core
+        run: go test ./internal/integration_tests -run '^TestClientServerTCPContextReleasesStreams$' -count=1 -v
       - name: Race check the URI and relay adapters
         if: runner.os == 'Linux'
         run: go test -race ./internal/accesskey ./internal/hysteria2

@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"bimeron/internal/config"
+	"bimeron/internal/wgconf"
 )
 
 // Capabilities describes what the current build supports on this platform.
@@ -37,6 +38,36 @@ type Capabilities struct {
 	// until an explicit stop, including recovery waits and failed, and that
 	// Status.KillSwitch publishes it.
 	KillSwitchHold bool `json:"kill_switch_hold"`
+	// SOCKSAuth reports optional RFC 1929 username/password authentication
+	// on the proxy-mode listener ([Interface] ListenUsername/ListenPassword).
+	SOCKSAuth bool `json:"socks_auth"`
+	// DefaultDNS lists, in priority order, the [Interface] DNS servers Core
+	// uses when a profile omits DNS. GUIs should show it instead of a
+	// hard-coded value; older cores omit it and default to 1.1.1.1 only.
+	DefaultDNS []string `json:"default_dns"`
+	// WireGuard describes WireGuard and AmneziaWG upstream support. Older
+	// daemons omit it; treat absence as unsupported.
+	WireGuard *WireGuardCapabilities `json:"wireguard,omitempty"`
+}
+
+// WireGuardCapabilities reports build support for WireGuard and AmneziaWG
+// client profiles and the "bimeron wireguard" document bridge version.
+type WireGuardCapabilities struct {
+	Supported       bool     `json:"supported"`
+	Experimental    bool     `json:"experimental"`
+	Protocols       []string `json:"protocols"`
+	AWGVersions     []string `json:"awg_versions"`
+	URISchemes      []string `json:"uri_schemes"`
+	AllowedIPsModes []string `json:"allowed_ips_modes"`
+	DocumentAPI     int      `json:"document_api"`
+	// KeyOperations lists the key operations of the CLI bridge; empty
+	// where the bridge does not exist.
+	KeyOperations []string `json:"key_operations,omitempty"`
+}
+
+// WireGuardSupport returns the static WireGuard capability object.
+func WireGuardSupport() *WireGuardCapabilities {
+	return &WireGuardCapabilities{Supported: true, Experimental: true, Protocols: []string{wgconf.ProtocolWireGuard, wgconf.ProtocolAmneziaWG}, AWGVersions: slices.Clone(wgconf.AWGVersions), URISchemes: []string{"vpn", "wireguard", "wg"}, AllowedIPsModes: slices.Clone(config.AllowedIPsModes), DocumentAPI: 1, KeyOperations: slices.Clone(wgconf.KeyOperations)}
 }
 
 // IKEv2Capabilities applies only to the system backend. Top-level flags retain
@@ -64,7 +95,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport(), SOCKSAuth: true, DefaultDNS: slices.Clone(DefaultConfig().DNS)}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}

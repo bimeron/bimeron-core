@@ -66,3 +66,12 @@ func Read(path string, limit int64) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// Local reports whether path names the local file system by its text alone:
+// on Windows it rejects network shares (including WebDAV paths such as
+// \\host@SSL\share), device-namespace paths, reserved device names and
+// alternate data streams, as Read does before opening a file. Other systems
+// accept every path. A path that passes can still reach a network file
+// system through a mapped drive or a link; Read checks the opened file for
+// that.
+func Local(path string) bool { return local(path) }

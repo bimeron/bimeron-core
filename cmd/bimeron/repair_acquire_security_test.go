@@ -44,14 +44,14 @@ func TestRepairAcquisitionSignedPolicyNegatives(t *testing.T) {
 		name, min, max string
 		accept         bool
 	}{
-		{"current release", "0.3.0", "0.3.2", true},
-		{"previous release", "0.2.0", "0.2.1", false},
-		{"wider upper", "0.3.0", "0.4.0", false},
-		{"wider lower", "0.2.0", "0.3.2", false},
-		{"narrower upper", "0.3.0", "0.3.2-beta.1", false},
-		{"narrower lower", "0.3.0-beta.1", "0.3.2", false},
+		{"current release", "0.3.1", "0.3.3", true},
+		{"previous release", "0.3.0", "0.3.2", false},
+		{"wider upper", "0.3.1", "0.4.0", false},
+		{"wider lower", "0.3.0", "0.3.3", false},
+		{"narrower upper", "0.3.1", "0.3.3-beta.1", false},
+		{"narrower lower", "0.3.2", "0.3.3", false},
 		{"other window", "0.4.0", "0.4.1", false},
-		{"empty window", "0.3.0", "0.3.0", false},
+		{"empty window", "0.3.1", "0.3.1", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := base

@@ -226,7 +226,7 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		}
 		conn, err = streamtransport.WebSocket(conn, "wss", host, path, nil)
 		if err != nil {
-			return nil, fmt.Errorf("Trojan %w", err)
+			return nil, fmt.Errorf("Trojan WebSocket setup failed: %w", err)
 		}
 	}
 	_ = raw.SetDeadline(time.Time{})

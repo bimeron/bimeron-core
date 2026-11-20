@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/safefile"
+	"bimeron/internal/wgconf"
 )
 
 const maxBytes = 64 * 1024
@@ -63,6 +65,8 @@ type Profile struct {
 	SSPlugin       *SSPlugin
 	HTTPServerName string // Nonempty enables verified TLS for HTTP CONNECT.
 	ShadowTLS      *ShadowTLS
+	// WireGuard is set for Type "wireguard"; TCP and UDP hold its endpoint.
+	WireGuard *wgconf.Config
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -125,6 +129,13 @@ func ParseAnyTLS(raw string) (Profile, error) {
 	return Profile{Type: "anytls", Name: u.Fragment, TCP: e, UDP: e, AnyTLS: a}, nil
 }
 
+// FilePathNotLocal reports a file option whose path names a network share, a
+// device or another location outside the local file system (see
+// safefile.Local).
+func FilePathNotLocal(field string) *problem.Error {
+	return problem.New("file_path_not_local", "file path is not local").At(field)
+}
+
 // SSH describes a TCP-only SSH upstream. Paths never contain key material.
 type SSH struct {
 	User, IdentityFile, KnownHostsFile string
@@ -164,12 +175,15 @@ func ParseSSH(raw string) (Profile, error) {
 		if (key != "identity" && key != "known_hosts") || len(values) != 1 {
 			return Profile{}, problem.New("uri_option_unsupported", message)
 		}
+		field := "IdentityFile"
+		if key == "known_hosts" {
+			field = "KnownHostsFile"
+		}
 		if values[0] == "" {
-			field := "IdentityFile"
-			if key == "known_hosts" {
-				field = "KnownHostsFile"
-			}
 			return Profile{}, problem.New("value_required", message).On(field, "")
+		}
+		if !safefile.Local(values[0]) {
+			return Profile{}, FilePathNotLocal(field)
 		}
 	}
 	return Profile{Type: "ssh", Name: u.Fragment, TCP: Endpoint{Host: u.Hostname(), Port: port}, SSH: SSH{User: u.User.Username(), IdentityFile: q.Get("identity"), KnownHostsFile: q.Get("known_hosts")}}, nil
@@ -909,6 +923,9 @@ func NewResolverWithTransport(t http.RoundTripper) *Resolver {
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
+	if p, ok, err := parseWireGuardKey(key); ok {
+		return p, err
+	}
 	if strings.HasPrefix(key, "anytls://") {
 		return ParseAnyTLS(key)
 	}
@@ -949,6 +966,34 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	return p, err
 }
 
+// ErrSSConfNetwork identifies a failed network operation without retaining the request URL.
+var ErrSSConfNetwork = errors.New("could not fetch dynamic config")
+
+// ErrSSConfDNS identifies an ssconf host name that could not be resolved. It
+// is also an ErrSSConfNetwork and keeps the same message.
+var ErrSSConfDNS error = ssconfDNSError{}
+
+type ssconfDNSError struct{}
+
+func (ssconfDNSError) Error() string        { return ErrSSConfNetwork.Error() }
+func (ssconfDNSError) Is(target error) bool { return target == ErrSSConfNetwork }
+
+type ssconfReadNetworkError struct{}
+
+func (ssconfReadNetworkError) Error() string        { return "could not read config" }
+func (ssconfReadNetworkError) Is(target error) bool { return target == ErrSSConfNetwork }
+
+func ssconfNetworkFailure(err error) bool {
+	var op *net.OpError
+	var dns *net.DNSError
+	var address *net.AddrError
+	// net.Error timeouts include the TLS handshake timeout of net/http.
+	var timeout net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &dns) ||
+		(errors.As(err, &timeout) && timeout.Timeout()) ||
+		(errors.As(err, &op) && !errors.As(err, &address) && (op.Op == "dial" || op.Op == "read" || op.Op == "write"))
+}
+
 // FetchSSConf returns validated bytes and their parsed profile.
 func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile, error) {
 	key = strings.TrimSpace(key)
@@ -967,6 +1012,13 @@ func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {
+		var dns *net.DNSError
+		if errors.As(err, &dns) {
+			return nil, Profile{}, ErrSSConfDNS
+		}
+		if ssconfNetworkFailure(err) {
+			return nil, Profile{}, ErrSSConfNetwork
+		}
 		return nil, Profile{}, fmt.Errorf("could not fetch dynamic config")
 	}
 	defer resp.Body.Close()
@@ -979,6 +1031,9 @@ func (r *Resolver) FetchSSConf(ctx context.Context, key string) ([]byte, Profile
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
+		if ssconfNetworkFailure(err) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, Profile{}, ssconfReadNetworkError{}
+		}
 		return nil, Profile{}, fmt.Errorf("could not read config")
 	}
 	p, err := ParseConfig(b)
@@ -1122,4 +1177,23 @@ func firstSet(fields []string, set ...bool) string {
 		}
 	}
 	return ""
+}
+
+// WireGuardProfile wraps a validated WireGuard or AmneziaWG configuration.
+// The configuration holds secrets and must never be logged.
+func WireGuardProfile(name string, c *wgconf.Config) Profile {
+	e := Endpoint{Host: c.Peer.EndpointHost, Port: c.Peer.EndpointPort}
+	return Profile{Type: "wireguard", Name: name, TCP: e, UDP: e, WireGuard: c}
+}
+
+// parseWireGuardKey accepts wg-quick text stored as a key source.
+func parseWireGuardKey(key string) (Profile, bool, error) {
+	if format, err := wgconf.Detect(key); err != nil || format != wgconf.FormatWireGuard {
+		return Profile{}, false, nil
+	}
+	c, err := wgconf.Parse(key)
+	if err != nil {
+		return Profile{}, true, err
+	}
+	return WireGuardProfile("", c), true, nil
 }

@@ -196,17 +196,40 @@ func (c *clientImpl) openStream() (*utils.QStream, error) {
 }
 
 func (c *clientImpl) TCP(addr string) (net.Conn, error) {
+	return c.TCPContext(context.Background(), addr)
+}
+
+// TCPContext is a Bimeron addition. It behaves like TCP, but ctx bounds the
+// request and the wait for the server's TCP response: cancellation resets the
+// stream, so an abandoned dial releases its goroutine and stream immediately.
+func (c *clientImpl) TCPContext(ctx context.Context, addr string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	stream, err := c.openStream()
 	if err != nil {
 		return nil, wrapIfConnectionClosed(err)
 	}
+	stop := context.AfterFunc(ctx, func() {
+		stream.CancelRead(0)
+		stream.CancelWrite(0)
+	})
+	// cancelled reports whether ctx reset the stream; it then owns the error.
+	cancelled := func() bool { return !stop() }
 	// Send request
 	err = protocol.WriteTCPRequest(stream, addr)
 	if err != nil {
 		_ = stream.Close()
+		if cancelled() {
+			return nil, ctx.Err()
+		}
 		return nil, wrapIfConnectionClosed(err)
 	}
 	if c.config.FastOpen {
+		if cancelled() {
+			_ = stream.Close()
+			return nil, ctx.Err()
+		}
 		// Don't wait for the response when fast open is enabled.
 		// Return the connection immediately, defer the response handling
 		// to the first Read() call.
@@ -219,6 +242,10 @@ func (c *clientImpl) TCP(addr string) (net.Conn, error) {
 	}
 	// Read response
 	ok, msg, err := protocol.ReadTCPResponse(stream)
+	if cancelled() {
+		_ = stream.Close()
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		_ = stream.Close()
 		return nil, wrapIfConnectionClosed(err)

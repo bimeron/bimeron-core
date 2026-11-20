@@ -70,6 +70,41 @@ func Pending() (bool, error) {
 	r, err := owned(s)
 	return len(r) > 0, err
 }
+
+// CurrentImagePermitted reports whether the installed core permit matches
+// this executable's WFP application ID. The caller checks token membership.
+func CurrentImagePermitted() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	app, err := wf.AppID(exe)
+	if err != nil {
+		return false
+	}
+	s, err := open()
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	rules, err := owned(s)
+	return err == nil && imagePermitted(rules, app)
+}
+
+func imagePermitted(rules []*wf.Rule, app string) bool {
+	for _, rule := range rules {
+		if rule.Action != wf.ActionPermit || rule.Layer != wf.LayerALEAuthConnectV4 {
+			continue
+		}
+		for _, condition := range rule.Conditions {
+			if condition.Field == wf.FieldALEAppID && condition.Op == wf.MatchTypeEqual && condition.Value == app {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func owned(s api) ([]*wf.Rule, error) {
 	rules, err := s.Rules()
 	if err != nil {

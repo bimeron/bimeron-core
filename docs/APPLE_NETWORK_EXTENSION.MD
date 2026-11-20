@@ -32,6 +32,15 @@ implemented, and the core must not silently weaken the profile. Do not treat a
 NetworkExtension kill switch as available until it is implemented and verified.
 External DNS providers, including WARP, need a separate compatibility check.
 
+Experimental WireGuard and AmneziaWG profiles must use explicit
+`Type = wireguard` parameters: the console shell inlines `File` only as a
+one-line `Key`, so multi-line WireGuard text is refused at install. The
+WireGuard UDP socket is a regular provider-originated socket like other
+upstream sockets. `RLCapabilities()` lists `wireguard` in `explicit_access`
+but does not include the `wireguard` capability object. WireGuard builds and
+passes unit tests on Apple platforms but has not been validated live. See
+[WIREGUARD.MD](WIREGUARD.MD).
+
 ## Packaging formats
 
 By default, `scripts/build-apple.sh` builds a macOS **system extension** in

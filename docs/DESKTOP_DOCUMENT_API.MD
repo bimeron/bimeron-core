@@ -130,7 +130,11 @@ validation in the final profile directory. It resolves dataset paths against
 that directory and does not start networking. `bimeron validate --json <absolute-profile-path>` wraps the same file validator
 and returns version, `problems` (an empty array on success; see
 [ERRORS.MD](ERRORS.MD)), and on failure the generic error and shared typed GeoData
-details. Success is exactly {"version":1,"problems":[]}. `bimeron errors --json`
+details. A successful response also has `trust_files`, an array that is empty
+when the profile references no trust files (see [Trust files](#trust-files)):
+success without trust files is exactly
+{"version":1,"problems":[],"trust_files":[]}. Older Cores return
+{"version":1,"problems":[]}. `bimeron errors --json`
 prints the catalog of human-readable texts for problem codes. It retains the existing file parser and dataset
 limits and profile-relative resource handling. The existing embedded
 `ValidateConfigDataWithGeoData` also remains available. Plain validate diagnostics
@@ -151,3 +155,102 @@ GeoData rule editing and catalogs share the identifier contract in
 Catalogs normalize case to lowercase; document edits preserve the supplied spelling.
 Bang is part of the stable ID, never negation. Attribute selectors, controls,
 non-ASCII, empty/oversized IDs and empty comma entries are rejected.
+
+## WireGuard and AmneziaWG text
+
+WireGuard/AmneziaWG files referenced by `[AccessKey] File` are edited with the
+separate `bimeron wireguard` bridge. It has the same framing and limits as this
+adapter and provides the `capabilities`, `detect`, `inspect`, `edit` and
+`import_uri` operations. `bimeron document` itself never reads the referenced
+file; `bimeron validate --json` does and reports problems with
+`"document": "wireguard"`. `[Routing] AllowedIPsMode` is edited here with
+`set_field`. The full contract is in [WIREGUARD.MD](WIREGUARD.MD#desktop-document-bridge).
+
+## Trust files
+
+Some profile options name files that decide whom Bimeron trusts or which key
+it uses: an SSH identity, an SSH `known_hosts` file and a MASQUE CA. An imported
+share URI or `.conf` file can name them, so the user must confirm them.
+
+`bimeron validate --json <absolute-profile-path>` lists them in every
+successful response; `trust_files` is an empty array when the profile
+references none, and the member is never present when validation fails:
+
+```json
+{"version":1,"problems":[],"trust_files":[{"kind":"ssh_known_hosts","source":"uri","path":"C:\\Users\\alice\\keys\\known_hosts"}]}
+```
+
+| Member | Values |
+|---|---|
+| `kind` | `ssh_identity`, `ssh_known_hosts`, `masque_ca` |
+| `source` | `uri`: a query option of a share URI (`identity=`, `known_hosts=`, `ca=`), including a URI in `Key` or in the file named by `File`; `option`: an explicit `IdentityFile`, `KnownHostsFile` or `CAFile` |
+| `path` | exactly the path string the session opens |
+
+Entries come in the order `ssh_identity`, `ssh_known_hosts`, `masque_ca`, with
+at most one entry per kind. An explicit option replaces the URI value for its
+kind, and only the explicit path is listed then. `ssconf://` keys are resolved
+when a session starts and never reference trust files.
+
+Core stores each path in this form when it loads the profile, so the session
+opens exactly the reported string. `path` is absolute and normalized as
+follows:
+
+- a relative path is resolved against the profile's directory;
+- the result is cleaned like Go's `filepath.Clean`: `.` and `..` elements and
+  repeated separators are removed, and on Windows `/` becomes `\`;
+- on Windows the drive letter is upper case;
+- other letter case is kept as written, and symbolic links, junctions, mount
+  points and 8.3 short names are not resolved. They are followed only when
+  the file is opened.
+
+The one exception is a home-relative path: `~`, `~/...` or `~\...` is reported
+exactly as written and is not absolute. The account that runs the session
+resolves it against its own home directory; for sessions that the installed
+service starts, that is the service account's profile, not the user's home.
+Recognize such an entry by its leading `~`.
+
+Compare two entries by `kind` and `path`: on Windows compare `path` with an
+ordinal case-insensitive comparison, elsewhere byte for byte.
+
+On Windows, Core refuses network and device paths in these options before it
+lists them: `\\server\share` and `//server/share`, WebDAV paths such as
+`\\host@SSL\DavWWWRoot\...`, `\\?\`, `\\.\` and `\??\` paths, drive-relative
+paths such as `C:known_hosts`, reserved device names and alternate data
+streams. Such a profile fails validation with
+`file_path_not_local`, with the option (`IdentityFile`, `KnownHostsFile` or
+`CAFile`) as the problem field. A local-looking path that reaches a network
+share, for example through a mapped drive or a link, is refused when the file
+is opened.
+
+GUI contract:
+
+1. When importing a share URI or a `.conf` file, write the draft to its final
+   directory or to a directory where relative paths resolve the same way, and
+   run `validate --json` on it before saving it as a profile.
+2. If `trust_files` is not empty, show every entry before saving: the kind in
+   words ("SSH private key", "SSH known hosts", "MASQUE certificate authority")
+   and the path exactly as Core reported it, without shortening or
+   re-normalizing it, for example "This profile wants to trust the file
+   C:\Users\alice\keys\known_hosts". Mention when the entry came from the URI.
+   Save only after the user confirms; on cancel, save nothing.
+3. Do not offer a home-relative entry (leading `~`) for confirmation as a
+   concrete file, because the service resolves it under its own account. Ask
+   the user to pick the file instead and save the absolute path as the
+   explicit option (`IdentityFile`, `KnownHostsFile` or `CAFile`).
+4. Remember the confirmed set of (`kind`, `path`) pairs with the profile. Run
+   `validate --json` again immediately before every `start` and after any
+   edit, import or replacement of `[AccessKey]` content (including
+   `access_to_fields` and `access_to_uri`). This also catches changes to the
+   file named by `File`, which the GUI cannot observe. If the set contains an
+   entry that is not in the confirmed set, do not start; ask the user to
+   confirm the new or changed entries first. Removing entries needs no
+   confirmation. A change between that check and `start` is not detected.
+5. Files the user picks in the GUI's own file picker count as confirmed.
+6. A response without `trust_files` comes from an older Core. Treat it as
+   "unknown", not as "none": for SSH and MASQUE profiles, show the paths from
+   the profile fields and URI query options yourself, or ask the user to pick
+   the files. An empty array means the profile references no trust files.
+
+Core still reads these files only when a connection starts and checks them as
+described in [Referenced files](CONF.MD#referenced-files); confirmation does
+not make an unreadable or non-local file usable.

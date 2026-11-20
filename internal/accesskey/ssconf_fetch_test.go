@@ -2,9 +2,12 @@ package accesskey
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -123,6 +126,41 @@ func TestNewResolverResponseHeaderLimit(t *testing.T) {
 				}
 			} else if err == nil || b != nil || !reflect.DeepEqual(profile, Profile{}) || strings.Contains(err.Error(), "secret") {
 				t.Fatalf("oversized headers accepted: %q, %v", b, err)
+			}
+		})
+	}
+}
+
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+type handshakeTimeout struct{}
+
+func (handshakeTimeout) Error() string   { return "net/http: TLS handshake timeout" }
+func (handshakeTimeout) Timeout() bool   { return true }
+func (handshakeTimeout) Temporary() bool { return true }
+
+// A failed lookup of the ssconf host is a network failure that is also marked
+// as DNS; a handshake timeout is a network failure. Neither exposes the URL.
+func TestFetchSSConfClassifiesDNSAndTimeouts(t *testing.T) {
+	const key = "ssconf://private.example/private-key?token=secret"
+	for _, tc := range []struct {
+		name string
+		err  error
+		dns  bool
+	}{
+		{"dns", &net.DNSError{Err: "no such host", Name: "private.example", IsNotFound: true}, true},
+		{"handshake timeout", handshakeTimeout{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := NewResolverWithTransport(failingTransport{tc.err}).FetchSSConf(context.Background(), key)
+			if err == nil || err.Error() != "could not fetch dynamic config" || !errors.Is(err, ErrSSConfNetwork) || errors.Is(err, ErrSSConfDNS) != tc.dns {
+				t.Fatalf("unexpected classification: %v", err)
+			}
+			var raw *url.Error
+			if errors.As(err, &raw) || strings.Contains(err.Error(), "private") {
+				t.Fatalf("diagnostic exposes the request: %v", err)
 			}
 		})
 	}

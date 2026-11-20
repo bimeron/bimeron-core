@@ -8,18 +8,12 @@ import (
 )
 
 // residualProtection reports filters that no running session owns. The
-// session lock is taken only when filters exist, and only for an instant: a
-// held lock means another process (for example a foreground connect) owns the
-// session and its protection.
+// session lock is inspected without being taken: a held lock or a live
+// foreground owner means another process owns the session and its
+// protection, and an abandoned lock keeps its state for installers.
 func residualProtection() (bool, error) {
-	pending, err := killswitch.Pending()
-	if err != nil || !pending {
-		return false, err
-	}
-	release, err := windowsnet.Acquire()
-	if err != nil {
-		return false, nil
-	}
-	release()
-	return true, nil
+	return probeResidual(killswitch.Pending, func() (func(), bool, error) {
+		held, err := windowsnet.SessionLockHeld()
+		return func() {}, held, err
+	})
 }

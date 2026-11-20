@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"bimeron/internal/windowsnet"
 	stack "github.com/xjasonlyu/tun2socks/v2/core"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/tun"
+	"golang.org/x/sys/windows"
 	winTun "golang.zx2c4.com/wireguard/tun"
 )
 
@@ -134,7 +136,18 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	if err != nil {
 		return nil, fault("adapter_name_in_use", false)
 	}
-	winTun.WintunStaticRequestedGUID = stale
+	// A new adapter also gets a known GUID: the tunnel is identified by it,
+	// never by name, so an interface that takes the name meanwhile is never
+	// configured as the tunnel.
+	guid := stale
+	if guid == nil {
+		fresh, err := windows.GenerateGUID()
+		if err != nil {
+			return nil, fault("adapter_create_failed", false)
+		}
+		guid = &fresh
+	}
+	winTun.WintunStaticRequestedGUID = guid
 	d, err := tun.Open(c.Name, uint32(c.MTU))
 	winTun.WintunStaticRequestedGUID = nil
 	if err != nil {
@@ -147,7 +160,10 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	}
 	owned.add(func() error { s.Close(); return nil })
 	owned.add(func() error { h.Close(); return nil })
-	iface, err := net.InterfaceByName(d.Name())
+	index, err := windowsnet.TunnelInterface(*guid, c.Name)
+	if errors.Is(err, windowsnet.ErrTunnelNameTaken) {
+		return nil, fault("adapter_name_in_use", false)
+	}
 	if err != nil {
 		return nil, fault("adapter_lookup_failed", false)
 	}
@@ -155,7 +171,7 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	// is configured. Neither rollback nor Close removes run protection.
 	if p.guard != nil {
 		report("kill_switch_arm", "Installing persistent Windows protection")
-		armed, armErr := killswitch.Arm(iface.Index, p.policy, p.disableIPv6)
+		armed, armErr := killswitch.Arm(index, p.policy, p.disableIPv6)
 		if armErr != nil {
 			// The failed attempt removed only itself; the previous set remains.
 			return nil, fault("kill_switch_arm_failed_run_recover", false)
@@ -183,7 +199,7 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, fault("session_id_failed", false)
 	}
-	nc := windowsnet.Config{Name: d.Name(), Tag: "BimeronCore:" + hex.EncodeToString(random[:]), Index: iface.Index, MTU: c.MTU}
+	nc := windowsnet.Config{Name: c.Name, Tag: "BimeronCore:" + hex.EncodeToString(random[:]), Index: index, GUID: *guid, MTU: c.MTU}
 	// Register rollback BEFORE setup. It uses an independent timeout after Ctrl+C.
 	owned.add(func() error { return windowsnet.Cleanup(nc) })
 	report("network_setup", "Configuring routes and tunnel DNS")
@@ -193,6 +209,11 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, context.Canceled
+		}
+		if strings.Contains(err.Error(), "effective NRPT policy") {
+			// The session rule was installed but Windows does not apply it,
+			// for example because another source of NRPT policy took over.
+			return nil, fault("conflicting_dns_policy", false)
 		}
 		return nil, fault("network_setup_failed", false)
 	}

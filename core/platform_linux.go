@@ -36,7 +36,7 @@ func (p *linuxPlatform) Acquire(ctx context.Context) (func(), error) {
 	if err := linuxnet.Requirements(p.killSwitch); err != nil {
 		return nil, requirementsFault(err)
 	}
-	release, err := linuxnet.Lock("vpn.lock")
+	release, err := linuxnet.LockSession()
 	if err != nil {
 		return nil, fault("session_lock_failed", false)
 	}
@@ -150,7 +150,7 @@ func (p *linuxPlatform) Open(ctx context.Context, c SessionConfig, h *flowRouter
 		return p.manager.Recover(cleanCtx, p.killSwitch)
 	})
 	report("network_setup", "Configuring Linux policy routes and tunnel DNS")
-	if err = p.manager.Configure(ctx, d.Name(), c.MTU, c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
+	if err = p.manager.Configure(ctx, d.Name(), c.MTU, len(c.DNS), c.Policy, c.DisableIPv6, c.KillSwitch); err != nil {
 		return nil, codeFault(err, "linux_network_setup_failed", false)
 	}
 	if c.KillSwitch {

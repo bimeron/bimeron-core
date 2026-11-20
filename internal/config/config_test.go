@@ -73,7 +73,7 @@ Action = proxy
 	if p.Decide(netip.MustParseAddr("203.0.113.5"), "") != routing.Block || p.Decide(netip.MustParseAddr("203.0.113.6"), "") != routing.Proxy {
 		t.Fatal("rule ordering lost")
 	}
-	if c.Tunnel.MTU != 1420 || c.Tunnel.DNS != "1.1.1.1" {
+	if c.Tunnel.MTU != 1420 || c.Tunnel.DNS != "1.1.1.1, 1.0.0.1" {
 		t.Fatal("missing defaults")
 	}
 }

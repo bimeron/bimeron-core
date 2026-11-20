@@ -96,3 +96,9 @@ func checkDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.Pac
 	}
 	return nil
 }
+
+// CheckDNS tests DNS through the upstream without the TCP/TLS probe, for
+// upstreams whose own handshake already proved the server.
+func CheckDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.PacketListener, dns []string) error {
+	return checkDNS(ctx, tcp, udp, dns)
+}

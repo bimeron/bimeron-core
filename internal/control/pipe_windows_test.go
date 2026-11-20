@@ -4,6 +4,7 @@ package control
 
 import (
 	core "bimeron/core"
+	"bimeron/internal/testutil"
 	"bufio"
 	"context"
 	"errors"
@@ -12,13 +13,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
@@ -67,119 +66,14 @@ func TestNativePipeControl(t *testing.T) {
 }
 
 const (
-	authenticatedUsers = "S-1-5-11"
-	administrators     = "S-1-5-32-544"
+	authenticatedUsers = testutil.AuthenticatedUsers
+	administrators     = testutil.Administrators
 	foreignUser        = "S-1-5-21-111-222-333-444"
 )
 
 // testInstanceACE lets a test server that runs as an ordinary user create the
 // pipe instances that production SDDL reserves for SYSTEM or Administrators.
 func testInstanceACE(sid string) string { return "(A;;" + pipeInstanceRight + ";;;" + sid + ")" }
-
-// limitedToken returns an impersonation token of the current user with the
-// given groups set to deny-only, all privileges but SeChangeNotify removed and
-// medium integrity. With Administrators disabled it resembles the filtered
-// token of a non-elevated administrator.
-func limitedToken(t *testing.T, disable ...string) windows.Token {
-	t.Helper()
-	var process windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY|windows.TOKEN_ASSIGN_PRIMARY, &process); err != nil {
-		t.Fatal(err)
-	}
-	defer process.Close()
-	groups := make([]windows.SIDAndAttributes, len(disable))
-	for i, s := range disable {
-		sid, err := windows.StringToSid(s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		groups[i].Sid = sid
-	}
-	const disableMaxPrivilege = 1
-	var restricted windows.Token
-	ok, _, callErr := windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateRestrictedToken").Call(uintptr(process), disableMaxPrivilege, uintptr(len(groups)), uintptr(unsafe.Pointer(&groups[0])), 0, 0, 0, 0, uintptr(unsafe.Pointer(&restricted)))
-	runtime.KeepAlive(groups)
-	if ok == 0 {
-		t.Fatal("CreateRestrictedToken failed:", callErr)
-	}
-	defer restricted.Close()
-	var token windows.Token
-	if err := windows.DuplicateTokenEx(restricted, windows.TOKEN_ALL_ACCESS, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &token); err != nil {
-		t.Fatal(err)
-	}
-	medium, err := windows.StringToSid("S-1-16-8192")
-	if err != nil {
-		t.Fatal(err)
-	}
-	label := windows.Tokenmandatorylabel{Label: windows.SIDAndAttributes{Sid: medium, Attributes: windows.SE_GROUP_INTEGRITY}}
-	if err := windows.SetTokenInformation(token, windows.TokenIntegrityLevel, (*byte)(unsafe.Pointer(&label)), label.Size()); err != nil {
-		token.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { token.Close() })
-	return token
-}
-
-// impersonating runs fn on one OS thread that impersonates token.
-func impersonating(t *testing.T, token windows.Token, fn func()) {
-	t.Helper()
-	done := make(chan error, 1)
-	go func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		if err := windows.SetThreadToken(nil, token); err != nil {
-			done <- err
-			return
-		}
-		defer func() {
-			if err := windows.RevertToSelf(); err != nil {
-				panic(err)
-			}
-			done <- nil
-		}()
-		fn()
-	}()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-}
-
-// grantedPipeRights evaluates sddl for token as a named pipe object would.
-func grantedPipeRights(t *testing.T, token windows.Token, sddl string) uint32 {
-	t.Helper()
-	sd, err := windows.SecurityDescriptorFromString(sddl)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mapping := [4]uint32{windows.FILE_GENERIC_READ, windows.FILE_GENERIC_WRITE, windows.FILE_GENERIC_EXECUTE, 0x001f01ff}
-	// Object creation maps generic ACE rights to pipe-specific rights. A freshly
-	// parsed SDDL needs that mapping before AccessCheck.
-	acl, _, err := sd.DACL()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := uint32(0); i < uint32(acl.AceCount); i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(acl, i, &ace); err != nil {
-			t.Fatal(err)
-		}
-		if ace.Mask&windows.GENERIC_ALL != 0 {
-			ace.Mask = (ace.Mask &^ windows.GENERIC_ALL) | windows.ACCESS_MASK(mapping[3])
-		}
-	}
-	var privileges [256]byte
-	size := uint32(len(privileges))
-	var granted, status uint32
-	ok, _, callErr := windows.NewLazySystemDLL("advapi32.dll").NewProc("AccessCheck").Call(uintptr(unsafe.Pointer(sd)), uintptr(token), windows.MAXIMUM_ALLOWED, uintptr(unsafe.Pointer(&mapping)), uintptr(unsafe.Pointer(&privileges[0])), uintptr(unsafe.Pointer(&size)), uintptr(unsafe.Pointer(&granted)), uintptr(unsafe.Pointer(&status)))
-	runtime.KeepAlive(sd)
-	if ok == 0 {
-		t.Fatal("AccessCheck failed:", callErr)
-	}
-	if status == 0 {
-		return 0
-	}
-	return granted
-}
 
 func TestPipeOwnerUserRights(t *testing.T) {
 	_, sid, err := pipeIdentity()
@@ -189,7 +83,7 @@ func TestPipeOwnerUserRights(t *testing.T) {
 	if sid == serviceObjectOwner {
 		t.Skip("test needs a non-SYSTEM user")
 	}
-	user := limitedToken(t, administrators)
+	user := testutil.LimitedToken(t, administrators)
 	service, err := servicePipeSDDL("SYG:SY", sid)
 	if err != nil {
 		t.Fatal(err)
@@ -201,14 +95,14 @@ func TestPipeOwnerUserRights(t *testing.T) {
 	foreground := strings.Replace(foregroundPipeSDDL(sid), "O:BA", "O:BAG:BA", 1)
 	for name, sddl := range map[string]string{"service": service, "console": consolePipeSDDL("BAG:BA", sid), "foreground": foreground} {
 		const forbidden = 0x4 | windows.WRITE_DAC | windows.WRITE_OWNER
-		if got := grantedPipeRights(t, user, sddl); got != 0x12019b || got&forbidden != 0 {
+		if got := testutil.GrantedPipeRights(t, user, sddl); got != 0x12019b || got&forbidden != 0 {
 			t.Errorf("%s pipe grants the owner user %#x, want 0x12019b", name, got)
 		}
 	}
-	if got := grantedPipeRights(t, user, foreignService); got != 0 {
+	if got := testutil.GrantedPipeRights(t, user, foreignService); got != 0 {
 		t.Errorf("service pipe grants another user %#x", got)
 	}
-	if got := grantedPipeRights(t, user, consolePipeSDDL("BAG:BA", foreignUser)); got != 0 {
+	if got := testutil.GrantedPipeRights(t, user, consolePipeSDDL("BAG:BA", foreignUser)); got != 0 {
 		t.Errorf("console pipe grants another user %#x", got)
 	}
 }
@@ -273,7 +167,7 @@ func TestServicePipeOwnerCannotServe(t *testing.T) {
 	defer cancel()
 	var owner string
 	var clientErr error
-	impersonating(t, limitedToken(t, administrators, authenticatedUsers), func() {
+	testutil.Impersonating(t, testutil.LimitedToken(t, administrators, authenticatedUsers), func() {
 		c, err := winio.DialPipeContext(ctx, path)
 		if err != nil {
 			clientErr = err
@@ -576,7 +470,7 @@ func TestDialPipesConsoleIdentity(t *testing.T) {
 			}
 		}
 		// A non-elevated client of the same user accepts the elevated server.
-		impersonating(t, limitedToken(t, administrators), func() { err = status() })
+		testutil.Impersonating(t, testutil.LimitedToken(t, administrators), func() { err = status() })
 		if err != nil {
 			t.Fatal("non-elevated client rejected the elevated console server:", err)
 		}

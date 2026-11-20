@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+
+	"bimeron/internal/displaytext"
 )
 
 // ErrServerUntrusted reports a control endpoint whose server identity does not
@@ -55,7 +57,9 @@ func exchange(ctx context.Context, c net.Conn, r Request) (Response, error) {
 		return answer, fmt.Errorf("control response ID mismatch")
 	}
 	if answer.Error != "" {
-		return answer, fmt.Errorf("%s", answer.Error)
+		// Error is a catalog code; never pass control characters on to callers
+		// that print the error.
+		return answer, errors.New(displaytext.Line(answer.Error))
 	}
 	return answer, nil
 }

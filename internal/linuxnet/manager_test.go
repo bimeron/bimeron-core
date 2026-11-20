@@ -92,6 +92,23 @@ func (f *fakeSystem) run(_ context.Context, name, input string, args ...string) 
 	return nil, nil
 }
 
+func TestResolverFileSingleAttemptTimeout(t *testing.T) {
+	for count, seconds := range map[int]int{1: 5, 2: 9, 3: 13, 4: 17} {
+		m, _, _ := testManager(t)
+		if err := m.Configure(context.Background(), "Bimeron", 1420, count, nil, true, false); err != nil {
+			t.Fatal(err)
+		}
+		contents, err := os.ReadFile(m.Resolver)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("options timeout:%d attempts:2", seconds)
+		if !strings.Contains(string(contents), "\n"+want+"\n") {
+			t.Errorf("%d servers: expected %q in %q", count, want, contents)
+		}
+	}
+}
+
 func TestGuardOwnershipFallbackForOldNftables(t *testing.T) {
 	m, f, _ := testManager(t)
 	f.guard = true
@@ -112,7 +129,7 @@ func TestDirectCIDRBypassesTunnelAndIsRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Configure(context.Background(), "Bimeron", 1420, p, true, false); err != nil {
+	if err := m.Configure(context.Background(), "Bimeron", 1420, 2, p, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.routes["-4"]) != 2 || f.routes["-4"][0].Type != "throw" || f.routes["-4"][0].Destination != "192.168.1.0/24" {
@@ -136,7 +153,7 @@ func testManager(t *testing.T) (*Manager, *fakeSystem, []byte) {
 func TestConfigureRecoverAndBootstrapDNS(t *testing.T) {
 	m, f, original := testManager(t)
 	ctx := context.Background()
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true); err != nil {
 		t.Fatal(err)
 	}
 	if !f.guard {
@@ -166,7 +183,7 @@ func TestConfigureRecoverAndBootstrapDNS(t *testing.T) {
 func TestRollbackAfterPartialSetup(t *testing.T) {
 	m, f, original := testManager(t)
 	f.fail = "-6 rule add pref 10901"
-	if err := m.Configure(context.Background(), "Bimeron", 1420, nil, true, true); err == nil {
+	if err := m.Configure(context.Background(), "Bimeron", 1420, 2, nil, true, true); err == nil {
 		t.Fatal("expected setup failure")
 	}
 	b, _ := os.ReadFile(m.Resolver)
@@ -177,7 +194,7 @@ func TestRollbackAfterPartialSetup(t *testing.T) {
 func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
 	m, f, original := testManager(t)
 	ctx := context.Background()
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true); err != nil {
 		t.Fatal(err)
 	}
 	// Crash, then the next session's Acquire retains the kill switch.
@@ -186,7 +203,7 @@ func TestRollbackKeepsGuardFromCrashedSession(t *testing.T) {
 	}
 	f.calls = nil
 	f.fail = "-6 rule add pref 10901"
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err == nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true); err == nil {
 		t.Fatal("expected setup failure")
 	}
 	for _, call := range f.calls {
@@ -257,7 +274,7 @@ func TestGuardBeforeTunnelIsJournaledAndHeldAcrossSessions(t *testing.T) {
 	}
 	// Session setups and session cleanups keep the run's guard.
 	for i := 0; i < 2; i++ {
-		if err := m.Configure(ctx, "Bimeron", 1420, p, true, true); err != nil {
+		if err := m.Configure(ctx, "Bimeron", 1420, 2, p, true, true); err != nil {
 			t.Fatal(err)
 		}
 		if last := (*scripts)[len(*scripts)-1]; !strings.HasPrefix(last, "delete table inet "+FirewallTable+"\n") {
@@ -294,7 +311,7 @@ func TestConfigureRollbackKeepsEarlyGuard(t *testing.T) {
 	}
 	f.calls = nil
 	f.fail = "-6 rule add pref 10901"
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err == nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true); err == nil {
 		t.Fatal("expected setup failure")
 	}
 	for _, call := range f.calls {
@@ -330,7 +347,7 @@ func TestGuardFailureKeepsJournal(t *testing.T) {
 func TestGuardRefusesUnrecoveredSession(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, false); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, false); err != nil {
 		t.Fatal(err)
 	}
 	f.calls = nil
@@ -352,7 +369,7 @@ func TestDisabledIPv6DirectPrefixesStayInTunnel(t *testing.T) {
 	}
 	for _, disable := range []bool{true, false} {
 		m, f, _ := testManager(t)
-		if err := m.Configure(context.Background(), "Bimeron", 1420, p, disable, false); err != nil {
+		if err := m.Configure(context.Background(), "Bimeron", 1420, 2, p, disable, false); err != nil {
 			t.Fatal(err)
 		}
 		throw6 := false
@@ -377,7 +394,7 @@ func TestKernelWithoutIPv6SkipsIPv6Commands(t *testing.T) {
 	if err := m.Preflight(ctx, "Bimeron2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Configure(ctx, "Bimeron", 1420, p, false, true); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, p, false, true); err != nil {
 		t.Fatal(err)
 	}
 	if !f.guard || len(f.rules["-4"]) != 3 {
@@ -399,7 +416,7 @@ func TestKernelWithoutIPv6SkipsIPv6Commands(t *testing.T) {
 func TestExternalDNSChangeKeepsProtection(t *testing.T) {
 	m, f, _ := testManager(t)
 	ctx := context.Background()
-	if err := m.Configure(ctx, "Bimeron", 1420, nil, true, true); err != nil {
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, true, true); err != nil {
 		t.Fatal(err)
 	}
 	external := []byte("nameserver 8.8.8.8\n")
@@ -469,11 +486,25 @@ func TestReservedRulesFailPreflight(t *testing.T) {
 	}
 }
 
+func TestUsesResolvedStub(t *testing.T) {
+	for input, want := range map[string]bool{
+		"  nameserver\t127.0.0.53 # stub":                                     true,
+		"# old settings\nnameserver   127.0.0.54":                             true,
+		"# nameserver 127.0.0.53\n;nameserver 127.0.0.54\nnameserver 1.1.1.1": false,
+		"nameserver 127.0.0.530":                                              false,
+		"search nameserver 127.0.0.54":                                        false,
+	} {
+		if got := usesResolvedStub(input); got != want {
+			t.Errorf("usesResolvedStub(%q) = %t, want %t", input, got, want)
+		}
+	}
+}
+
 func TestResolvedRevertDoesNotOverwriteResolverFile(t *testing.T) {
 	m, f, _ := testManager(t)
 	stub := []byte("nameserver 127.0.0.53\n")
 	os.WriteFile(m.Resolver, stub, 0644)
-	if err := m.Configure(context.Background(), "Bimeron", 1420, nil, false, false); err != nil {
+	if err := m.Configure(context.Background(), "Bimeron", 1420, 2, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Recover(context.Background(), false); err != nil {
@@ -506,5 +537,60 @@ func TestResolvedDoesNotRevertReusedInterfaceName(t *testing.T) {
 		if strings.Contains(call, "resolvectl revert") {
 			t.Fatal("reverted DNS on a foreign interface")
 		}
+	}
+}
+
+func TestResolvedDNSGuardLifecycle(t *testing.T) {
+	ctx := context.Background()
+	m, f, _ := testManager(t)
+	if err := os.WriteFile(m.Resolver, []byte("nameserver 127.0.0.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	scripts, journals := guardScripts(t, m, f)
+	if err := m.Configure(ctx, "Bimeron", 1420, 2, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(*scripts) != 1 {
+		t.Fatalf("expected one nft transaction, got %v", *scripts)
+	}
+	for _, fragment := range []string{
+		"create table inet bimeron_core",
+		"policy accept",
+		`oifname != "lo" oifname != "Bimeron" meta mark != 0x524c meta l4proto { tcp, udp } th dport { 53, 853 } drop`,
+	} {
+		if !strings.Contains((*scripts)[0], fragment) {
+			t.Fatalf("missing %q in DNS guard", fragment)
+		}
+	}
+	if s := (*journals)[0]; s == nil || s.Version != 2 || !s.DNSGuard || s.Guard || s.DNSMethod != "" {
+		t.Fatalf("unexpected journal before DNS guard installation: %+v", s)
+	}
+	f.fail = "resolvectl revert"
+	if err := m.Recover(ctx, true); err == nil || !f.guard {
+		t.Fatal("incomplete recovery must keep DNS protection")
+	}
+	f.fail = ""
+	if err := m.Recover(ctx, true); err != nil || f.guard {
+		t.Fatal("recovery must release the session DNS guard even when preserving a kill switch", err)
+	}
+	if s, err := m.Load(); err != nil || s != nil {
+		t.Fatal("journal remained after recovery", s, err)
+	}
+}
+
+func TestResolvedDNSGuardInstallFailureRollsBack(t *testing.T) {
+	m, f, _ := testManager(t)
+	if err := os.WriteFile(m.Resolver, []byte("nameserver 127.0.0.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f.fail = "nft -f -"
+	if err := m.Configure(context.Background(), "Bimeron", 1420, 2, nil, false, false); err == nil {
+		t.Fatal("setup accepted an unprotected resolver")
+	}
+	if strings.Contains(strings.Join(f.calls, "\n"), "resolvectl ") {
+		t.Fatal("resolver configured before guard installation")
+	}
+	if s, err := m.Load(); s != nil || err != nil {
+		t.Fatal("incomplete rollback", s, err)
 	}
 }

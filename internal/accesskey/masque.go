@@ -9,6 +9,7 @@ import (
 	"github.com/yosida95/uritemplate/v3"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/safefile"
 )
 
 const DefaultMASQUEPath = "/.well-known/masque/udp/{target_host}/{target_port}/"
@@ -99,6 +100,9 @@ func ParseMASQUE(raw string) (Profile, error) {
 		if password == "" {
 			return Profile{}, problem.New("credentials_incomplete", "invalid MASQUE credentials").On("Password", "").Also("Username")
 		}
+	}
+	if q.Get("ca") != "" && !safefile.Local(q.Get("ca")) {
+		return Profile{}, FilePathNotLocal("CAFile")
 	}
 	if q.Get("ca") != "" && !filepath.IsAbs(q.Get("ca")) {
 		return Profile{}, problem.New("path_must_be_absolute", "MASQUE URI requires an absolute CA path").At("CAFile")

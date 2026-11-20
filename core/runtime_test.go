@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bimeron/internal/testutil"
 	"context"
 	"errors"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"bimeron/internal/accesskey"
@@ -341,5 +344,85 @@ func TestHysteria2FailureRetryability(t *testing.T) {
 		if !errors.As(err, &staged) || err.Error() != tc.code || staged.stage != tc.stage || retryable(err) != tc.retry {
 			t.Fatalf("%s: %v", tc.code, err)
 		}
+	}
+}
+
+// Session SSH settings reach the tunnel options unchanged.
+func TestSSHOptionsMapsSessionSettings(t *testing.T) {
+	keys := &sshtunnel.HostKeys{}
+	c := SessionConfig{SSHDefaultKeys: true, SSHHostKeys: keys, SSHProfileOnly: true, SSHNoAgent: true}
+	if got := sshOptions(c); !got.DefaultKeys || got.HostKeys != keys || !got.ProfileOnly || !got.NoAgent {
+		t.Fatalf("sshOptions = %+v", got)
+	}
+	if got := sshOptions(SessionConfig{}); got.DefaultKeys || got.HostKeys != nil || got.ProfileOnly || got.NoAgent {
+		t.Fatalf("zero sshOptions = %+v", got)
+	}
+}
+
+func TestProxyBootstrapSSConfNetworkError(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		network   bool
+	}{
+		{"denied", "ssconf://private.example/private-key?token=secret", true},
+		{"malformed", "ssconf://%zz/private-key", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("denied private.example")}
+			}}
+			defer tr.CloseIdleConnections()
+			cfg := DefaultConfig()
+			cfg.Resolve = func(ctx context.Context) (Profile, error) {
+				return accesskey.NewResolverWithTransport(tr).Resolve(ctx, tc.key)
+			}
+			_, err := (proxyBackend{}).Open(t.Context(), cfg, nil)
+			var raw *url.Error
+			if err == nil || err.Error() != "access_key_resolve_failed" || !retryable(err) || errors.As(err, &raw) || errors.Is(err, accesskey.ErrSSConfNetwork) != tc.network {
+				t.Fatalf("unexpected proxy bootstrap error: %v", err)
+			}
+		})
+	}
+}
+
+func TestProxyBootstrapSSConfNetworkFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		afterHeaders bool
+	}{
+		{"header timeout", false},
+		{"body read", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const key = "ssconf://private.example/private-key?token=secret"
+			resolver := accesskey.NewResolverWithTransport(testutil.SSConfFailureTransport{AfterHeaders: tc.afterHeaders})
+			synctest.Test(t, func(t *testing.T) {
+				cfg := DefaultConfig()
+				cfg.Resolve = func(ctx context.Context) (Profile, error) { return resolver.Resolve(ctx, key) }
+				_, err := (proxyBackend{}).Open(t.Context(), cfg, nil)
+				var raw *url.Error
+				if err == nil || err.Error() != "access_key_resolve_failed" || !retryable(err) || errors.As(err, &raw) || !errors.Is(err, accesskey.ErrSSConfNetwork) {
+					t.Fatalf("unexpected bootstrap error: %v", err)
+				}
+			})
+		})
+	}
+}
+
+// A failed lookup of the ssconf host stays a retryable bootstrap failure and
+// exposes only the DNS sentinel.
+func TestProxyBootstrapSSConfDNSError(t *testing.T) {
+	tr := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: "private.example", IsNotFound: true}
+	}}
+	defer tr.CloseIdleConnections()
+	cfg := DefaultConfig()
+	cfg.Resolve = func(ctx context.Context) (Profile, error) {
+		return accesskey.NewResolverWithTransport(tr).Resolve(ctx, "ssconf://private.example/private-key?token=secret")
+	}
+	_, err := (proxyBackend{}).Open(t.Context(), cfg, nil)
+	var raw *url.Error
+	if err == nil || err.Error() != "access_key_resolve_failed" || !retryable(err) || errors.As(err, &raw) || !errors.Is(err, accesskey.ErrSSConfDNS) || !errors.Is(err, accesskey.ErrSSConfNetwork) {
+		t.Fatalf("unexpected proxy bootstrap error: %v", err)
 	}
 }

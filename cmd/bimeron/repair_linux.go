@@ -259,7 +259,7 @@ func (b *linuxRepairBackend) Recover(ctx context.Context) error {
 	if !present {
 		return fmt.Errorf("owned recovery journal missing")
 	}
-	release, err := linuxnet.Lock("vpn.lock")
+	release, err := linuxnet.LockSession()
 	if err != nil {
 		return err
 	}

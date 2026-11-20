@@ -48,11 +48,20 @@ Current limits:
 - At most 4096 IP–domain associations per session.
 - TTL comes from the validated DNS response and is capped at 24 hours.
 - TTL 0 is not stored.
-- Expired entries are removed on reads and inserts.
-- When full, associations expiring soonest are evicted.
+- Lookups skip expired associations and sort the live domains after unlocking.
+  Inserting a new association into a full table evicts one heap root, even
+  after bulk expiry.
+- When full, associations expiring soonest are evicted; among equal expiry
+  times, the oldest association goes first.
+- One response contributes at most 64 address records and follows at most 16
+  CNAME records. Records beyond these limits are ignored, which can only mean
+  fewer associations.
 
-A linear scan for eviction is acceptable with a 4096-entry limit. A more complex
-structure is warranted only after a measured performance impact.
+Associations are kept in a min-heap ordered by expiry. Insertion, refresh,
+and eviction cost O(log n) each, so the lock is held for
+O(64 · log 4096) steps per response regardless of answer size or table
+occupancy. `BenchmarkDNSMetadataObserveFullTable` measures a 1000-record answer
+against a full table.
 
 ## DNS processing
 
@@ -132,6 +141,8 @@ No external dependencies or new background process are required.
 - Identical results with different concurrent DNS response orders.
 - Metadata retained on reconnect and removed on Stop.
 - The 4096 limit and predictable eviction.
+- Per-response bounds for address records and CNAME chains, including a full
+  table with a large answer.
 - No learning from erroneous or unvalidated responses.
 - DNS over UDP and TCP.
 - Race detection for concurrent DNS responses and connections.

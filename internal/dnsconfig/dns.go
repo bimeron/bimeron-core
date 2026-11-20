@@ -3,9 +3,13 @@ package dnsconfig
 import (
 	"net/netip"
 	"strings"
+	"time"
 
 	"bimeron/internal/problem"
 )
+
+// ExchangeTimeout bounds one upstream exchange with one server on one transport.
+const ExchangeTimeout = 2 * time.Second
 
 // Parse accepts one to four distinct IPv4 resolvers in priority order.
 func Parse(value string) ([]string, error) {

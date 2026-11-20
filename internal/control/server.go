@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	core "bimeron/core"
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
@@ -189,18 +190,19 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	defer func() {
-		// A panic here is not a user's stop either: keep protection, close the
-		// session, then rethrow.
-		panicked := recover()
-		stopEngine := !s.foreground || ctx.Err() != nil || panicked != nil
+		if panicked := recover(); panicked != nil {
+			// A guard-claimed run may never finish. Release the listener
+			// without waiting for Stop or the workers.
+			cancel()
+			_ = l.Close()
+			panic(panicked)
+		}
+		stopEngine := !s.foreground || ctx.Err() != nil
 		// A broken listener is not a user's stop: keep kill switch protection.
 		// Sessions run under contexts derived from ctx, so mark the session
 		// before anything is cancelled.
-		if a, ok := s.engine.(abandoner); ok && stopEngine && (panicked != nil || result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
+		if a, ok := s.engine.(abandoner); ok && stopEngine && (result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
 			a.MarkAbandon()
-		}
-		if panicked != nil {
-			defer panic(panicked)
 		}
 		cancel()
 		_ = l.Close()
@@ -209,9 +211,22 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 			result = errors.Join(result, s.engine.Stop(context.Background()))
 		}
 	}()
+	// Claim active sessions before shutdown can cancel them or commit a normal stop.
+	defer guard.Recover()
+	defer func() {
+		if p := recover(); p != nil {
+			// Start may have admitted a run whose guard is not registered yet.
+			// Close admission and mark that run before dispatch or cancellation.
+			if a, ok := s.engine.(abandoner); ok {
+				a.MarkAbandon()
+			}
+			panic(p)
+		}
+	}()
 	slots := make(chan struct{}, 32)
 	workers.Add(1)
 	go func() {
+		defer guard.Recover()
 		defer workers.Done()
 		for {
 			select {
@@ -246,7 +261,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 			continue
 		}
 		workers.Add(1)
-		go func() { defer workers.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
+		go func() { defer guard.Recover(); defer workers.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
 	}
 }
 func (s *Server) record(e core.Event) {
@@ -417,13 +432,16 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 					break
 				}
 				cfg.SSHPrompt = s.prompt
-				cfg.SSHDefaultKeys = false // Service home is not the GUI user's home.
+				// The daemon's home and SSH agent are not reliably the GUI user's.
+				cfg.SSHDefaultKeys, cfg.SSHNoAgent = false, true
 				if err = s.engine.Start(ctx, cfg); err != nil {
 					answer.Error = "session_start_failed"
 					if errors.Is(err, core.ErrSessionRunning) {
 						answer.Error = "session_already_running"
 					} else if errors.Is(err, core.ErrKillSwitchHeld) {
 						answer.Error = "kill_switch_held"
+					} else if errors.Is(err, core.ErrEngineExiting) {
+						answer.Error = "daemon_shutting_down"
 					}
 				}
 			}

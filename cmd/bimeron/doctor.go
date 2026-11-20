@@ -13,6 +13,7 @@ import (
 
 	"bimeron/core"
 	"bimeron/internal/control"
+	"bimeron/internal/displaytext"
 	"bimeron/internal/telemetry"
 )
 
@@ -126,7 +127,8 @@ func doctor(args []string) error {
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
+	// The report holds daemon-supplied text; keep terminal controls escaped.
+	data = append(displaytext.EscapeJSON(data), '\n')
 	if *output != "" {
 		file, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -21,7 +22,9 @@ import (
 	"bimeron/internal/problem"
 	"bimeron/internal/routing"
 	"bimeron/internal/safefile"
+	"bimeron/internal/socksauth"
 	"bimeron/internal/systemvpn"
+	"bimeron/internal/wgconf"
 )
 
 const (
@@ -44,7 +47,9 @@ type File struct {
 	ShadowTLS        *accesskey.ShadowTLS
 	// lines maps "Section", "Section.Field", "Rule<n>" and "Rule<n>.Field" to
 	// one-based profile lines for problem locations.
-	lines map[string]int
+	// AllowedIPsMode is [Routing] AllowedIPsMode; empty means direct.
+	AllowedIPsMode string
+	lines          map[string]int
 }
 type GeoData struct {
 	GeoIPFile   string
@@ -71,6 +76,7 @@ type Access struct {
 	KeyFile           string
 	Type              string
 	Parameters        *Parameters
+	WireGuard         *WireGuardOptions
 	Username          string
 	IdentityFile      string
 	KnownHostsFile    string
@@ -97,7 +103,16 @@ type Tunnel struct {
 	MTU        int
 	DNS        string
 	Listen     string
+	// ListenUsername and ListenPassword optionally require RFC 1929
+	// authentication on the local SOCKS5 listener. Both or neither.
+	ListenUsername string
+	ListenPassword string
 }
+
+// DefaultDNS is the [Interface] DNS value used when a profile omits it:
+// two servers in priority order, so a query can fall back when the first
+// one is unreachable.
+const DefaultDNS = "1.1.1.1, 1.0.0.1"
 
 var interfaceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`)
 
@@ -119,7 +134,7 @@ func parse(b []byte) (*File, error) {
 	if !utf8.Valid(b) {
 		return nil, problem.New("file_not_utf8", "config must be UTF-8")
 	}
-	c := &File{Tunnel: Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: "1.1.1.1", Listen: "127.0.0.1:1080"}, Routing: routing.Config{Default: routing.Proxy}, lines: map[string]int{}}
+	c := &File{Tunnel: Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: DefaultDNS, Listen: "127.0.0.1:1080"}, Routing: routing.Config{Default: routing.Proxy}, lines: map[string]int{}}
 	section := ""
 	sections := map[string]bool{}
 	fields := map[string]bool{}
@@ -181,7 +196,10 @@ func parse(b []byte) (*File, error) {
 			}
 			value = decoded
 		}
-		if value == "" && key != "Name" && key != "Prefix" {
+		// An empty ListenUsername/ListenPassword means "no authentication", so
+		// a GUI can switch it off with set_field.
+		optional := key == "Name" || key == "Prefix" || section == "Interface" && (key == "ListenUsername" || key == "ListenPassword")
+		if value == "" && !optional {
 			return nil, c.inRule(problem.New("value_required", fmt.Sprintf("invalid configuration at line %d", line)).In(section).On(key, "").AtLine(line), section)
 		}
 		number := func() (int, error) {
@@ -234,6 +252,10 @@ func parse(b []byte) (*File, error) {
 				c.Tunnel.DNS = value
 			case "Listen":
 				c.Tunnel.Listen = value
+			case "ListenUsername":
+				c.Tunnel.ListenUsername = value
+			case "ListenPassword":
+				c.Tunnel.ListenPassword = value
 			default:
 				recognized = false
 			}
@@ -326,6 +348,7 @@ func parse(b []byte) (*File, error) {
 					v.ServerName = value
 				case "PublicKey":
 					v.PublicKey = value
+					c.Access.addWireGuard(key, value)
 				case "ShortID":
 					v.ShortID = value
 				case "Fingerprint":
@@ -389,6 +412,8 @@ func parse(b []byte) (*File, error) {
 						}
 						err = v.XHTTPOptions.SetXHTTPConfField(key, value)
 					}
+				} else if wgconf.AccessOption(key) {
+					c.Access.addWireGuard(key, value)
 				} else {
 					recognized = false
 				}
@@ -405,6 +430,8 @@ func parse(b []byte) (*File, error) {
 		case "Routing":
 			if key == "Default" {
 				c.Routing.Default = routing.Action(value)
+			} else if key == "AllowedIPsMode" {
+				c.AllowedIPsMode = value
 			} else {
 				recognized = false
 			}
@@ -545,7 +572,7 @@ func accessProblem(err error) error {
 // locate fills the profile line of a problem from recorded field positions.
 func (c *File) locate(err error) error {
 	p := problem.Of(err)
-	if p.Line != 0 || c == nil {
+	if p.Line != 0 || c == nil || p.Document != "" {
 		return p
 	}
 	section := p.Section
@@ -606,6 +633,10 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 	if _, err := loadBaseBytes(c, path, geoIP, geoSite); err != nil {
 		return nil, c.locate(err)
 	}
+	if err := c.validateAllowedIPsMode(); err != nil {
+		return nil, c.locate(err)
+	}
+	c.normalizeTrustPaths()
 	if c.ShadowTLS != nil {
 		if err := c.ShadowTLS.Validate(); err != nil {
 			return nil, c.locate(shadowTLSProblem(err))
@@ -692,47 +723,13 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {
 		return nil, problem.New("listen_invalid", "[Interface] Listen must be a loopback IP and port").In("Interface").At("Listen")
 	}
-	if c.Tunnel.KillSwitch {
-		for i, r := range c.Routing.Rules {
-			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
-				field := "Domain"
-				if r.GeoIP != "" {
-					field = "GeoIP"
-				} else if r.GeoSite != "" {
-					field = "GeoSite"
-				}
-				return nil, problem.New("kill_switch_cidr_only", fmt.Sprintf("rule %d: kill switch supports CIDR rules only", i+1)).In("Rule").At(field).AtRule(i + 1)
-			}
-		}
-	}
-	if path != "" {
-		needIP, needSite := false, false
-		for _, r := range c.Routing.Rules {
-			needIP = needIP || r.GeoIP != ""
-			needSite = needSite || r.GeoSite != ""
-		}
-		if needIP {
-			geoIP, err = readGeoData(path, c.GeoData.GeoIPFile, "geoip")
-			if err != nil {
-				return nil, err
-			}
-		}
-		if needSite {
-			geoSite, err = readGeoData(path, c.GeoData.GeoSiteFile, "geosite")
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	c.geoData, err = routing.DecodeGeoData(geoIP, geoSite)
-	if err != nil {
+	if err := socksauth.Validate(c.Tunnel.ListenUsername, c.Tunnel.ListenPassword); err != nil {
 		return nil, err
 	}
-	if _, err := c.RoutingPolicy(); err != nil {
-		return nil, err
-	}
-	if c.Tunnel.Mode == "vpn" {
-		if _, err := c.VPNPolicy(); err != nil {
+	// The access key is resolved below. validateAllowedIPsMode rejects
+	// "only" for other transports once the peer type is known.
+	if c.AllowedIPsMode != "only" {
+		if err := c.validateRouting(path, geoIP, geoSite); err != nil {
 			return nil, err
 		}
 	}
@@ -777,6 +774,10 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	}
 	if c.Access.Type != "masque" && (c.Access.MASQUEPath != "" || c.Access.CAFile != "") {
 		return nil, problem.New("option_requires_type", "[AccessKey] MASQUEPath and CAFile require Type = masque").In("AccessKey").At(c.present("MASQUEPath", "CAFile")).Arg("type", "MASQUE")
+	}
+	if o := c.Access.WireGuard; o != nil && c.Access.Type != "wireguard" && slices.ContainsFunc(o.keys, wgconf.AccessOption) {
+		key := o.keys[slices.IndexFunc(o.keys, wgconf.AccessOption)]
+		return nil, problem.New("option_requires_type", "[AccessKey] WireGuard options require Type = wireguard").In("AccessKey").At(key).Arg("type", "WireGuard")
 	}
 	sources := 0
 	if c.Access.SS != "" {
@@ -849,6 +850,14 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
 			return nil, problem.New("option_requires_type", "[AccessKey] SSH file options require an SSH profile").In("AccessKey").At(c.present("IdentityFile", "KnownHostsFile")).Arg("type", "SSH")
 		}
+	}
+	for _, f := range []struct{ field, value string }{{"IdentityFile", c.Access.IdentityFile}, {"KnownHostsFile", c.Access.KnownHostsFile}, {"CAFile", c.Access.CAFile}} {
+		if f.value != "" && !safefile.Local(f.value) {
+			return nil, accesskey.FilePathNotLocal(f.field).In("AccessKey")
+		}
+	}
+	if c.Access.Type == "wireguard" {
+		return c.explicitWireGuard()
 	}
 	if c.Access.Parameters != nil || c.Access.VLESSParameters != nil || c.Access.Type != "" || c.Access.Username != "" || c.Access.ServerName != "" {
 		if c.Access.Type == "" {
@@ -1096,7 +1105,11 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 		}
 		b, err := readFile(keyPath)
 		if err != nil {
-			return nil, c.keyProblem(err)
+			p := problem.Of(c.keyProblem(err))
+			return nil, p.At("File")
+		}
+		if ok, err := c.wireGuardFile(string(b)); ok {
+			return c, err
 		}
 		key = string(b)
 	}
@@ -1266,7 +1279,52 @@ func (c *File) VPNPolicy() (*routing.Policy, error) {
 
 // RoutingPolicy compiles against the immutable dataset snapshot loaded with this profile.
 func (c *File) RoutingPolicy() (*routing.Policy, error) {
+	if c.IsWireGuard() && c.AllowedIPsMode == "only" {
+		return routing.Compile(routing.Config{Default: routing.Proxy})
+	}
 	return routing.CompileWithGeoData(c.Routing, c.geoData)
+}
+
+func (c *File) validateRouting(path string, geoIP, geoSite []byte) error {
+	var err error
+	if c.Tunnel.KillSwitch {
+		for i, r := range c.Routing.Rules {
+			if r.Domain != "" || r.GeoIP != "" || r.GeoSite != "" {
+				field := "Domain"
+				if r.GeoIP != "" {
+					field = "GeoIP"
+				} else if r.GeoSite != "" {
+					field = "GeoSite"
+				}
+				return problem.New("kill_switch_cidr_only", fmt.Sprintf("rule %d: kill switch supports CIDR rules only", i+1)).In("Rule").At(field).AtRule(i + 1)
+			}
+		}
+	}
+	if path != "" {
+		needIP, needSite := false, false
+		for _, r := range c.Routing.Rules {
+			needIP = needIP || r.GeoIP != ""
+			needSite = needSite || r.GeoSite != ""
+		}
+		if needIP {
+			geoIP, err = readGeoData(path, c.GeoData.GeoIPFile, "geoip")
+			if err != nil {
+				return err
+			}
+		}
+		if needSite {
+			geoSite, err = readGeoData(path, c.GeoData.GeoSiteFile, "geosite")
+			if err != nil {
+				return err
+			}
+		}
+	}
+	c.geoData, err = routing.DecodeGeoData(geoIP, geoSite)
+	if err != nil {
+		return err
+	}
+	_, err = c.RoutingPolicy()
+	return err
 }
 
 func readGeoData(profile, resource, kind string) ([]byte, error) {

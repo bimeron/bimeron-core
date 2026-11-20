@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.getoutline.org/sdk/transport"
+
+	"bimeron/internal/guard"
 )
 
 const (
@@ -135,7 +137,7 @@ func (p *Pool) ConnectStream(ctx context.Context) (transport.StreamConn, error) 
 		w.token <- struct{}{}
 		p.workers[w] = struct{}{}
 		p.mu.Unlock()
-		go w.readLoop()
+		guard.Go(func() { w.readLoop() })
 	}
 }
 
@@ -375,7 +377,7 @@ func (w *worker) readFrame() error {
 	if !s.deliver(data) {
 		s.finish(fmt.Errorf("Mux session receive buffer exceeded"))
 		// Keep a stalled stream from blocking the shared receive loop.
-		go s.sendEnd()
+		guard.Go(func() { s.sendEnd() })
 	}
 	return nil
 }

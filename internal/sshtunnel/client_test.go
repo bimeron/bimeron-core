@@ -158,6 +158,19 @@ func startServer(t *testing.T, hostKeys ...ssh.Signer) (address, identity string
 	for _, k := range hostKeys {
 		server.AddHostKey(k)
 	}
+	address = serveSSH(t, server)
+	identity = filepath.Join(t.TempDir(), "id_ed25519")
+	keyBytes, _ := x509.MarshalPKCS8PrivateKey(userKey)
+	if err := os.WriteFile(identity, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return address, identity
+}
+
+// serveSSH accepts SSH connections with server on a loopback port until the
+// test ends and rejects every channel.
+func serveSSH(t *testing.T, server *ssh.ServerConfig) string {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -182,12 +195,7 @@ func startServer(t *testing.T, hostKeys ...ssh.Signer) (address, identity string
 			}()
 		}
 	}()
-	identity = filepath.Join(t.TempDir(), "id_ed25519")
-	keyBytes, _ := x509.MarshalPKCS8PrivateKey(userKey)
-	if err := os.WriteFile(identity, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return l.Addr().String(), identity
+	return l.Addr().String()
 }
 
 func sshProfile(t *testing.T, address, identity string, hostKeys ...ssh.PublicKey) accesskey.Profile {

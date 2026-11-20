@@ -1,6 +1,7 @@
 package vless
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/vpn"
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 )
@@ -262,5 +264,102 @@ func TestXHTTP3BoundTransport(t *testing.T) {
 	_ = outbound.SetReadDeadline(time.Now().Add(time.Second))
 	if _, _, err := outbound.ReadFrom(make([]byte, 1)); err == nil {
 		t.Fatal("HTTP/3 socket remained open after client close")
+	}
+}
+
+func TestDNSAttemptWithStalledXHTTPHeader(t *testing.T) {
+	for _, mode := range []string{"stream-one", "stream-up"} {
+		for _, tcp := range []bool{false, true} {
+			stage := "UDP write"
+			if tcp {
+				stage = "TCP dial"
+			}
+			t.Run(mode+"/"+stage, func(t *testing.T) {
+				started := make(chan struct{}, 2)
+				release := make(chan struct{})
+				defer close(release)
+				client := &Client{endpoint: accesskey.Endpoint{Host: "example.com", Port: 443},
+					settings:    accesskey.VLESS{Network: "xhttp", XHTTPMode: mode},
+					connections: make(map[*streamConn]struct{}), packets: make(map[*packetConn]struct{}),
+					xhttpTransport: &http2.Transport{DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
+						started <- struct{}{}
+						select {
+						case <-ctx.Done():
+						case <-release:
+						}
+						return nil, net.ErrClosed
+					}},
+				}
+				defer client.Close()
+				// One A question for a. No HTTP request body can be consumed until dialing succeeds.
+				query := []byte{0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 'a', 0, 0, 1, 0, 1}
+				r := vpn.DNSResolver{TCP: client, UDP: client, Servers: []string{"192.0.2.1"}, Timeout: 150 * time.Millisecond}
+				done := make(chan error, 1)
+				go func() { _, err := r.Exchange(t.Context(), query, tcp); done <- err }()
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatal("HTTP dial never started")
+				}
+				select {
+				case err := <-done:
+					if err == nil || !strings.Contains(err.Error(), stage+" timeout") {
+						t.Fatalf("exchange: %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("DNS attempt remained in header setup after its deadline")
+				}
+			})
+		}
+	}
+}
+
+func TestXHTTPStreamSurvivesDialCancellation(t *testing.T) {
+	for _, mode := range []string{"stream-one", "stream-up"} {
+		t.Run(mode, func(t *testing.T) {
+			const target = "192.0.2.1:53"
+			header, err := requestHeader([16]byte{}, 1, target, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			uploaded := make(chan struct{})
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					frame := make([]byte, len(header)+1)
+					if _, err := io.ReadFull(r.Body, frame); err != nil || !bytes.Equal(frame, append(header, 42)) {
+						return
+					}
+					close(uploaded)
+					if mode == "stream-up" {
+						return
+					}
+				}
+				select {
+				case <-uploaded:
+					_, _ = w.Write([]byte{0, 0, 42})
+				case <-r.Context().Done():
+				}
+			}))
+			server.EnableHTTP2 = true
+			server.StartTLS()
+			defer server.Close()
+			client := &Client{endpoint: accesskey.Endpoint{Host: "localhost"}, settings: accesskey.VLESS{Network: "xhttp", XHTTPMode: mode, XHTTPHost: server.Listener.Addr().String()}, connections: make(map[*streamConn]struct{}), xhttpTransport: &http2.Transport{TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			conn, err := client.DialStream(ctx, target)
+			cancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(time.Second))
+			if _, err := conn.Write([]byte{42}); err != nil {
+				t.Fatal(err)
+			}
+			var reply [1]byte
+			if _, err := io.ReadFull(conn, reply[:]); err != nil || reply[0] != 42 {
+				t.Fatalf("reply %v, %v", reply, err)
+			}
+		})
 	}
 }

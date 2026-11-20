@@ -18,6 +18,7 @@ import (
 
 	"bimeron/core"
 	"bimeron/internal/control"
+	"bimeron/internal/guard"
 	"bimeron/internal/windowsnet"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -30,6 +31,14 @@ const serviceName = "BimeronCore"
 type windowsService struct {
 	owner  string
 	listen func(string) (net.Listener, error)
+}
+
+func serveServiceReadiness(ctx context.Context, server *control.Server, readiness net.Listener, cancel context.CancelFunc) {
+	defer guard.Recover()
+	if err := server.ServeReadiness(ctx, readiness); err != nil {
+		server.AbandonOnExit()
+		cancel()
+	}
 }
 
 func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -59,12 +68,7 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			l.Close()
 			return true, 1
 		}
-		go func() {
-			if err := server.ServeReadiness(ctx, readiness); err != nil {
-				server.AbandonOnExit()
-				cancel()
-			}
-		}()
+		go serveServiceReadiness(ctx, server, readiness, cancel)
 	}
 	go func() { done <- server.Serve(ctx, l) }()
 	status := svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
