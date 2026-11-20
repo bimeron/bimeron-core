@@ -23,9 +23,9 @@ func TestUpdateHoldMessage(t *testing.T) {
 		kept    bool
 		message string
 	}{
-		{"active", control.Response{Status: core.Status{KillSwitch: core.KillSwitchActive}}, nil, true, "is kept"},
-		{"holding", control.Response{Status: core.Status{KillSwitch: core.KillSwitchHolding}}, nil, true, "is kept"},
-		{"existing hold", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate}}, nil, true, "is kept"},
+		{"active", control.Response{Status: core.Status{KillSwitch: core.KillSwitchActive}}, nil, true, "requested"},
+		{"holding", control.Response{Status: core.Status{KillSwitch: core.KillSwitchHolding}}, nil, true, "requested"},
+		{"existing hold", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate}}, nil, true, "requested"},
 		{"residual", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual}}, nil, false, "stays installed"},
 		{"no protection", control.Response{}, nil, false, ""},
 		{"old service", control.Response{Version: control.Version, Instance: "old", Error: "invalid_request"}, errors.New("invalid_request"), false, "cannot keep"},
@@ -50,6 +50,70 @@ func TestUpdateHoldMessage(t *testing.T) {
 	}
 }
 
+func TestUpdateHoldNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                             string
+		supported, olderPrepare, reject, wrongInstance, wrongID, success bool
+	}{
+		{name: "transactional", supported: true, success: true},
+		{name: "legacy fallback", reject: true, success: true},
+		{name: "old prepare", olderPrepare: true},
+		{name: "ambiguous legacy acceptance"},
+		{name: "lost acknowledgement", supported: true, reject: true},
+		{name: "changed instance", supported: true, wrongInstance: true},
+		{name: "changed transaction", supported: true, wrongID: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := false
+			a, err := negotiateUpdateHold(func(r control.Request) (control.Response, error) {
+				a := control.Response{Version: control.Version, Instance: "old"}
+				if r.Command == "hello" {
+					a.Core = &core.BuildDetails{Version: "1"}
+					a.UpdateStopSupported = tc.supported
+					return a, nil
+				}
+				prepared = true
+				if tc.reject {
+					a.Error = "invalid_request"
+					return a, errors.New(a.Error)
+				}
+				a.ID, a.UpdateTransaction = r.ID, r.ID
+				if tc.wrongInstance {
+					a.Instance = "foreign"
+				}
+				if tc.wrongID {
+					a.UpdateTransaction = "foreign"
+				}
+				return a, nil
+			}, func() (control.Response, error) {
+				return control.Response{Version: control.Version, Instance: "old", Capabilities: &core.Capabilities{KillSwitchUpdateHold: tc.olderPrepare}}, nil
+			})
+			_, _, err = updateHoldMessage(a, err)
+			if (err == nil) != tc.success || prepared == tc.olderPrepare {
+				t.Fatal(prepared, err)
+			}
+		})
+	}
+}
+
+func TestRequiredUpdateProtectionReadiness(t *testing.T) {
+	profile := strings.Repeat("ab", 32)
+	s := core.Status{State: core.Failed, KillSwitch: core.KillSwitchResidual, LastError: "cleanup_failed_run_recover", ResidualProfile: profile, ResidualReason: core.ResidualUpdate}
+	if err := verifyRetainedUpdate(s, profile, profile); err != nil {
+		t.Fatal(err)
+	}
+	if verifyRetainedUpdate(s, profile, "") == nil {
+		t.Fatal("foreign transaction accepted")
+	}
+	s.ResidualReason = ""
+	if verifyRetainedUpdate(s, profile, profile) == nil {
+		t.Fatal("ordinary residual accepted")
+	}
+	if verifyRetainedUpdate(core.Status{State: core.Disconnected}, profile, "") == nil {
+		t.Fatal("disconnected accepted")
+	}
+}
+
 func TestOptInRollbackRequiresFreshPreparation(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		prepared, stopped := false, false
@@ -58,8 +122,14 @@ func TestOptInRollbackRequiresFreshPreparation(t *testing.T) {
 			if fail {
 				return control.Response{}, errors.New("readiness unavailable")
 			}
-			return control.Response{}, nil
-		}, func() error { stopped = true; return nil })
+			return control.Response{UpdateTransaction: "test"}, nil
+		}, func(id string, required bool) error {
+			if id != "test" {
+				t.Fatal(id)
+			}
+			stopped = true
+			return nil
+		})
 		if !prepared || stopped == fail || (err != nil) != fail {
 			t.Fatal(prepared, stopped, err)
 		}

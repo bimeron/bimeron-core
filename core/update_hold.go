@@ -33,14 +33,19 @@ func (h UpdateHold) generation() (string, error) {
 }
 
 type updateHoldRecord struct {
-	Version    int       `json:"version"`
-	Generation string    `json:"filter_generation"`
-	ProfileID  string    `json:"profile_id"`
-	Time       time.Time `json:"time"`
+	Transaction string    `json:"transaction,omitempty"`
+	Version     int       `json:"version"`
+	Generation  string    `json:"filter_generation"`
+	ProfileID   string    `json:"profile_id"`
+	Time        time.Time `json:"time"`
 }
 
 // Write records profileID, replacing an earlier record.
 func (h UpdateHold) Write(profileID string) error {
+	return h.WriteTransaction(profileID, "")
+}
+
+func (h UpdateHold) WriteTransaction(profileID, transaction string) error {
 	if !validProfileID(profileID) {
 		return fmt.Errorf("invalid profile id")
 	}
@@ -51,7 +56,11 @@ func (h UpdateHold) Write(profileID string) error {
 	if generation == "" {
 		return errors.New("missing filter generation")
 	}
-	b, err := json.Marshal(updateHoldRecord{Version: 2, Generation: generation, ProfileID: profileID, Time: time.Now().UTC()})
+	return h.writeRecord(updateHoldRecord{Version: 2, Generation: generation, ProfileID: profileID, Transaction: transaction, Time: time.Now().UTC()})
+}
+
+func (h UpdateHold) writeRecord(record updateHoldRecord) error {
+	b, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
@@ -64,24 +73,72 @@ func (h UpdateHold) Write(profileID string) error {
 
 // Read returns the recorded profile_id, or "" without a valid record.
 func (h UpdateHold) Read() string {
+	return h.readRecord().ProfileID
+}
+
+// TransactionProfile checks both the privileged marker and the installed filters.
+func (h UpdateHold) TransactionProfile(transaction string) string {
+	r := h.readRecord()
+	if transaction == "" || r.Transaction != transaction {
+		return ""
+	}
+	return r.ProfileID
+}
+
+// Renew captures the exact verified residual at prepare. A subsequent stop
+// can relabel only that same record and filter generation.
+func (h UpdateHold) Renew(profile string) func(string) error {
+	previous := h.readRecord()
+	return func(transaction string) error {
+		if previous.ProfileID == "" || previous.ProfileID != profile || previous != h.readRecord() {
+			return errors.New("update residual changed")
+		}
+		previous.Transaction = transaction
+		return h.writeRecord(previous)
+	}
+}
+
+func (h UpdateHold) readRecord() updateHoldRecord {
 	f, err := os.Open(h.Path)
 	if err != nil {
-		return ""
+		return updateHoldRecord{}
 	}
 	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, 4096))
 	if err != nil {
-		return ""
+		return updateHoldRecord{}
 	}
 	var r updateHoldRecord
 	if json.Unmarshal(b, &r) != nil || r.Version != 2 || r.Generation == "" || !validProfileID(r.ProfileID) {
-		return ""
+		return updateHoldRecord{}
 	}
 	generation, err := h.generation()
 	if err != nil || generation != r.Generation {
-		return ""
+		return updateHoldRecord{}
 	}
-	return r.ProfileID
+	return r
+}
+
+// Finish publishes the SCM stop outcome after the engine has finished cleanup.
+func (h UpdateHold) Finish(transaction, profile string) error {
+	if transaction == "" || profile != "" && h.TransactionProfile(transaction) != profile {
+		return errors.New("update stop protection unconfirmed")
+	}
+	receipt := UpdateHold{Path: h.Path + ".stop"}
+	return receipt.writeRecord(updateHoldRecord{Transaction: transaction, ProfileID: profile})
+}
+
+func (h UpdateHold) StopOutcome(transaction string) (string, error) {
+	b, err := os.ReadFile(h.Path + ".stop")
+	if err != nil {
+		return "", err
+	}
+	var r updateHoldRecord
+	if json.Unmarshal(b, &r) != nil || transaction == "" || r.Transaction != transaction ||
+		r.ProfileID != "" && (!validProfileID(r.ProfileID) || h.TransactionProfile(transaction) != r.ProfileID) {
+		return "", errors.New("update stop outcome unconfirmed")
+	}
+	return r.ProfileID, nil
 }
 
 // Clear removes the record; a missing record is not an error.

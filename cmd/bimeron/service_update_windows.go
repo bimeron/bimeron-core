@@ -6,6 +6,7 @@ import (
 	"bimeron/core"
 	"bimeron/internal/control"
 	"context"
+	"crypto/rand"
 	"debug/buildinfo"
 	"debug/pe"
 	"fmt"
@@ -45,7 +46,7 @@ func waitServiceStateContext(ctx context.Context, s *mgr.Service, want svc.State
 	}
 	return fmt.Errorf("service state change timed out")
 }
-func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
+func stopUpdateServiceContext(ctx context.Context, s *mgr.Service, cmd svc.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -53,8 +54,11 @@ func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
 	if err != nil {
 		return err
 	}
+	if cmd == stopPreparedUpdate && status.State != svc.Running {
+		return fmt.Errorf("prepared service is no longer running")
+	}
 	if status.State != svc.Stopped && status.State != svc.StopPending {
-		if _, err = s.Control(svc.Stop); err != nil {
+		if _, err = s.Control(cmd); err != nil {
 			return err
 		}
 	}
@@ -190,9 +194,13 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
 	kept := false
-	if wasRunning && expect.keepKillSwitch {
+	var transaction, profile string
+	marker := core.UpdateHold{Path: filepath.Join(dir, updateHoldFile)}
+	if wasRunning && expect.keepKillSwitch && !forceActivate {
 		var message string
-		kept, message, err = updateHoldMessage(requestUpdateHold(ctx, s))
+		answer, prepareErr := requestUpdateHold(ctx, s)
+		kept, message, err = updateHoldMessage(answer, prepareErr)
+		transaction = answer.UpdateTransaction
 		if err != nil {
 			return err
 		}
@@ -201,7 +209,19 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		}
 	}
 	err = runServiceUpdate(wasRunning, func() error {
-		return stopUpdateServiceContext(ctx, s)
+		if transaction == "" {
+			return stopUpdateServiceContext(ctx, s, svc.Stop)
+		}
+		if err := stopUpdateServiceContext(ctx, s, stopPreparedUpdate); err != nil {
+			return err
+		}
+		var err error
+		profile, err = marker.StopOutcome(transaction)
+		if err == nil && kept && profile == "" {
+			return fmt.Errorf("prepared protection missing at update stop")
+		}
+		kept = profile != ""
+		return err
 	}, func() error {
 		return replaceServiceExecutable(target, staged, backup, func() error {
 			if err := ctx.Err(); err != nil {
@@ -223,14 +243,32 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 						return control.CallServiceReadiness(ctx, state.ProcessId, r)
 					})
 				}
-				return waitUpdatedServiceWithCall(ctx, expect.version, kept, control.CallService)
+				return waitUpdatedServiceWithCall(ctx, expect.version, kept, func(ctx context.Context, r control.Request) (control.Response, error) {
+					a, err := control.CallService(ctx, r)
+					if err == nil && kept && r.Command == "status" && a.Status.KillSwitch == core.KillSwitchResidual {
+						err = verifyRetainedUpdate(a.Status, profile, marker.TransactionProfile(transaction))
+					}
+					return a, err
+				})
 			})
 		}, func() error {
 			// A client may already have restarted the held profile on the
 			// new service; keep that protection across the rollback stop.
 			return stopForRollback(expect.keepKillSwitch && !forceActivate, s.Query, func() (control.Response, error) {
 				return requestUpdateHold(rollbackContext(), s)
-			}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
+			}, func(id string, required bool) error {
+				if id == "" {
+					return stopUpdateServiceContext(rollbackContext(), s, svc.Stop)
+				}
+				if err := stopUpdateServiceContext(rollbackContext(), s, stopPreparedUpdate); err != nil {
+					return err
+				}
+				profile, err := marker.StopOutcome(id)
+				if required && err == nil && profile == "" {
+					return fmt.Errorf("rollback protection unconfirmed")
+				}
+				return err
+			})
 		})
 	}, func() error {
 		if err := rollbackContext().Err(); err != nil {
@@ -265,7 +303,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	return nil
 }
 
-func stopForRollback(keep bool, query func() (svc.Status, error), request func() (control.Response, error), stop func() error) error {
+func stopForRollback(keep bool, query func() (svc.Status, error), request func() (control.Response, error), stop func(string, bool) error) error {
+	var transaction string
+	var required bool
 	if keep {
 		state, err := query()
 		if err != nil {
@@ -277,11 +317,14 @@ func stopForRollback(keep bool, query func() (svc.Status, error), request func()
 		if state.State != svc.Running {
 			return fmt.Errorf("rollback service state is unstable")
 		}
-		if _, err := request(); err != nil {
-			return fmt.Errorf("prepare rollback hold: %w", err)
+		a, err := request()
+		if err != nil || a.UpdateTransaction == "" {
+			return fmt.Errorf("rollback hold unconfirmed: %v", err)
 		}
+		required = updateProtectionRequired(a.Status)
+		transaction = a.UpdateTransaction
 	}
-	return stop()
+	return stop(transaction, required)
 }
 
 // requestUpdateHold asks the running service, over the administrator-only
@@ -297,11 +340,54 @@ func requestUpdateHold(ctx context.Context, s *mgr.Service) (control.Response, e
 	}
 	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	answer, err := control.CallServiceReadiness(probe, status.ProcessId, control.Request{Command: "prepare_update"})
-	if err == nil && answer.Instance == "" {
-		return control.Response{}, fmt.Errorf("missing readiness service instance")
+	return negotiateUpdateHold(func(r control.Request) (control.Response, error) {
+		return control.CallServiceReadiness(probe, status.ProcessId, r)
+	}, func() (control.Response, error) {
+		return control.CallService(probe, control.Request{Command: "capabilities"})
+	})
+}
+
+func negotiateUpdateHold(call func(control.Request) (control.Response, error), capabilities func() (control.Response, error)) (control.Response, error) {
+	hello, err := call(control.Request{Command: "hello"})
+	if err != nil || validateRepairHello(hello) != nil {
+		return control.Response{}, fmt.Errorf("could not verify readiness hello")
+	}
+	if !hello.UpdateStopSupported {
+		// Earlier prepare-capable builds arm an ordinary SCM stop. Detect
+		// them before issuing a prepare that this updater cannot consume.
+		caps, err := capabilities()
+		if err != nil || caps.Version != control.Version || caps.Instance != hello.Instance || caps.Capabilities == nil || caps.Capabilities.KillSwitchUpdateHold {
+			return control.Response{}, fmt.Errorf("installed service lacks transactional update stop")
+		}
+	}
+	r := control.Request{Command: "prepare_update"}
+	if hello.UpdateStopSupported {
+		r.ID = rand.Text()
+	}
+	answer, err := call(r)
+	if answer.Instance != hello.Instance || answer.Version != control.Version {
+		return control.Response{}, fmt.Errorf("update preparation identity changed")
+	}
+	if hello.UpdateStopSupported {
+		if err != nil || answer.ID != r.ID || answer.UpdateTransaction != r.ID {
+			return control.Response{}, fmt.Errorf("transactional update preparation unconfirmed")
+		}
+	} else if err == nil || answer.Error != "invalid_request" || answer.UpdateTransaction != "" {
+		return control.Response{}, fmt.Errorf("legacy service preparation unconfirmed")
 	}
 	return answer, err
+}
+
+func verifyRetainedUpdate(status core.Status, expected, verified string) error {
+	if expected != "" && status.HasUpdateHold() && status.ResidualProfile == expected && verified == expected {
+		return nil
+	}
+	return fmt.Errorf("updated service protection unconfirmed")
+}
+
+func updateProtectionRequired(status core.Status) bool {
+	return status.KillSwitch == core.KillSwitchActive || status.KillSwitch == core.KillSwitchHolding ||
+		status.KillSwitch == core.KillSwitchResidual && status.ResidualReason == core.ResidualUpdate
 }
 
 // updateHoldMessage reports whether the installed service keeps kill switch
@@ -316,13 +402,10 @@ func updateHoldMessage(a control.Response, err error) (bool, string, error) {
 		}
 		return false, "", fmt.Errorf("could not confirm the kill switch update hold; service stop was not requested: %w", err)
 	}
-	switch a.Status.KillSwitch {
-	case core.KillSwitchActive, core.KillSwitchHolding:
-		return true, "Kill switch protection is kept during the update.", nil
-	case core.KillSwitchResidual:
-		if a.Status.ResidualReason == core.ResidualUpdate {
-			return true, "Kill switch protection is kept during the update.", nil
-		}
+	if updateProtectionRequired(a.Status) {
+		return true, "Kill switch protection requested for the update.", nil
+	}
+	if a.Status.KillSwitch == core.KillSwitchResidual {
 		return false, "Residual kill switch protection stays installed during the update.", nil
 	}
 	return false, "", nil

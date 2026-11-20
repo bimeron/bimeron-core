@@ -19,7 +19,7 @@ const updateHoldFile = "kill-switch-update-hold.json"
 
 // serviceRecordFiles are files the running service may leave in the
 // installation directory.
-var serviceRecordFiles = []string{updateHoldFile, updateHoldFile + ".new"}
+var serviceRecordFiles = []string{updateHoldFile, updateHoldFile + ".new", updateHoldFile + ".stop", updateHoldFile + ".stop.new"}
 
 // removeServiceFiles deletes installed service files from dir. Missing files
 // are tolerated so an interrupted uninstall can be resumed. Only regular files

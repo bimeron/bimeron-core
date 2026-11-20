@@ -210,7 +210,8 @@ func (e *Engine) Stats() telemetry.Snapshot {
 }
 
 type runResult struct {
-	done chan struct{}
+	writeUpdateHold func() error // set under mu before teardown commits to retention
+	done            chan struct{}
 	// acquired is closed once Acquire has returned or the run ended earlier.
 	acquired chan struct{}
 	err      error
@@ -494,22 +495,39 @@ func (e *Engine) MarkAbandon() {
 }
 
 // MarkUpdateAbandon waits for any acquiring or switching run, then records the
-// owner while teardown is excluded. A failed record still retains protection.
+// owner when its adapter has closed, before releasing the session lock.
 func (e *Engine) MarkUpdateAbandon(record func(string) error) error {
+	return e.MarkPreparedUpdate(record, func() bool { return true }, nil)
+}
+
+func (e *Engine) MarkPreparedUpdate(record func(string) error, valid func() bool, renew func() error) error {
 	e.lifecycle.Lock()
 	defer e.lifecycle.Unlock()
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if !valid() {
+		return errors.New("update preparation expired")
+	}
+	if !e.protected && renew != nil {
+		if err := renew(); err != nil {
+			return err
+		}
+	}
 	e.markAbandonLocked()
 	if e.abandon && e.protected && !e.stopRequested {
-		if record == nil {
-			return errors.New("update hold record unavailable")
+		profile := e.status.Session.ProfileID
+		e.runResult.writeUpdateHold = func() error {
+			var err error
+			if record == nil {
+				err = errors.New("update hold record unavailable")
+			} else {
+				err = record(profile)
+			}
+			if err != nil && e.opts.UpdateHold != nil {
+				err = errors.Join(err, e.opts.UpdateHold.Clear())
+			}
+			return err
 		}
-		err := record(e.status.Session.ProfileID)
-		if err != nil && e.opts.UpdateHold != nil {
-			err = errors.Join(err, e.opts.UpdateHold.Clear())
-		}
-		return err
 	}
 	return nil
 }
@@ -652,6 +670,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.mu.Lock()
 		handover := e.handover
 		abandon := e.abandon
+		writeHold := r.writeUpdateHold
 		e.protected = false // teardown has committed to its retention decision
 		e.mu.Unlock()
 		// Protection outlives the run only for a handover or a failed cleanup,
@@ -659,6 +678,12 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		retained := owner != nil && (handover || abandon || cleanupFailed(result))
 		if retained {
 			owner.RetainProtection()
+		}
+		if retained && writeHold != nil && !cleanupFailed(result) {
+			if err := writeHold(); err != nil {
+				result = errors.Join(result, err)
+				r.settled = false // SCM must observe the marker failure through Stop.
+			}
 		}
 		release() // includes OS-thread-owned session lock; runs on this goroutine.
 		if owner != nil && !retained && owner.ReleaseError() != nil && result == nil {

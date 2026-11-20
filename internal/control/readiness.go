@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -66,18 +67,26 @@ func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Reque
 		return
 	}
 	a := s.readinessAnswerFor(r)
+	var renewal func(string) error
+	if a.Status.ResidualReason == core.ResidualUpdate && s.RenewUpdateHold != nil {
+		renewal = s.RenewUpdateHold(a.Status.ResidualProfile)
+	}
+	a.Status.ResidualProfile = ""
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
 		return
 	}
+	if r.Command == "prepare_update" && a.Error == "" {
+		s.cancelUpdateHold()
+	}
 	if err := reply(a); err == nil && a.Error == "" && r.Command == "prepare_update" {
-		s.armUpdateHold(&updateHold{until: s.now().Add(UpdateHoldWindow), peer: peer})
+		s.armUpdateHold(&updateHold{until: s.now().Add(UpdateHoldWindow), peer: peer, transaction: a.UpdateTransaction, renew: renewal})
 		peer = nil
 	}
 }
 
 func (s *Server) readinessAnswerFor(r Request) Response {
 	a := Response{Version: Version, Instance: s.instance}
-	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update") || r.ID != "" || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
+	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update") || (r.Command != "prepare_update" && r.ID != "") || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
 		a.Error = "invalid_request"
 		return a
 	}
@@ -85,13 +94,21 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 	case "hello":
 		b := s.build()
 		a.Core = &b
+		a.UpdateStopSupported = true
 	case "prepare_update":
 		// The updater asks to keep kill switch protection on the next
 		// service stop (ADR 0041). Only administrators reach this pipe.
+		if len(r.ID) < 26 || len(r.ID) > 64 || strings.Trim(r.ID, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") != "" {
+			a.Error = "invalid_request"
+			return a
+		}
+		a.ID = r.ID
+		a.UpdateTransaction = r.ID
 		status := s.engine.Status()
 		a.Status = core.Status{State: status.State, KillSwitch: status.KillSwitch}
 		if status.HasUpdateHold() {
 			a.Status.ResidualReason = core.ResidualUpdate
+			a.Status.ResidualProfile = status.ResidualProfile
 		}
 	default:
 		a.Status = core.Status{State: s.engine.Status().State}
@@ -103,35 +120,39 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 // service stop it applies to.
 const UpdateHoldWindow = time.Minute
 
-// StopForUpdate is called by the service before it handles an SCM stop. When
-// an unexpired prepare_update hold is armed, it consumes the hold, records
-// the profile whose kill switch protection the run owns, marks the session
-// abandoned so that its protection stays installed, and reports true. A
-// user's stop that already ended the run leaves nothing to keep.
-func (s *Server) StopForUpdate(record func(profileID string) error) (bool, error) {
-	requestedAt := s.now()
+// StopPreparedUpdate handles the dedicated SCM control. Rejection leaves the
+// service running. Marker errors after admission are returned through Serve.
+func (s *Server) StopPreparedUpdate(write func(string, string) error) (string, error) {
 	s.command.Lock()
 	defer s.command.Unlock()
-	hold := s.hold
+	h := s.hold
 	s.hold = nil
-	if hold == nil {
-		return false, nil
+	if h == nil {
+		return "", errors.New("missing update preparation")
 	}
-	defer hold.release()
-	// A hold whose updater is gone, for example killed after the request,
-	// must not keep protection for somebody else's stop.
-	if !requestedAt.Before(hold.until) || hold.peer != nil && !hold.peer.Alive() {
-		return false, nil
-	}
+	defer h.release()
+	valid := func() bool { return s.now().Before(h.until) && h.peer != nil && h.peer.Alive() }
 	engine, ok := s.engine.(interface {
-		MarkUpdateAbandon(func(string) error) error
+		MarkPreparedUpdate(func(string) error, func() bool, func() error) error
 	})
-	if !ok {
-		s.AbandonOnExit()
-		return true, errors.New("update hold unavailable")
+	if !ok || !valid() {
+		return "", errors.New("invalid update preparation")
+	}
+	var renew func() error
+	if h.renew != nil {
+		renew = func() error { return h.renew(h.transaction) }
+	}
+	err := engine.MarkPreparedUpdate(func(profile string) error {
+		if write == nil {
+			return errors.New("update marker unavailable")
+		}
+		return write(profile, h.transaction)
+	}, valid, renew)
+	if err != nil {
+		return "", err
 	}
 	s.abandonOnExit.Store(true)
-	return true, engine.MarkUpdateAbandon(record)
+	return h.transaction, nil
 }
 
 // ProcessWatch reports whether a process is still running.
@@ -141,8 +162,10 @@ type ProcessWatch interface {
 }
 
 type updateHold struct {
-	until time.Time
-	peer  ProcessWatch
+	transaction string
+	renew       func(string) error
+	until       time.Time
+	peer        ProcessWatch
 }
 
 func (h *updateHold) release() {

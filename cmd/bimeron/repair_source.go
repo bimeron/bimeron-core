@@ -78,8 +78,13 @@ func validateServiceStatus(a control.Response, instance string, kept bool) error
 	if instance == "" || a.Error != "" || a.Version != control.Version || a.Instance != instance {
 		return fmt.Errorf("service status not ready")
 	}
-	if kept && a.Status.HasUpdateHold() {
-		return nil
+	if kept {
+		if a.Status.HasUpdateHold() {
+			return nil
+		}
+		if a.Status.State == core.Disconnected || (a.Status.KillSwitch != core.KillSwitchActive && a.Status.KillSwitch != core.KillSwitchHolding) {
+			return fmt.Errorf("updated service protection unconfirmed")
+		}
 	}
 	switch a.Status.State {
 	case core.Disconnected, core.Connected, core.Connecting, core.Reconnecting:

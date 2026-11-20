@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,17 +60,89 @@ func TestUpdateStopDuringHandover(t *testing.T) {
 	if err := <-start; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-stopped; err != os.ErrPermission {
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Stop(ctx); !errors.Is(err, os.ErrPermission) {
 		t.Fatal("missing marker error", err)
 	}
 	if id := <-record; id != heldProfile {
 		t.Fatal("recorded wrong owner", id)
 	}
-	if err := e.Stop(ctx); err != nil {
-		t.Fatal(err)
-	}
 	if _, _, retains, installed := next.snapshot(); retains != 1 || !installed {
 		t.Fatal("record failure released filters")
+	}
+}
+
+func TestUpdateHoldRecordsFinalFilterGeneration(t *testing.T) {
+	requireHoldWriter(t)
+	generation := "connected-filter-guids"
+	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) {
+		return fakeSession{close: func() error {
+			generation = "rearmed-filter-guids"
+			return nil
+		}}, nil
+	}}}
+	e := testEngine(b)
+	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json"), filterGeneration: func() (string, error) { return generation, nil }}
+	cfg := killSwitchConfig()
+	cfg.ProfileID = heldProfile
+	ctx := testDeadline(t)
+	if err := e.Start(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, e, Connected)
+	if err := e.MarkUpdateAbandon(func(id string) error {
+		_, releases, retains, _ := b.snapshot()
+		if releases+retains != 0 {
+			return errors.New("session lock already released")
+		}
+		return h.Write(id)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Stop(ctx); err != nil || h.Read() != heldProfile || generation != "rearmed-filter-guids" {
+		t.Fatal("missing final filter identity", err)
+	}
+}
+
+func TestUpdateStopReceiptRequiresSameTransactionAndFilters(t *testing.T) {
+	requireHoldWriter(t)
+	generation := "first"
+	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json"), filterGeneration: func() (string, error) { return generation, nil }}
+	if err := h.WriteTransaction(heldProfile, "first-stop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Finish("foreign", heldProfile); err == nil {
+		t.Fatal("foreign marker accepted")
+	}
+	renew := h.Renew(heldProfile)
+	generation = "other"
+	if err := renew("next-stop"); err == nil {
+		t.Fatal("replaced filters adopted")
+	}
+	generation = "first"
+	if err := renew("next-stop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Finish("next-stop", heldProfile); err != nil {
+		t.Fatal(err)
+	}
+	if profile, err := h.StopOutcome("next-stop"); err != nil || profile != heldProfile {
+		t.Fatal(profile, err)
+	}
+	if _, err := h.StopOutcome("first-stop"); err == nil {
+		t.Fatal("stale receipt accepted")
+	}
+	generation = "replaced"
+	if _, err := h.StopOutcome("next-stop"); err == nil {
+		t.Fatal("foreign generation accepted")
+	}
+	if err := h.Finish("idle", ""); err != nil {
+		t.Fatal(err)
+	}
+	if profile, err := h.StopOutcome("idle"); err != nil || profile != "" {
+		t.Fatal(profile, err)
 	}
 }
 

@@ -50,7 +50,9 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	closeAccepted bool // internal admission result; never serialized
+	UpdateTransaction   string `json:"update_transaction,omitempty"`
+	UpdateStopSupported bool   `json:"update_stop_supported,omitempty"`
+	closeAccepted       bool   // internal admission result; never serialized
 
 	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
@@ -124,6 +126,7 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
+	RenewUpdateHold       func(string) func(string) error
 	// command protects the prepare_update hold for the next service stop.
 	hold *updateHold
 	// PeerProcess, when set, watches the process at the other end of a

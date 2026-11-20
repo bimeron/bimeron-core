@@ -27,6 +27,7 @@ import (
 )
 
 const serviceName = "BimeronCore"
+const stopPreparedUpdate svc.Cmd = 128
 
 type windowsService struct {
 	owner  string
@@ -79,6 +80,19 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	server := control.NewServer(core.New(core.Options{ResidualProtection: true, UpdateHold: hold}))
 	// An update hold lasts only while the updater that asked for it runs.
 	server.PeerProcess = control.PipePeerProcess
+	var transaction, protectedProfile string
+	if hold != nil {
+		server.RenewUpdateHold = func(profile string) func(string) error {
+			renew := hold.Renew(profile)
+			return func(id string) error {
+				if err := renew(id); err != nil {
+					return err
+				}
+				protectedProfile = profile
+				return nil
+			}
+		}
+	}
 	if h.listen == nil {
 		readiness, err := control.ListenServiceReadiness()
 		if err != nil {
@@ -97,6 +111,9 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	for {
 		select {
 		case err := <-done:
+			if err == nil && transaction != "" && hold != nil {
+				holdErr = hold.Finish(transaction, protectedProfile)
+			}
 			if err != nil || holdErr != nil {
 				if log != nil {
 					log.Error(1, "service_cleanup_failed_run_recover")
@@ -108,23 +125,26 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			switch request.Cmd {
 			case svc.Interrogate:
 				changes <- status
-			case svc.Stop, svc.Shutdown:
+			case svc.Stop, svc.Shutdown, stopPreparedUpdate:
 				// Only an SCM stop requested by an updater that asked first
 				// keeps kill switch protection; an OS shutdown never does.
-				if request.Cmd == svc.Stop {
-					var record func(string) error
+				if request.Cmd == stopPreparedUpdate {
+					var record func(string, string) error
 					if hold != nil {
-						record = hold.Write
-					}
-					kept, err := server.StopForUpdate(record)
-					holdErr = errors.Join(holdErr, err)
-					if kept && log != nil {
-						if err != nil {
-							log.Warning(1, "service_update_hold_record_failed")
-						} else {
-							log.Info(1, "Service stopping for an update; kill switch protection kept")
+						record = func(profile, id string) error {
+							if err := hold.WriteTransaction(profile, id); err != nil {
+								return err
+							}
+							protectedProfile = profile
+							return nil
 						}
 					}
+					id, err := server.StopPreparedUpdate(record)
+					if err != nil || id == "" {
+						changes <- status
+						continue
+					}
+					transaction = id
 				}
 				cancel()
 				status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}

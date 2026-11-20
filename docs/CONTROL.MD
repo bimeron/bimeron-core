@@ -208,15 +208,24 @@ version. Core does not show the version that an unverified endpoint claims.
 SCM-reported service process ID before writing. Only administrators can open
 this pipe. It answers `hello`, `status` and `prepare_update`.
 
-`prepare_update` is sent by `service update -keep-kill-switch` immediately
-before it stops the service. It arms a one-shot hold for the next SCM stop
-within 60 seconds, bound to the requesting process (the pipe client). The hold
-lapses when that process has exited, and an IPC `stop` or `shutdown` or a
-newer request cancels it. An OS shutdown never uses it. The reply's
-`Status.KillSwitch` shows whether a run owns protection. For verified residual protection from a previous update, the reply also includes `Status.ResidualReason` set to `update` and omits the profile ID. On the stop, a run
-that owns protection is ended as an owner exit, so its filters stay installed;
-the service records the session's `profile_id` and the digest of the full set of installed WFP rule IDs. The service reports the recorded profile only while the installed rule set matches the digest. A marker write failure retains the filters and reports failed cleanup to SCM. Older
-services answer `invalid_request`. An ambiguous acknowledgement aborts the update before SCM stop. See
+The Windows updater checks `hello.update_stop_supported` before preparing a
+hold. It sends `prepare_update` with a fresh random base32 request ID. The
+acknowledgement echoes both `id` and `update_transaction`. Its kill switch
+status describes the instant of preparation. A previous verified update
+residual is identified by reason `update`; its profile ID stays private.
+
+SCM user control 128 consumes the acknowledgement once. The service checks
+the 60-second deadline and the requesting process after serializing with
+session changes. An expired or cancelled transaction leaves the service
+running. Ordinary SCM stop and shutdown follow their usual cleanup paths.
+IPC stop, IPC shutdown and a newer preparation cancel an unused hold.
+
+The service records the actual protected profile, transaction and digest of
+all installed WFP rule IDs after adapter close, under the session lock. A
+marker write failure keeps filters installed and reports failed cleanup to
+SCM. A successful stop publishes a transaction-specific receipt even for an
+idle session. The updater checks this receipt before replacing the executable
+and verifies retained protection again during readiness. See
 [ADR 0041](adr/0041-kill-switch-across-service-updates.md).
 
 ### Windows console daemon pipe
