@@ -161,7 +161,7 @@ Start the same profile again to resume the VPN; until then, traffic stays
 blocked, also across a reboot. An installed service without
 `kill_switch_update_hold`, or one that cannot be reached, releases protection
 as before, and the command prints a warning. If the updated service fails its
-check, the command asks it for the same hold before the rollback stop. Linux
+check, the command asks the running replacement for a fresh hold before the rollback stop, even if the original service had no protection. If preparation fails, rollback stops before sending the stop request and retains the backup. A verified update hold also survives a second opt-in update. Linux
 rejects the flag. Uninstall removes the record.
 The owner, automatic-start setting, and recovery settings are preserved.
 Wintun DLL and its license are not replaced: this updates the core, not the driver.

@@ -8,10 +8,74 @@ import (
 	"testing"
 )
 
+var requireHoldWriter = func(*testing.T) {}
+
 var heldProfile = strings.Repeat("0f", 32)
+
+// A handover blocks in Acquire while the update stop arrives. Only the new
+// run can be recorded after the handover completes.
+type gatedHoldBackend struct {
+	*protectedBackend
+	entered, proceed chan struct{}
+}
+
+func (b *gatedHoldBackend) Acquire(ctx context.Context) (func(), error) {
+	close(b.entered)
+	select {
+	case <-b.proceed:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return b.protectedBackend.Acquire(ctx)
+}
+
+func TestUpdateStopDuringHandover(t *testing.T) {
+	ctx := testDeadline(t)
+	old := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { return fakeSession{}, nil }}}
+	next := &gatedHoldBackend{protectedBackend: &protectedBackend{fakeBackend: old.fakeBackend}, entered: make(chan struct{}), proceed: make(chan struct{})}
+	e := testEngine(old)
+	cfg := killSwitchConfig()
+	if err := e.Start(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	e.factory = func(SessionConfig) backend { return next }
+	cfg.ProfileID = heldProfile
+	start := make(chan error, 1)
+	go func() { start <- e.Start(ctx, cfg) }()
+	select {
+	case <-next.entered:
+	case <-ctx.Done():
+		t.Fatal("handover never entered acquire")
+	}
+	record := make(chan string, 1)
+	stopped := make(chan error, 1)
+	attempting := make(chan struct{})
+	go func() {
+		close(attempting)
+		stopped <- e.MarkUpdateAbandon(func(id string) error { record <- id; return os.ErrPermission })
+	}()
+	<-attempting
+	close(next.proceed)
+	if err := <-start; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != os.ErrPermission {
+		t.Fatal("missing marker error", err)
+	}
+	if id := <-record; id != heldProfile {
+		t.Fatal("recorded wrong owner", id)
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, retains, installed := next.snapshot(); retains != 1 || !installed {
+		t.Fatal("record failure released filters")
+	}
+}
 
 // The record stores only a valid profile id and survives a reread.
 func TestUpdateHoldRecord(t *testing.T) {
+	requireHoldWriter(t)
 	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json")}
 	if h.Read() != "" || h.Clear() != nil {
 		t.Fatal("missing record misread")
@@ -38,6 +102,7 @@ func TestUpdateHoldRecord(t *testing.T) {
 // tell residual from owned protection; a run that arms protection consumes
 // it, and it is removed once no protection is installed.
 func TestResidualProtectionReportsUpdateHold(t *testing.T) {
+	requireHoldWriter(t)
 	h := &UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json")}
 	if err := h.Write(heldProfile); err != nil {
 		t.Fatal(err)

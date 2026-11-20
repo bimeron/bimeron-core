@@ -213,9 +213,9 @@ before it stops the service. It arms a one-shot hold for the next SCM stop
 within 60 seconds, bound to the requesting process (the pipe client). The hold
 lapses when that process has exited, and an IPC `stop` or `shutdown` or a
 newer request cancels it. An OS shutdown never uses it. The reply's
-`Status.KillSwitch` shows whether a run owns protection. On the stop, a run
+`Status.KillSwitch` shows whether a run owns protection. For verified residual protection from a previous update, the reply also includes `Status.ResidualReason` set to `update` and omits the profile ID. On the stop, a run
 that owns protection is ended as an owner exit, so its filters stay installed;
-the service records the session's `profile_id` and exits cleanly. Older
+the service records the session's `profile_id`. A marker write failure retains the filters and reports failed cleanup to SCM. Older
 services answer `invalid_request`. See
 [ADR 0041](adr/0041-kill-switch-across-service-updates.md).
 

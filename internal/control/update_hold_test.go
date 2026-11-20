@@ -38,6 +38,59 @@ func (e *holdEngine) MarkAbandon() {
 	e.abandoned = true
 }
 
+func (e *holdEngine) MarkUpdateAbandon(record func(string) error) error {
+	e.MarkAbandon()
+	if record != nil && (e.status.KillSwitch == core.KillSwitchActive || e.status.KillSwitch == core.KillSwitchHolding) {
+		return record(e.status.Session.ProfileID)
+	}
+	return nil
+}
+
+func TestUpdateStopSerializesRecordWithIPC(t *testing.T) {
+	e := &holdEngine{status: heldStatus(core.KillSwitchActive)}
+	s := NewServer(e)
+	s.readinessResponse(Request{Version: Version, Command: "prepare_update"})
+	entered, resume := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.StopForUpdate(func(string) error { close(entered); <-resume; return nil })
+		done <- err
+	}()
+	<-entered
+	unlocked := s.command.TryLock()
+	if unlocked {
+		s.command.Unlock()
+	}
+	close(resume)
+	if err := <-done; unlocked || err != nil {
+		t.Fatal("IPC command lock during marker write", unlocked, err)
+	}
+}
+
+func TestRejectedPrepareReleasesWatch(t *testing.T) {
+	s := NewServer(&holdEngine{})
+	closed := 0
+	a := s.readinessAnswer(Request{Version: Version, Command: "prepare_update", Config: "extra"}, fakeWatch{alive: true, closed: &closed})
+	if a.Error != "invalid_request" || closed != 1 {
+		t.Fatal(a, closed)
+	}
+	if kept, _ := s.StopForUpdate(nil); kept {
+		t.Fatal("invalid request armed hold")
+	}
+}
+
+func TestPrepareRecognizesOnlyVerifiedResidual(t *testing.T) {
+	e := &holdEngine{status: core.Status{State: core.Failed, KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate, LastError: "cleanup_failed_run_recover"}}
+	s := NewServer(e)
+	for _, id := range []string{"", "invalid", strings.Repeat("ab", 32)} {
+		e.status.ResidualProfile = id
+		a := s.readinessResponse(Request{Version: Version, Command: "prepare_update"})
+		if (a.Status.ResidualReason == core.ResidualUpdate) != (len(id) == 64) || a.Status.ResidualProfile != "" {
+			t.Fatal(a)
+		}
+	}
+}
+
 func heldStatus(killSwitch string) core.Status {
 	return core.Status{State: core.Connected, KillSwitch: killSwitch, Session: &core.SessionInfo{ProfileID: strings.Repeat("ab", 32)}}
 }

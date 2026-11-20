@@ -490,13 +490,37 @@ func (e *Engine) Abandon(ctx context.Context) error {
 func (e *Engine) MarkAbandon() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.markAbandonLocked()
+}
+
+// MarkUpdateAbandon waits for any acquiring or switching run, then records the
+// owner while teardown is excluded. A failed record still retains protection.
+func (e *Engine) MarkUpdateAbandon(record func(string) error) error {
+	e.lifecycle.Lock()
+	defer e.lifecycle.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.markAbandonLocked()
+	if e.abandon && e.protected && !e.stopRequested {
+		if record == nil {
+			return errors.New("update hold record unavailable")
+		}
+		err := record(e.status.Session.ProfileID)
+		if err != nil && e.opts.UpdateHold != nil {
+			err = errors.Join(err, e.opts.UpdateHold.Clear())
+		}
+		return err
+	}
+	return nil
+}
+
+func (e *Engine) markAbandonLocked() {
 	e.exiting = true
 	userStop := e.stopRequested && !e.handover
 	if e.active && !userStop {
 		e.abandon = true
 	}
 }
-func (e *Engine) abandoned() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.abandon }
 
 // Stop is idempotent. A caller timeout ends only its wait: cleanup continues in
 // the background, and another Start remains forbidden until it has finished.
@@ -627,10 +651,12 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		defer finished()
 		e.mu.Lock()
 		handover := e.handover
+		abandon := e.abandon
+		e.protected = false // teardown has committed to its retention decision
 		e.mu.Unlock()
 		// Protection outlives the run only for a handover or a failed cleanup,
 		// which needs explicit recovery; every other exit is an explicit stop.
-		retained := owner != nil && (handover || e.abandoned() || cleanupFailed(result))
+		retained := owner != nil && (handover || abandon || cleanupFailed(result))
 		if retained {
 			owner.RetainProtection()
 		}

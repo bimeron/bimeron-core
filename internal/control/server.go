@@ -124,9 +124,8 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
-	// hold is the prepare_update hold for the next service stop, if armed.
-	holdMu sync.Mutex
-	hold   *updateHold
+	// command protects the prepare_update hold for the next service stop.
+	hold *updateHold
 	// PeerProcess, when set, watches the process at the other end of a
 	// readiness connection; a hold then lasts only while that process lives.
 	PeerProcess func(net.Conn) ProcessWatch

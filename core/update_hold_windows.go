@@ -3,6 +3,8 @@
 package core
 
 import (
+	"errors"
+	"io"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -22,14 +24,23 @@ func writeHoldFile(path string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	h, err := windows.CreateFile(name, windows.GENERIC_WRITE, 0, &sa, windows.CREATE_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	// Discard the directory entry without opening an existing file with its old DACL.
+	if err := windows.DeleteFile(name); err != nil && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		return err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_WRITE, 0, &sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(h)
+
 	var written uint32
 	if err := windows.WriteFile(h, b, &written, nil); err != nil {
+		windows.CloseHandle(h)
 		return err
 	}
-	return nil
+	if int(written) != len(b) {
+		windows.CloseHandle(h)
+		return io.ErrShortWrite
+	}
+	return windows.CloseHandle(h)
 }

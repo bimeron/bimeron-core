@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"golang.org/x/sys/windows/svc"
 	"strings"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestUpdateHoldMessage(t *testing.T) {
 	}{
 		{"active", control.Response{Status: core.Status{KillSwitch: core.KillSwitchActive}}, nil, true, "is kept"},
 		{"holding", control.Response{Status: core.Status{KillSwitch: core.KillSwitchHolding}}, nil, true, "is kept"},
+		{"existing hold", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate}}, nil, true, "is kept"},
 		{"residual", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual}}, nil, false, "stays installed"},
 		{"no protection", control.Response{}, nil, false, ""},
 		{"old service", control.Response{Error: "invalid_request"}, errors.New("invalid_request"), false, "cannot keep"},
@@ -35,6 +37,22 @@ func TestUpdateHoldMessage(t *testing.T) {
 		}
 		if !tc.kept && tc.err != nil && !strings.Contains(message, "released") {
 			t.Fatal(tc.name, "warning does not say protection is released", message)
+		}
+	}
+}
+
+func TestOptInRollbackRequiresFreshPreparation(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		prepared, stopped := false, false
+		err := stopForRollback(true, func() (svc.Status, error) { return svc.Status{State: svc.Running}, nil }, func() (control.Response, error) {
+			prepared = true
+			if fail {
+				return control.Response{}, errors.New("readiness unavailable")
+			}
+			return control.Response{}, nil
+		}, func() error { stopped = true; return nil })
+		if !prepared || stopped == fail || (err != nil) != fail {
+			t.Fatal(prepared, stopped, err)
 		}
 	}
 }

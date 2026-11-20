@@ -224,12 +224,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		}, func() error {
 			// A client may already have restarted the held profile on the
 			// new service; keep that protection across the rollback stop.
-			if kept {
-				if _, message := updateHoldMessage(requestUpdateHold(rollbackContext(), s)); message != "" {
-					fmt.Println("rollback: " + message)
-				}
-			}
-			return stopUpdateServiceContext(rollbackContext(), s)
+			return stopForRollback(expect.keepKillSwitch && !forceActivate, s.Query, func() (control.Response, error) {
+				return requestUpdateHold(rollbackContext(), s)
+			}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
 		})
 	}, func() error {
 		if err := rollbackContext().Err(); err != nil {
@@ -264,6 +261,25 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	return nil
 }
 
+func stopForRollback(keep bool, query func() (svc.Status, error), request func() (control.Response, error), stop func() error) error {
+	if keep {
+		state, err := query()
+		if err != nil {
+			return err
+		}
+		if state.State == svc.Stopped {
+			return windowsUpdateCleanupProven(state)
+		}
+		if state.State != svc.Running {
+			return fmt.Errorf("rollback service state is unstable")
+		}
+		if _, err := request(); err != nil {
+			return fmt.Errorf("prepare rollback hold: %w", err)
+		}
+	}
+	return stop()
+}
+
 // requestUpdateHold asks the running service, over the administrator-only
 // readiness pipe bound to the SCM-reported process, to keep kill switch
 // protection on the next stop (ADR 0041).
@@ -296,6 +312,9 @@ func updateHoldMessage(a control.Response, err error) (bool, string) {
 	case core.KillSwitchActive, core.KillSwitchHolding:
 		return true, "Kill switch protection is kept during the update."
 	case core.KillSwitchResidual:
+		if a.Status.ResidualReason == core.ResidualUpdate {
+			return true, "Kill switch protection is kept during the update."
+		}
 		return false, "Residual kill switch protection stays installed during the update."
 	}
 	return false, ""

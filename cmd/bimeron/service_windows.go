@@ -93,10 +93,11 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	if log != nil {
 		log.Info(1, "Service ready; VPN disconnected")
 	}
+	var holdErr error
 	for {
 		select {
 		case err := <-done:
-			if err != nil {
+			if err != nil || holdErr != nil {
 				if log != nil {
 					log.Error(1, "service_cleanup_failed_run_recover")
 				}
@@ -111,15 +112,18 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 				// Only an SCM stop requested by an updater that asked first
 				// keeps kill switch protection; an OS shutdown never does.
 				if request.Cmd == svc.Stop {
-					record := func(string) error { return nil }
+					var record func(string) error
 					if hold != nil {
 						record = hold.Write
 					}
-					if kept, err := server.StopForUpdate(record); kept && log != nil {
+					kept, err := server.StopForUpdate(record)
+					holdErr = errors.Join(holdErr, err)
+					if kept && log != nil {
 						if err != nil {
 							log.Warning(1, "service_update_hold_record_failed")
+						} else {
+							log.Info(1, "Service stopping for an update; kill switch protection kept")
 						}
-						log.Info(1, "Service stopping for an update; kill switch protection kept")
 					}
 				}
 				cancel()
