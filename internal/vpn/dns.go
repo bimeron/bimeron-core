@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"bimeron/internal/dnsconfig"
+
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 	"golang.getoutline.org/sdk/transport"
 	"golang.org/x/net/dns/dnsmessage"
@@ -76,7 +78,7 @@ func (r DNSResolver) Exchange(ctx context.Context, query []byte, tcp bool) ([]by
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {
-		timeout = 2 * time.Second
+		timeout = dnsconfig.ExchangeTimeout
 	}
 	var failures []string
 	for i, server := range r.Servers {

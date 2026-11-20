@@ -225,6 +225,7 @@ Example `hello` response from Windows (capability values vary by platform;
     "reconnect_now": true,
     "kill_switch_hold": true,
     "socks_auth": true,
+    "default_dns": ["1.1.1.1", "1.0.0.1"],
     "wireguard": {"supported": true, "experimental": true, "protocols": ["wireguard", "amneziawg"], "awg_versions": ["1.0", "1.5", "2.0", "3.0", "3.1"], "uri_schemes": ["vpn", "wireguard", "wg"], "allowed_ips_modes": ["direct", "block", "ignore", "only"], "document_api": 1}
   }
 }
@@ -243,6 +244,12 @@ older cores omit them.
 SOCKS5 listener (see [Local proxy authentication](#local-proxy-authentication)).
 An older core omits it and rejects the `ListenUsername`/`ListenPassword`
 options as unknown.
+
+`default_dns` lists, in priority order, the DNS servers Core uses when a
+profile omits `[Interface] DNS`. Show it as the default instead of a
+hard-coded value, and omit the option when the user keeps the default. It
+does not apply to `[IKEv2]` profiles, which take DNS from the native
+connection. An older core omits the field; its default is `1.1.1.1` alone.
 
 `access_conversion` reports the `bimeron document` operations `access_to_fields`
 and `access_to_uri`, which convert `[AccessKey]` between a share URI and explicit
@@ -493,7 +500,8 @@ On macOS, use `KillSwitch = false`: a profile requesting it fails at start with
 - Keys are stored in plaintext: restrict ACLs and permissions, and keep keys out
   of logs, analytics, Git, and crash reports.
 - `DNS` takes 1 to 4 distinct unicast IPv4 addresses separated by commas; the
-  default is `1.1.1.1`.
+  default is `1.1.1.1, 1.0.0.1`. To follow the Core default, omit the option
+  instead of writing it.
 - `Routing.Default` is `proxy`, `direct`, or `block`. `Rule.CIDR` accepts single
   IPs, CIDR ranges, and lists. Rules are checked top to bottom until the first
   match. More specific existing OS routes can bypass the tunnel.

@@ -93,12 +93,30 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 		if err != nil {
 			return nil, err
 		}
-		_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
-		if n, writeErr := conn.Write(header); writeErr != nil || n != len(header) {
-			_ = conn.Close()
-			return nil, fmt.Errorf("VLESS request failed")
+		if x, ok := conn.(*xhttpConn); ok && (x.mode == "stream-one" || x.mode == "stream-up") {
+			// The upload pipe has no write deadline. Close it on setup cancellation,
+			// then transfer lifetime ownership to the caller after the header write.
+			setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+			stop := context.AfterFunc(setup, func() { _ = x.Close() })
+			n, writeErr := x.Write(header)
+			stop()
+			setupErr := setup.Err()
+			cancel()
+			if setupErr != nil || writeErr != nil || n != len(header) {
+				_ = x.Close()
+				if setupErr != nil {
+					return nil, setupErr
+				}
+				return nil, fmt.Errorf("VLESS request failed")
+			}
+		} else {
+			_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+			if n, writeErr := conn.Write(header); writeErr != nil || n != len(header) {
+				_ = conn.Close()
+				return nil, fmt.Errorf("VLESS request failed")
+			}
+			_ = conn.SetWriteDeadline(time.Time{})
 		}
-		_ = conn.SetWriteDeadline(time.Time{})
 		owned := &streamConn{StreamConn: &plainConn{Conn: conn}, owner: c}
 		c.mu.Lock()
 		if c.closed {

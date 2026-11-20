@@ -19,6 +19,7 @@ type packet struct {
 
 type packetConn struct {
 	owner                       *Client
+	session                     *session
 	conn                        *quic.Conn
 	id                          uint16
 	ctx                         context.Context
@@ -199,22 +200,17 @@ func (p *packetConn) Close() error {
 		p.mu.Unlock()
 		return nil
 	}
+	defer p.mu.Unlock()
 	p.closed = true
 	p.cancel()
-	p.mu.Unlock()
 	p.owner.mu.Lock()
-	if p.owner.packets[p.id] == p {
-		delete(p.owner.packets, p.id)
+	if p.session.packets[p.id] == p {
+		delete(p.session.packets, p.id)
+		if !p.owner.closed && p.conn.Context().Err() == nil {
+			p.session.dissociates <- p.id
+		}
 	}
 	p.owner.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	stream, err := p.conn.OpenUniStreamSync(ctx)
-	if err == nil {
-		frame := binary.BigEndian.AppendUint16([]byte{version, 3}, p.id)
-		_, _ = stream.Write(frame)
-		_ = stream.Close()
-	}
 	return nil
 }
 

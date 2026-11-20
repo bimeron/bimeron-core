@@ -109,6 +109,11 @@ type Tunnel struct {
 	ListenPassword string
 }
 
+// DefaultDNS is the [Interface] DNS value used when a profile omits it:
+// two servers in priority order, so a query can fall back when the first
+// one is unreachable.
+const DefaultDNS = "1.1.1.1, 1.0.0.1"
+
 var interfaceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`)
 
 func readFile(path string) ([]byte, error) {
@@ -129,7 +134,7 @@ func parse(b []byte) (*File, error) {
 	if !utf8.Valid(b) {
 		return nil, problem.New("file_not_utf8", "config must be UTF-8")
 	}
-	c := &File{Tunnel: Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: "1.1.1.1", Listen: "127.0.0.1:1080"}, Routing: routing.Config{Default: routing.Proxy}, lines: map[string]int{}}
+	c := &File{Tunnel: Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: DefaultDNS, Listen: "127.0.0.1:1080"}, Routing: routing.Config{Default: routing.Proxy}, lines: map[string]int{}}
 	section := ""
 	sections := map[string]bool{}
 	fields := map[string]bool{}

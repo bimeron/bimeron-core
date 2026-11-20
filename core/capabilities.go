@@ -41,6 +41,10 @@ type Capabilities struct {
 	// SOCKSAuth reports optional RFC 1929 username/password authentication
 	// on the proxy-mode listener ([Interface] ListenUsername/ListenPassword).
 	SOCKSAuth bool `json:"socks_auth"`
+	// DefaultDNS lists, in priority order, the [Interface] DNS servers Core
+	// uses when a profile omits DNS. GUIs should show it instead of a
+	// hard-coded value; older cores omit it and default to 1.1.1.1 only.
+	DefaultDNS []string `json:"default_dns"`
 	// WireGuard describes WireGuard and AmneziaWG upstream support. Older
 	// daemons omit it; treat absence as unsupported.
 	WireGuard *WireGuardCapabilities `json:"wireguard,omitempty"`
@@ -91,7 +95,7 @@ type IKEv2Capabilities struct {
 // deferred. macOS reports no kill switch until one is implemented and validated
 // on real hardware.
 func PlatformCapabilities() Capabilities {
-	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport(), SOCKSAuth: true}
+	c := Capabilities{GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: "v2ray-protobuf", Platform: runtime.GOOS, Proxy: true, IPv4: true, IPv6: true, IPSplit: true, Daemon: true, ExplicitAccess: slices.Clone(config.ExplicitAccess), AccessConversion: true, ReconnectNow: true, WireGuard: WireGuardSupport(), SOCKSAuth: true, DefaultDNS: slices.Clone(DefaultConfig().DNS)}
 	if runtime.GOOS == "windows" {
 		c.IKEv2 = IKEv2Capabilities{Supported: true, ForegroundOnly: true, PreconfiguredProfile: true, AdministratorRequired: true, KillSwitch: true, DNSProtection: true}
 	}

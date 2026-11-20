@@ -203,7 +203,7 @@ func loadWireGuardBytes(b []byte, path string) (*File, error) {
 	}
 	c := &File{
 		Version: 1, Name: name,
-		Tunnel:         Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: "1.1.1.1", Listen: "127.0.0.1:1080"},
+		Tunnel:         Tunnel{Mode: "vpn", IPv6: "enable", Name: "Bimeron", MTU: 1420, DNS: DefaultDNS, Listen: "127.0.0.1:1080"},
 		Routing:        routing.Config{Default: routing.Proxy},
 		AllowedIPsMode: "only",
 		Access:         Access{KeyFile: path},

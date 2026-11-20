@@ -1,6 +1,7 @@
 package linuxnet
 
 import (
+	"bimeron/internal/dnsconfig"
 	"bimeron/internal/routing"
 	"bytes"
 	"context"
@@ -259,7 +260,7 @@ func (m *Manager) Guard(ctx context.Context, name string, p *routing.Policy, dis
 	return nil
 }
 
-func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routing.Policy, disableIPv6, guard bool) (err error) {
+func (m *Manager) Configure(ctx context.Context, name string, mtu, dnsServerCount int, p *routing.Policy, disableIPv6, guard bool) (err error) {
 	old, err := m.Load()
 	if err != nil {
 		return err
@@ -350,10 +351,10 @@ func (m *Manager) Configure(ctx context.Context, name string, mtu int, p *routin
 			}
 		}
 	}
-	return m.configureDNS(ctx, s)
+	return m.configureDNS(ctx, s, dnsServerCount)
 }
 
-func (m *Manager) configureDNS(ctx context.Context, s *State) error {
+func (m *Manager) configureDNS(ctx context.Context, s *State, dnsServerCount int) error {
 	// Use resolved only when applications actually use its stub/uplink resolv.conf.
 	path, err := filepath.EvalSymlinks(m.Resolver)
 	if err != nil {
@@ -402,7 +403,10 @@ func (m *Manager) configureDNS(ctx context.Context, s *State) error {
 	s.DNSPath = path
 	s.DNSOriginal = original
 	s.DNSMode = uint32(info.Mode().Perm())
-	s.DNSInstalled = []byte("# Bimeron Core; restored on stop/recover\nnameserver 198.18.0.2\noptions timeout:2 attempts:2\n")
+	// Keep the client socket open through both transport passes and reply delivery.
+	budget := 2*time.Duration(dnsServerCount)*dnsconfig.ExchangeTimeout + time.Second
+	seconds := (budget + time.Second - 1) / time.Second
+	s.DNSInstalled = []byte(fmt.Sprintf("# Bimeron Core; restored on stop/recover\nnameserver 198.18.0.2\noptions timeout:%d attempts:2\n", int(seconds)))
 	if err = m.save(s); err != nil {
 		return err
 	}

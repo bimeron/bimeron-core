@@ -680,7 +680,7 @@ This section is optional; missing options receive defaults.
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
 | `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853), LLMNR (5355) and NetBIOS names (UDP 137) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
-| `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
+| `DNS` | `1.1.1.1, 1.0.0.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
 | `ListenUsername` | empty | Optional username for the local SOCKS5 listener (RFC 1929). Set together with `ListenPassword`. 1–255 bytes, no control characters. Unused in `vpn` mode. |
 | `ListenPassword` | empty | Password for `ListenUsername`. Same limits. When both are empty, the listener requires no authentication. |
@@ -721,8 +721,14 @@ System VPN DNS always goes through the selected upstream transport, regardless o
 Each query starts with the first server. A network error, timeout (2 seconds per
 server), or error response such as `SERVFAIL` or `REFUSED` causes a retry with
 the next server. `NXDOMAIN` is final and does not trigger fallback. If every
-server is unavailable, the client receives `SERVFAIL`. DNS over UDP and TCP is
-supported. If `DNS` is omitted, `1.1.1.1` is used. IPv6 server addresses,
+server is unavailable, the client receives `SERVFAIL`. Over UDP each server is
+tried in turn before the same order is tried over TCP. With two servers, UDP
+can take 4 seconds before TCP starts, and TCP can take another 4 seconds.
+When Core writes Linux `resolv.conf`, each client attempt allows 4 seconds per
+configured server plus 1 second for reply delivery (5 seconds for one server,
+9 for two). This keeps the Go resolver socket open for a late TCP fallback
+answer. The client can retry once if the reply is lost. DNS over UDP and TCP is
+supported. If `DNS` is omitted, `1.1.1.1, 1.0.0.1` is used. IPv6 server addresses,
 DoH, and DoT are not yet supported by this option. Servers must be reachable from
 the upstream server.
 

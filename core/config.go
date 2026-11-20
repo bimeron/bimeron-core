@@ -85,7 +85,7 @@ type SessionConfig struct {
 }
 
 func DefaultConfig() SessionConfig {
-	return SessionConfig{Mode: "vpn", Name: "Bimeron", Listen: "127.0.0.1:1080", MTU: 1420, DNS: []string{"1.1.1.1"}, SSHDefaultKeys: true}
+	return SessionConfig{Mode: "vpn", Name: "Bimeron", Listen: "127.0.0.1:1080", MTU: 1420, DNS: []string{"1.1.1.1", "1.0.0.1"}, SSHDefaultKeys: true}
 }
 
 func LoadConfig(path string) (SessionConfig, error) {

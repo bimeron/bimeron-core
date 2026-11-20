@@ -131,7 +131,7 @@ order), `awg_header_overlap`, `awg_header_protection_requires_padding`
 - DNS: Bimeron's resolver uses the WireGuard `DNS` entries: the first four
   distinct unicast IPv4 addresses, in order. IPv6 entries are not used,
   because Bimeron's resolver forwards to IPv4 servers only. Without usable
-  entries the default 1.1.1.1 applies. DNS queries are routed like other
+  entries the resolver uses 1.1.1.1 followed by 1.0.0.1. DNS queries are routed like other
   traffic, so a resolver outside AllowedIPs follows `AllowedIPsMode`.
 - A Bimeron `[Interface] MTU` or `DNS` in a WireGuard profile is ignored when
   connecting, including profiles written by older versions: the WireGuard
