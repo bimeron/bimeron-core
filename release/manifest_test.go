@@ -51,7 +51,7 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.3.0"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.3.2"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
+	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.3.1"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.3.3"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
 		t.Fatal(string(data))
 	}
 	signature, err := os.ReadFile(filepath.Join(dir, "update-manifest.json.sig"))
@@ -196,7 +196,7 @@ func TestManifestSizeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	large := strings.Replace(string(compat), `"gui_min": "0.3.0"`, `"gui_min": "0.3.0-`+strings.Repeat("x", releasecard.MaxManifestSize)+`"`, 1)
+	large := strings.Replace(string(compat), `"gui_min": "0.3.1"`, `"gui_min": "0.3.0-`+strings.Repeat("x", releasecard.MaxManifestSize)+`"`, 1)
 	largePath := filepath.Join(dir, "large-compatibility.json")
 	if err := os.WriteFile(largePath, []byte(large), 0600); err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestManifestKeyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	hardwareCompat := filepath.Join(dir, "hardware-compatibility.json")
-	data := strings.Replace(string(compat), `"gui_min": "0.3.0"`, `"gui_min": "0.3.1"`, 1)
+	data := strings.Replace(string(compat), `"gui_min": "0.3.1"`, `"gui_min": "0.3.1"`, 1)
 	if err := os.WriteFile(hardwareCompat, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}

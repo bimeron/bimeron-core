@@ -9,8 +9,8 @@ Android packages remain in the release but are outside this service updater.
 
 Before tagging, review `release/compatibility.json`: `ipc_min`, `ipc_max`,
 `gui_min`, `gui_max_exclusive`, and `profile_format`. The current file allows GUI
-`[0.3.0, 0.3.2)` with IPC 1 and profile format 1, and sets `gui_reviewed` to
-`true`. For `v0.4.0-beta.2`, Desktop reviewed this range: Desktop 0.3.0 accepts
+`[0.3.1, 0.3.3)` with IPC 1 and profile format 1, and sets `gui_reviewed` to
+`true`. For beta.3, Desktop 0.3.1 and the 0.3.2 release branch pin the hardware keys and accept IPC 1 and profile format 1. The added Core capabilities extend the existing JSON object. For `v0.4.0-beta.2`, Desktop reviewed `[0.3.0, 0.3.2)`: Desktop 0.3.0 accepts
 the release as a service update, and Desktop 0.3.1 bundles it. `v0.4.0-beta.1`
 supports GUI `[0.3.0, 0.3.1)`.
 
