@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -249,5 +250,33 @@ func TestErrorsCarryNoSecrets(t *testing.T) {
 				t.Fatalf("error leaks a secret: %v", err)
 			}
 		}
+	}
+}
+
+func TestDirectSocketHookPanicLeavesPacketClosable(t *testing.T) {
+	client := &Client{}
+	var setup context.Context
+	client.outbound.ControlContext = func(ctx context.Context, _, _ string, _ syscall.RawConn) error {
+		setup = ctx
+		panic("socket hook")
+	}
+	packet := newScopedPacket(client)
+	func() {
+		defer func() {
+			if got := recover(); got != "socket hook" {
+				t.Fatalf("unexpected panic: %v", got)
+			}
+		}()
+		_, _ = packet.directSocket(false)
+	}()
+	if setup.Err() != context.Canceled {
+		t.Fatal("socket setup context still active after panic")
+	}
+	if !packet.mu.TryLock() {
+		t.Fatal("packet lock held after hook panic")
+	}
+	packet.mu.Unlock()
+	if err := packet.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

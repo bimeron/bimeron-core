@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"bimeron/internal/guard"
+
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -99,6 +101,7 @@ func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsme
 	udpDone := make(chan struct{})
 	tcpStarted := map[uint16]bool{}
 	go func() {
+		defer guard.Recover()
 		defer close(udpDone)
 		buf := make([]byte, 4096)
 		for {
@@ -119,6 +122,7 @@ func (c *Client) exchange(ctx context.Context, server netip.AddrPort, name dnsme
 				if !tcpStarted[header.ID] {
 					tcpStarted[header.ID] = true
 					go func(id uint16) {
+						defer guard.Recover()
 						if r, err := c.exchangeTCP(ctx, server, name, types[id]); err == nil {
 							r.id = id
 							send(r)

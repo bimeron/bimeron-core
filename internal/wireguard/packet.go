@@ -8,6 +8,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"bimeron/internal/guard"
 )
 
 // maxQueued bounds received datagrams waiting for ReadFrom.
@@ -92,11 +94,12 @@ func (p *scopedPacket) tunnelSocket(to netip.AddrPort) (net.Conn, error) {
 
 func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if err := p.usable(); err != nil {
+		p.mu.Unlock()
 		return nil, err
 	}
 	if s := p.direct[v6]; s != nil {
+		p.mu.Unlock()
 		return s, nil
 	}
 	writeDeadline := p.writeDeadline
@@ -113,7 +116,9 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 		setup = min(setup, time.Until(writeDeadline))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), setup)
+	defer cancel()
 	go func() {
+		defer guard.Recover()
 		select {
 		case <-p.closed:
 			cancel()
@@ -122,8 +127,8 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 	}()
 	lc := p.client.listenConfig(ctx)
 	s, err := lc.ListenPacket(ctx, network, local)
-	cancel()
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +153,7 @@ func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
 // pump copies datagrams from one socket into the shared queue. When the queue
 // is full the datagram is dropped, as a congested network would.
 func (p *scopedPacket) pump(read func([]byte) (int, net.Addr, error)) {
+	defer guard.Recover()
 	defer p.wg.Done()
 	buf := make([]byte, 65535)
 	for {
