@@ -82,14 +82,16 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		download.ResolvedAddress = chosen.Unmap().String()
 	}
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
-		if p.Type == "masque" && ep == &p.UDP {
+		// MASQUE and WireGuard use one physical endpoint for both: resolve
+		// it once so status and the device agree.
+		if (p.Type == "masque" || p.Type == "wireguard") && ep == &p.UDP {
 			continue
 		}
 		if p.Type == "ssh" || ((p.TCPOnly() || p.ShadowTLS != nil) && ep == &p.UDP) {
 			continue
 		}
 		family := "ip4"
-		if p.SSPlugin != nil || p.Type == "masque" || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" {
+		if p.SSPlugin != nil || p.Type == "masque" || p.Type == "vless" || p.Type == "trojan" || p.Type == "vmess" || p.Type == "hysteria2" || p.Type == "tuic" || p.Type == "http" || p.Type == "naive" || p.Type == "anytls" || p.Type == "wireguard" {
 			family = "ip"
 		}
 		ips, err := d.Resolver.LookupNetIP(ctx, family, ep.Host)
@@ -108,7 +110,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 		}
 		ep.Host = chosen.Unmap().String()
 	}
-	if p.Type == "masque" {
+	if p.Type == "masque" || p.Type == "wireguard" {
 		p.UDP = p.TCP
 	}
 	domain := func(host string) string {

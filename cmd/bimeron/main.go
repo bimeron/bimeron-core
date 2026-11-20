@@ -37,7 +37,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "bimeron ikev2 profile -name <name> -server <DNS-name> [-apply | -remove] (Windows; preview by default)")
 	fmt.Fprintln(w, "bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall (Windows/Linux; Linux install also accepts -owner uid)")
 	fmt.Fprintln(w, "bimeron daemon\nbimeron start <config-file>\nbimeron status\nbimeron watch\nbimeron stats (session traffic counters)\nbimeron capabilities (platform feature report)\nbimeron reconnect (retry a waiting reconnect now)\nbimeron stop (disconnect session)\nbimeron shutdown (disconnect and exit daemon)")
-	fmt.Fprintln(w, "bimeron run <config-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\n"+recoverUsage+"\nbimeron check [-dns 1.1.1.1] <key-file>")
+	fmt.Fprintln(w, "bimeron run <config-file | wireguard-file>\nbimeron validate <config-file>\nbimeron inspect <key-file>\nbimeron route <policy-file> <destination-IP> [domain]\nbimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <key-file | wireguard-file>\nbimeron connect [-policy file.json] [-dns 1.1.1.1] <key-file>\n"+recoverUsage+"\nbimeron check [-dns 1.1.1.1] <key-file>")
 }
 
 func run(args []string) error {
@@ -59,6 +59,11 @@ func run(args []string) error {
 			return writeBridge(os.Stdout, bridgeResponse{}, fmt.Errorf("invalid arguments"))
 		}
 		return documentBridge(os.Stdin, os.Stdout)
+	case "wireguard":
+		if len(args) != 1 {
+			return writeWireGuard(os.Stdout, wireguardResponse{}, invalidWireGuardRequest("invalid arguments"))
+		}
+		return wireguardBridge(os.Stdin, os.Stdout)
 	case "geodata":
 		return geoDataBridge(args[1:], os.Stdout)
 	case "ikev2":

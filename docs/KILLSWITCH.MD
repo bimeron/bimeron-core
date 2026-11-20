@@ -29,8 +29,9 @@ Closing or crashing the core does not remove them. Installation, replacement,
 and removal use atomic WFP transactions.
 
 - Connections through the Bimeron interface are allowed.
-- The core executable itself is allowed to operate the upstream transport,
-  `ssconf`, service DNS, and direct forwarding according to core policy.
+- The core executable itself is allowed to operate the upstream transport
+  (including the WireGuard UDP socket), `ssconf`, service DNS, and direct
+  forwarding according to core policy.
   This exception applies only to processes of the core image that run as
   `SYSTEM` or with an elevated administrator token. Other instances of the same
   executable, such as CLI commands started by a standard user or from a

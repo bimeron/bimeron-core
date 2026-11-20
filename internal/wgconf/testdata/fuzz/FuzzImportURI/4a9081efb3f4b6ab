@@ -1,0 +1,2 @@
+go test fuzz v1
+string("wireguArd://0:0?puB=\xb2")

@@ -33,7 +33,11 @@ type Error struct {
 	Line    int               `json:"line,omitempty"`
 	Value   Value             `json:"value,omitempty"`
 	Args    map[string]string `json:"args,omitempty"`
-	cause   error
+	// Document marks problems located in a document other than the profile:
+	// "wireguard" is the WireGuard/AmneziaWG text, and Section, Field and
+	// Line then refer to that text.
+	Document string `json:"document,omitempty"`
+	cause    error
 }
 
 // New returns a problem with a catalog code and the English message.
@@ -66,6 +70,9 @@ func (e *Error) From(source string) *Error { e.Source = source; return e }
 
 // AtRule sets the one-based rule index.
 func (e *Error) AtRule(rule int) *Error { e.Rule = rule; return e }
+
+// InDocument marks the problem as located in another document; see Document.
+func (e *Error) InDocument(document string) *Error { e.Document = document; return e }
 
 // AtLine sets the one-based profile line.
 func (e *Error) AtLine(line int) *Error { e.Line = line; return e }

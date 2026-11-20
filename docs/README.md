@@ -18,6 +18,7 @@ release's tag.
 - [Shadowsocks transports](SHADOWSOCKS_TRANSPORTS.MD), [ShadowTLS v3](SHADOWTLS.MD).
 - [VLESS transports](VLESS_TRANSPORTS.MD), [VMess transports](VMESS_TRANSPORTS.MD), [Trojan transports](TROJAN_TRANSPORTS.MD).
 - [MASQUE](MASQUE.MD), [SSH](SSH.MD).
+- [WireGuard and AmneziaWG](WIREGUARD.MD) (experimental).
 - Hysteria2, TUIC v5, AnyTLS, NaiveProxy, SOCKS5, and HTTP CONNECT are covered in the [configuration reference](CONF.MD).
 
 ### Platforms and operation

@@ -1,0 +1,115 @@
+{
+  "secret_fields": ["PrivateKey", "PresharedKey", "HeaderProtectionKey"],
+  "codes": {
+    "invalid_wireguard_transport": {
+      "kind": "connection",
+      "en": "The WireGuard tunnel could not be started from this profile. Check the WireGuard configuration.",
+      "ru": "Не удалось запустить туннель WireGuard по этому профилю. Проверьте конфигурацию WireGuard."
+    },
+    "wireguard_socket_failed": {
+      "kind": "connection",
+      "en": "Bimeron could not open the network socket for WireGuard. Check the network connection; if ListenPort is set, make sure no other program uses that port.",
+      "ru": "Bimeron не смог открыть сетевой сокет для WireGuard. Проверьте подключение к сети; если задан ListenPort, убедитесь, что этот порт не занят другой программой."
+    },
+    "wireguard_platform_limit": {
+      "kind": "connection",
+      "en": "The AmneziaWG packet sizes in this profile (S1–S4, Jmax, I1–I5 or MTU) are too large for this platform. Lower them.",
+      "ru": "Размеры пакетов AmneziaWG в этом профиле (S1–S4, Jmax, I1–I5 или MTU) слишком велики для этой платформы. Уменьшите их."
+    },
+    "wireguard_handshake_timeout": {
+      "kind": "connection",
+      "en": "The WireGuard server did not answer the handshake. Check the server address, keys and AmneziaWG settings, or the network.",
+      "ru": "Сервер WireGuard не ответил на рукопожатие. Проверьте адрес сервера, ключи и параметры AmneziaWG или сеть."
+    },
+    "document_format_unknown": {
+      "kind": "config",
+      "en": "This text is neither a Bimeron profile nor a WireGuard or AmneziaWG configuration.",
+      "ru": "Этот текст не является ни профилем Bimeron, ни конфигурацией WireGuard или AmneziaWG."
+    },
+    "document_format_ambiguous": {
+      "kind": "config",
+      "en": "This text mixes Bimeron profile sections with WireGuard sections. Keep the WireGuard configuration in a separate file.",
+      "ru": "В тексте смешаны разделы профиля Bimeron и WireGuard. Храните конфигурацию WireGuard в отдельном файле."
+    },
+    "wireguard_dns_invalid": {
+      "kind": "config",
+      "en": "WireGuard DNS must list IP addresses separated by commas. Search domains are not supported.",
+      "ru": "В DNS для WireGuard укажите IP-адреса через запятую. Домены поиска не поддерживаются."
+    },
+    "wireguard_peer_count": {
+      "kind": "config",
+      "en": "A WireGuard profile must contain exactly one [Peer] section (found {count}).",
+      "ru": "В профиле WireGuard должен быть ровно один раздел [Peer] (найдено: {count})."
+    },
+    "wireguard_hook_unsupported": {
+      "kind": "config",
+      "en": "Commands such as PreUp, PostUp, PreDown and PostDown are not supported. Remove this line.",
+      "ru": "Команды PreUp, PostUp, PreDown и PostDown не поддерживаются. Удалите эту строку."
+    },
+    "wireguard_key_invalid": {
+      "kind": "config",
+      "en": "Enter a key of 32 bytes in base64 (44 characters ending with =).",
+      "ru": "Укажите ключ длиной 32 байта в base64 (44 символа, в конце =)."
+    },
+    "wireguard_address_invalid": {
+      "kind": "config",
+      "en": "Address must list distinct IPv4 or IPv6 addresses, optionally with a prefix length, separated by commas.",
+      "ru": "В Address укажите разные адреса IPv4 или IPv6 через запятую, при необходимости с длиной префикса."
+    },
+    "wireguard_allowed_ips_invalid": {
+      "kind": "config",
+      "en": "AllowedIPs must list IPv4 or IPv6 prefixes separated by commas, for example 0.0.0.0/0, ::/0.",
+      "ru": "В AllowedIPs укажите префиксы IPv4 или IPv6 через запятую, например 0.0.0.0/0, ::/0."
+    },
+    "wireguard_endpoint_invalid": {
+      "kind": "config",
+      "en": "Endpoint must be host:port; put IPv6 addresses in square brackets.",
+      "ru": "Endpoint указывается как узел:порт; адрес IPv6 заключите в квадратные скобки."
+    },
+    "awg_range_invalid": {
+      "kind": "config",
+      "en": "The first value of the range must not be greater than the second (Jmin must not exceed Jmax).",
+      "ru": "Первое значение диапазона не должно быть больше второго (Jmin не больше Jmax)."
+    },
+    "awg_header_overlap": {
+      "kind": "config",
+      "en": "H1, H2, H3 and H4 must not overlap. Unset values default to 1, 2, 3 and 4.",
+      "ru": "Значения H1, H2, H3 и H4 не должны пересекаться. Если значение не задано, используются 1, 2, 3 и 4."
+    },
+    "awg_header_protection_requires_padding": {
+      "kind": "config",
+      "en": "Header protection requires S1, S2, S3 and S4 of at least {min}.",
+      "ru": "Для защиты заголовков S1, S2, S3 и S4 должны быть не меньше {min}."
+    },
+    "awg_tag_invalid": {
+      "kind": "config",
+      "en": "Signature packets must be a sequence of tags such as <b 0x0102>, <r 16>, <rc 8>, <rd 8> or <t>.",
+      "ru": "Сигнатурные пакеты задаются последовательностью тегов, например <b 0x0102>, <r 16>, <rc 8>, <rd 8> или <t>."
+    },
+    "wireguard_reserved_unsupported": {
+      "kind": "config",
+      "en": "WireGuard reserved bytes (used by Cloudflare WARP) are not supported.",
+      "ru": "Зарезервированные байты WireGuard (используются в Cloudflare WARP) не поддерживаются."
+    },
+    "vpn_uri_invalid": {
+      "kind": "config",
+      "en": "The vpn:// link is damaged or incomplete. Copy it again from the Amnezia application.",
+      "ru": "Ссылка vpn:// повреждена или неполная. Скопируйте её из приложения Amnezia ещё раз."
+    },
+    "vpn_uri_container_missing": {
+      "kind": "config",
+      "en": "The vpn:// link contains no AmneziaWG or WireGuard configuration. Other Amnezia protocols are not supported.",
+      "ru": "В ссылке vpn:// нет конфигурации AmneziaWG или WireGuard. Другие протоколы Amnezia не поддерживаются."
+    },
+    "vpn_uri_api_key_unsupported": {
+      "kind": "config",
+      "en": "This is an Amnezia Premium or Free service key, not a connection configuration. Export an AmneziaWG configuration instead.",
+      "ru": "Это ключ сервиса Amnezia Premium или Free, а не конфигурация подключения. Экспортируйте конфигурацию AmneziaWG."
+    },
+    "allowed_ips_mode_requires_wireguard": {
+      "kind": "config",
+      "en": "AllowedIPsMode applies only to WireGuard and AmneziaWG profiles. Remove it or use a WireGuard access key.",
+      "ru": "AllowedIPsMode применяется только к профилям WireGuard и AmneziaWG. Удалите параметр или используйте ключ WireGuard."
+    }
+  }
+}

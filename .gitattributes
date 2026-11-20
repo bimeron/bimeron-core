@@ -12,3 +12,5 @@ release/applemanifest/testdata/synthetic-reviewed-manifest.json.sig -text
 *.ico binary
 # Hardware-signed key ceremony vectors must keep exact bytes.
 internal/releasecard/testdata/** -text
+# Go fuzz corpus files must keep LF line endings.
+internal/wgconf/testdata/fuzz/** text eol=lf

@@ -230,6 +230,10 @@ the Windows VPN process must still run with administrator privileges.
 | `hysteria2_unknown` | Connection setup failed without a safely identifiable cause. |
 | `ssh_network_failed` | The SSH server was unreachable: timeout, refused or reset connection, unreachable route, or DNS failure. Retryable. |
 | `ssh_connection_failed` | SSH host-key verification, authentication, or transport setup failed. Terminal. Sessions that opt in to accept-new or run profile-only report `ssh_host_key_*` and `ssh_known_hosts_missing` instead (see `docs/android-ssh-auth.md`). |
+| `wireguard_handshake_timeout` | The WireGuard or AmneziaWG peer did not complete a handshake within 20 seconds. Retryable. See [WIREGUARD.MD](WIREGUARD.MD). |
+| `wireguard_socket_failed` | The outbound WireGuard UDP socket or a fixed `ListenPort` could not be opened. Retryable. |
+| `wireguard_platform_limit` | AmneziaWG packet sizes exceed this platform's engine buffers. Terminal. |
+| `invalid_wireguard_transport` | The WireGuard device could not be started from the profile. Terminal. |
 | `dns_failed` | Event only. An individual DNS query failed; this does not necessarily mean the whole session failed. |
 | `network_setup_failed` | Routes or DNS could not be configured; rollback is in progress. |
 | `cleanup_failed_run_recover` | Cleanup failed; after stopping, run `dist\windows-amd64\bimeron.exe recover` from an administrator CMD. |

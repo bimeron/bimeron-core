@@ -63,6 +63,12 @@ type SessionConfig struct {
 	// SSHHostKeys the session fails with ssh_known_hosts_missing. The Android
 	// embedding always sets it.
 	SSHProfileOnly bool
+	// AllowedIPsMode is the WireGuard [Routing] AllowedIPsMode; empty means
+	// direct. Other upstreams ignore it.
+	AllowedIPsMode string
+	// adapterAlias marks Name as a generated Windows adapter alias, which may
+	// hold Unicode and spaces unlike [Interface] Name.
+	adapterAlias bool
 	// SSHNoAgent never consults an SSH agent. The control daemon and the
 	// service set it for every session they start.
 	SSHNoAgent bool
@@ -179,14 +185,33 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, problem.Of(err).In("Interface").At("DNS")
 	}
+	mtu := copy.Tunnel.MTU
+	name, alias := copy.Tunnel.Name, false
+	// Windows shows the adapter alias to users: name it after the recognized
+	// protocol and the WireGuard file or profile.
+	if protocol, label, ok := copy.WireGuardAdapterLabel(); ok && runtime.GOOS == "windows" && copy.Tunnel.Mode == "vpn" {
+		name, alias = wireGuardAdapterAlias(protocol, label), true
+	}
+	if copy.IsWireGuard() {
+		// Only the WireGuard text sets DNS and MTU for these profiles; Bimeron
+		// [Interface] values are ignored, and missing lines mean automatic
+		// behavior.
+		dns, mtu = DefaultConfig().DNS, DefaultConfig().MTU
+		if wgDNS := copy.WireGuardDNS(); len(wgDNS) > 0 {
+			dns = wgDNS
+		}
+		if wgMTU := copy.WireGuardTunnelMTU(); wgMTU != 0 {
+			mtu = wgMTU
+		}
+	}
 	if copy.Tunnel.Mode == "vpn" {
 		p, err = copy.VPNPolicy()
 	}
 	if err != nil {
 		return SessionConfig{}, err
 	}
-	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: copy.Tunnel.Name, Listen: copy.Tunnel.Listen, MTU: copy.Tunnel.MTU,
-		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true}, nil
+	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, MTU: mtu, adapterAlias: alias,
+		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 
 // maxKeyFile matches the profile key-file limit.
@@ -257,7 +282,11 @@ func (c SessionConfig) validate() error {
 		}
 		return nil
 	}
-	if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`).MatchString(c.Name) {
+	if c.adapterAlias {
+		if !validAdapterAlias(c.Name) {
+			return problem.New("interface_name_invalid", "invalid tunnel name").In("Interface").At("Name")
+		}
+	} else if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`).MatchString(c.Name) {
 		return problem.New("interface_name_invalid", "invalid tunnel name").In("Interface").On("Name", c.Name).Arg("max", "32")
 	}
 	if c.MTU < 1280 || c.MTU > 1500 {

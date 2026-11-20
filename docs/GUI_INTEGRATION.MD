@@ -220,10 +220,11 @@ Example `hello` response from Windows (capability values vary by platform;
     "kill_switch": true,
     "daemon": true,
     "ikev2": {"supported": true, "foreground_only": true, "kill_switch": true, "dns_protection": true, "stats": false},
-    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"],
+    "explicit_access": ["shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic", "wireguard"],
     "access_conversion": true,
     "reconnect_now": true,
-    "kill_switch_hold": true
+    "kill_switch_hold": true,
+    "wireguard": {"supported": true, "experimental": true, "protocols": ["wireguard", "amneziawg"], "awg_versions": ["1.0", "1.5", "2.0", "3.0", "3.1"], "uri_schemes": ["vpn", "wireguard", "wg"], "allowed_ips_modes": ["direct", "block", "ignore", "only"], "document_api": 1}
   }
 }
 ```
@@ -242,6 +243,17 @@ and `access_to_uri`, which convert `[AccessKey]` between a share URI and explici
 parameters (see [DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD)). An older core
 omits it; the mobile libraries report `false` because they have no document
 bridge.
+
+`wireguard` reports experimental WireGuard and AmneziaWG support: the
+`protocols`, `awg_versions`, link `uri_schemes` and
+`[Routing] AllowedIPsMode` values (`allowed_ips_modes`) the core accepts, and
+`document_api`, the version of the `bimeron wireguard` bridge that reads,
+edits and imports WireGuard text. Show WireGuard import and editing only when
+`supported` is `true`, and label it experimental while `experimental` is
+`true`. An older core omits the object; treat absence as unsupported. A
+WireGuard session can fail with `wireguard_handshake_timeout`,
+`wireguard_socket_failed` (both retried), `wireguard_platform_limit` or
+`invalid_wireguard_transport`. See [WIREGUARD.MD](WIREGUARD.MD).
 
 `geoip_split`, `geosite_split`, and `geodata_schema` describe GeoIP/GeoSite rule
 support (see [GEODATA.MD](GEODATA.MD)). `ikev2` describes the native Windows IKEv2

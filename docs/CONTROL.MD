@@ -9,6 +9,15 @@ such profiles with `ikev2_requires_foreground_user_session`. The optional
 `capabilities.ikev2` object describes native support independently of the
 top-level packet capabilities. Older daemons may omit it. See [IKEV2.MD](IKEV2.MD).
 
+The optional `capabilities.wireguard` object reports experimental WireGuard
+and AmneziaWG support: `supported`, `experimental`, `protocols`,
+`awg_versions`, `uri_schemes`, `allowed_ips_modes` and `document_api` (the
+`bimeron wireguard` bridge version). Older daemons omit it; treat absence as
+unsupported. WireGuard sessions report the connection codes
+`wireguard_handshake_timeout`, `wireguard_socket_failed`,
+`wireguard_platform_limit` and `invalid_wireguard_transport`. See
+[WIREGUARD.MD](WIREGUARD.MD).
+
 Native Go API sessions add optional Session fields `backend: "ikev2"` and
 `stats_unavailable: true`, use `ipv6: "system"`, and mark stats snapshots
 `unavailable: true`. Unsupported counters must not be interpreted as zero traffic.

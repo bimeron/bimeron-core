@@ -60,3 +60,4 @@ number.
 | 0040 | [Signed versioned core store and anti-rollback floor](0040-signed-core-store.md) |
 | 0041 | [Keep kill switch protection across a client-requested service update](0041-kill-switch-across-service-updates.md) |
 | 0042 | [Always-on VPN at boot](0042-always-on-vpn-at-boot.md) |
+| 0043 | [WireGuard and AmneziaWG client upstream](0043-wireguard-amneziawg-client.md) |

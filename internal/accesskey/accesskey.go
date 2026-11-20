@@ -18,6 +18,7 @@ import (
 
 	"bimeron/internal/problem"
 	"bimeron/internal/safefile"
+	"bimeron/internal/wgconf"
 )
 
 const maxBytes = 64 * 1024
@@ -64,6 +65,8 @@ type Profile struct {
 	SSPlugin       *SSPlugin
 	HTTPServerName string // Nonempty enables verified TLS for HTTP CONNECT.
 	ShadowTLS      *ShadowTLS
+	// WireGuard is set for Type "wireguard"; TCP and UDP hold its endpoint.
+	WireGuard *wgconf.Config
 }
 
 // AnyTLS contains password authentication and verified TLS settings.
@@ -920,6 +923,9 @@ func NewResolverWithTransport(t http.RoundTripper) *Resolver {
 }
 func (r *Resolver) Resolve(ctx context.Context, key string) (Profile, error) {
 	key = strings.TrimSpace(key)
+	if p, ok, err := parseWireGuardKey(key); ok {
+		return p, err
+	}
 	if strings.HasPrefix(key, "anytls://") {
 		return ParseAnyTLS(key)
 	}
@@ -1133,4 +1139,23 @@ func firstSet(fields []string, set ...bool) string {
 		}
 	}
 	return ""
+}
+
+// WireGuardProfile wraps a validated WireGuard or AmneziaWG configuration.
+// The configuration holds secrets and must never be logged.
+func WireGuardProfile(name string, c *wgconf.Config) Profile {
+	e := Endpoint{Host: c.Peer.EndpointHost, Port: c.Peer.EndpointPort}
+	return Profile{Type: "wireguard", Name: name, TCP: e, UDP: e, WireGuard: c}
+}
+
+// parseWireGuardKey accepts wg-quick text stored as a key source.
+func parseWireGuardKey(key string) (Profile, bool, error) {
+	if format, err := wgconf.Detect(key); err != nil || format != wgconf.FormatWireGuard {
+		return Profile{}, false, nil
+	}
+	c, err := wgconf.Parse(key)
+	if err != nil {
+		return Profile{}, true, err
+	}
+	return WireGuardProfile("", c), true, nil
 }

@@ -32,6 +32,7 @@ A configuration problem is a JSON object:
 | `line` | optional | One-based profile line of the field, the source option or the section header. |
 | `value` | optional | `present` when the field had a non-empty value, `absent` otherwise. Never the value itself. |
 | `args` | optional | String-to-string map of safe placeholder values. |
+| `document` | optional | `wireguard` when the problem is located in WireGuard/AmneziaWG text (a file referenced by `[AccessKey] File` or text given to `bimeron wireguard`). `section`, `field` and `line` then refer to that text: sections `Interface`/`Peer` and wg-quick key names. For a referenced file, `source` is `File`. Absent for profile problems, including explicit `Type = wireguard` parameters and an unreadable referenced file. See [WIREGUARD.MD](WIREGUARD.MD). |
 
 `args` and `message` never contain passwords, user IDs, keys, URIs, user-supplied
 host names, file paths or profile fragments. A client already holds the profile
@@ -49,7 +50,7 @@ in the URI case `source` names the URI option.
 
 - `Profile`: `Version`, `Name`.
 - `Interface`: `Mode`, `Name`, `MTU`, `DNS`, `IPv6`, `KillSwitch`, `Listen`.
-- `Routing`: `Default`. `Rule`: `CIDR`, `Domain`, `GeoIP`, `GeoSite`, `Action`.
+- `Routing`: `Default`, `AllowedIPsMode`. `Rule`: `CIDR`, `Domain`, `GeoIP`, `GeoSite`, `Action`.
 - `GeoData`: `GeoIPFile`, `GeoSiteFile`. `ShadowTLS`: `ServerName`, `Password`.
 - `IKEv2`: the option names documented in [IKEV2.MD](IKEV2.MD).
 - `AccessKey` sources: `File`, `Key`, `SS`, `SSConf`, `SOCKS5`, `HTTP`, `VLESS`,
@@ -61,6 +62,10 @@ in the URI case `source` names the URI option.
   `ALPN`, `WSPath`, `WSHost`, `WSEarlyData`, `GRPCServiceName`,
   `GRPCAuthority`, `GRPCMultiMode`, `XHTTPPath`, `XHTTPHost`, `XHTTPMode`,
   `XHTTPExtra` and the separate `XHTTP*` options.
+- WireGuard and AmneziaWG: the wg-quick key names (`PrivateKey`, `Address`,
+  `Endpoint`, `AllowedIPs`, `Jc`, `H1` and so on), both inside WireGuard text
+  and as explicit `Type = wireguard` parameters. `PrivateKey`, `PresharedKey`
+  and `HeaderProtectionKey` are secret fields. See [WIREGUARD.MD](WIREGUARD.MD).
 - Fields that exist only inside URIs use the same naming style. They are listed
   in the catalog under `uri_fields` with the protocols that use them.
 
@@ -102,7 +107,7 @@ return the catalog embedded in that core build:
 | Transport | Problems | Catalog |
 |---|---|---|
 | CLI | `bimeron validate --json <absolute-path>` prints `{"version":1,"problems":[...]}`. Failures keep the existing `error` and `details` fields. Plain `validate` output is unchanged. | `bimeron errors --json` |
-| Desktop document bridge | `bimeron document` and `bimeron geodata` responses add `problems` on failure. | |
+| Desktop document bridge | `bimeron document` and `bimeron geodata` responses add `problems` on failure. `bimeron wireguard` inspections always carry `problems` (`[]` for runnable text); see [WIREGUARD.MD](WIREGUARD.MD#desktop-document-bridge). | |
 | Local control | A rejected `start` keeps `error: "invalid_configuration"` and adds `problems`. | |
 | Android | `ValidateConfigWithGeoData` and `GeoDataGroups` add `problems` on failure; success JSON is unchanged. | `ErrorCatalog()` |
 | Apple | `RLValidateConfigWithGeoData` and `RLGeoDataGroups` add `problems` on failure; success JSON is unchanged. Free results with `RLFree`. | `RLErrorCatalog()`; free with `RLFree` |

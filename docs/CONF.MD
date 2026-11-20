@@ -63,12 +63,35 @@ File = test.key
 
 `File` is the path to a UTF-8 file containing a complete `ss://...`,
 `ssconf://...`, `socks5://...`, `http://...`, `https://...`, `vless://...`, `vmess://...`, `trojan://...`, `naive+https://...`, `naive+quic://...`,
-`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key. Relative paths are resolved against the `.conf` directory,
+`hysteria2://...`, `hy2://...`, `anytls://...`, `ssh://...`, `tuic://...`, or `masque://...` key,
+or WireGuard text (see below). Relative paths are resolved against the `.conf` directory,
 not the terminal's working directory. For example, `profiles/main.conf` with
 `File = test.key` reads `profiles/test.key`. Absolute paths are allowed.
 Leading and trailing whitespace and line breaks are removed; a UTF-8 BOM is
 allowed. The maximum key-file size is 64 KiB. See [Referenced files](#referenced-files)
 for the rules that apply to every path in a profile.
+
+### WireGuard and AmneziaWG (experimental)
+
+To use a standalone WireGuard file from the terminal, see the
+[WireGuard CLI guide](WIREGUARD_CLI.MD).
+
+```ini
+[AccessKey]
+File = home.wg.conf
+```
+
+When the file holds wg-quick or AmneziaWG text (a `[Peer]` section or an
+`[Interface]` `PrivateKey`, and no Bimeron section), Core reads it as a
+WireGuard profile with exactly one `[Peer]`. The text is used as written,
+including whitespace, and Core never rewrites it. The same options may
+instead be written directly in `[AccessKey]` with `Type = wireguard`; this is
+the only form for in-memory profiles. For these profiles only the WireGuard
+`DNS` and `MTU` apply (the MTU also sets the adapter MTU); `[Interface] DNS`
+and `MTU` are ignored. `Mode = proxy` carries TCP only.
+`[Routing] AllowedIPsMode` controls how AllowedIPs combines with rules. See
+[WIREGUARD.MD](WIREGUARD.MD) for accepted keys, AmneziaWG versions, links and
+the desktop bridge.
 
 ### Inline static key
 
@@ -686,6 +709,7 @@ on the upstream server.
 | Option | Default | Meaning |
 |---|---|---|
 | `Default` | `proxy` | Action for connections matching no rule. Allowed values: `proxy`, `direct`, `block`. |
+| `AllowedIPsMode` | `direct` | WireGuard profiles only. How AllowedIPs combines with rules: `direct`, `block`, `ignore` or `only`; see [AllowedIPs priority](WIREGUARD.MD#allowedips-priority). |
 
 | Action | Behavior |
 |---|---|

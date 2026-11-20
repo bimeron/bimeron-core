@@ -9,7 +9,7 @@ import (
 
 // ExplicitAccess lists the protocols that [AccessKey] accepts as explicit
 // parameters. "naive_quic" is Type = naive with Network = quic.
-var ExplicitAccess = []string{"shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"}
+var ExplicitAccess = []string{"shadowsocks", "socks5", "http", "https", "vless", "ssh", "trojan", "naive", "masque", "hysteria2", "tuic", "anytls", "vmess", "naive_quic", "wireguard"}
 
 // explicitTypes builds the profiles whose explicit form mirrors a URI-only
 // protocol. Each builder applies the same defaults and validation as the URI.

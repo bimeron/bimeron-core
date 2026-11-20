@@ -1,0 +1,302 @@
+package wireguard
+
+import (
+	"context"
+	"errors"
+	"net"
+	"net/netip"
+	"os"
+	"sync"
+	"time"
+)
+
+// maxQueued bounds received datagrams waiting for ReadFrom.
+const maxQueued = 64
+
+// socketSetupTimeout bounds opening a direct socket, including the
+// outbound socket hook.
+const socketSetupTimeout = 10 * time.Second
+
+// maxTunnelPeers bounds tunnel destinations of one packet socket. The VPN
+// handler uses one destination per flow and DNS a few.
+const maxTunnelPeers = 64
+
+var errTooManyPeers = errors.New("too many WireGuard UDP destinations on one socket")
+
+type datagram struct {
+	data []byte
+	from net.Addr
+}
+
+// scopedPacket routes datagrams per destination: tunnel destinations get a
+// connected netstack socket each, direct ones share one outbound socket per
+// family. Replies are merged into one bounded queue. The owning Client
+// closes it with its generation.
+type scopedPacket struct {
+	client   *Client
+	mu       sync.Mutex
+	tunnel   map[netip.AddrPort]net.Conn
+	direct   map[bool]net.PacketConn
+	incoming chan datagram
+	closed   chan struct{}
+	done     bool
+	once     sync.Once
+	wg       sync.WaitGroup
+	// readDeadline and its change channel: SetReadDeadline closes changed
+	// and replaces it, so every blocked ReadFrom re-evaluates.
+	readDeadline  time.Time
+	changed       chan struct{}
+	writeDeadline time.Time
+}
+
+func newScopedPacket(c *Client) *scopedPacket {
+	return &scopedPacket{client: c, tunnel: map[netip.AddrPort]net.Conn{}, direct: map[bool]net.PacketConn{}, incoming: make(chan datagram, maxQueued), closed: make(chan struct{}), changed: make(chan struct{})}
+}
+
+// usable reports whether new sockets may be opened. Callers hold p.mu.
+func (p *scopedPacket) usable() error {
+	if p.done || p.client.isClosed() {
+		return net.ErrClosed
+	}
+	return nil
+}
+
+func (p *scopedPacket) tunnelSocket(to netip.AddrPort) (net.Conn, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.usable(); err != nil {
+		return nil, err
+	}
+	if s := p.tunnel[to]; s != nil {
+		return s, nil
+	}
+	if len(p.tunnel) >= maxTunnelPeers {
+		return nil, errTooManyPeers
+	}
+	if !p.client.families[boolIndex(to.Addr().Is6())] {
+		return nil, errTunnel
+	}
+	s, err := p.client.tunnel.DialUDP(to)
+	if err != nil {
+		return nil, errTunnel
+	}
+	if !p.writeDeadline.IsZero() {
+		_ = s.SetWriteDeadline(p.writeDeadline)
+	}
+	p.tunnel[to] = s
+	from := net.UDPAddrFromAddrPort(to)
+	p.wg.Add(1)
+	go p.pump(func(b []byte) (int, net.Addr, error) { n, err := s.Read(b); return n, from, err })
+	return s, nil
+}
+
+func (p *scopedPacket) directSocket(v6 bool) (net.PacketConn, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.usable(); err != nil {
+		return nil, err
+	}
+	if s := p.direct[v6]; s != nil {
+		return s, nil
+	}
+	writeDeadline := p.writeDeadline
+	p.mu.Unlock()
+	// Open the socket without holding the lock: the outbound hook may block,
+	// and Close must stay responsive. Bound the hook by the socket setup
+	// timeout and by the packet socket's lifetime.
+	network, local := "udp4", "0.0.0.0:0"
+	if v6 {
+		network, local = "udp6", "[::]:0"
+	}
+	setup := socketSetupTimeout
+	if !writeDeadline.IsZero() {
+		setup = min(setup, time.Until(writeDeadline))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), setup)
+	go func() {
+		select {
+		case <-p.closed:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	lc := p.client.listenConfig(ctx)
+	s, err := lc.ListenPacket(ctx, network, local)
+	cancel()
+	p.mu.Lock()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.usable(); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if existing := p.direct[v6]; existing != nil {
+		// A concurrent writer opened one first.
+		_ = s.Close()
+		return existing, nil
+	}
+	if !p.writeDeadline.IsZero() {
+		_ = s.SetWriteDeadline(p.writeDeadline)
+	}
+	p.direct[v6] = s
+	p.wg.Add(1)
+	go p.pump(s.ReadFrom)
+	return s, nil
+}
+
+// pump copies datagrams from one socket into the shared queue. When the queue
+// is full the datagram is dropped, as a congested network would.
+func (p *scopedPacket) pump(read func([]byte) (int, net.Addr, error)) {
+	defer p.wg.Done()
+	buf := make([]byte, 65535)
+	for {
+		n, from, err := read(buf)
+		if err != nil {
+			return
+		}
+		d := datagram{data: append([]byte(nil), buf[:n]...), from: from}
+		select {
+		case p.incoming <- d:
+		case <-p.closed:
+			return
+		default:
+		}
+	}
+}
+
+func (p *scopedPacket) WriteTo(b []byte, addr net.Addr) (int, error) {
+	u, ok := addr.(*net.UDPAddr)
+	if !ok {
+		resolved, err := net.ResolveUDPAddr("udp", addr.String())
+		if err != nil {
+			return 0, err
+		}
+		u = resolved
+	}
+	to := u.AddrPort()
+	to = netip.AddrPortFrom(to.Addr().Unmap(), to.Port())
+	switch p.client.scope(to.Addr()) {
+	case blocked:
+		// Dropped like a filtered datagram.
+		return len(b), nil
+	case viaDirect:
+		s, err := p.directSocket(to.Addr().Is6())
+		if err != nil {
+			return 0, err
+		}
+		return s.WriteTo(b, net.UDPAddrFromAddrPort(to))
+	}
+	s, err := p.tunnelSocket(to)
+	if err != nil {
+		return 0, err
+	}
+	return s.Write(b)
+}
+
+func (p *scopedPacket) ReadFrom(b []byte) (int, net.Addr, error) {
+	// Data already received wins over an expired deadline.
+	select {
+	case d := <-p.incoming:
+		return copy(b, d.data), d.from, nil
+	default:
+	}
+	for {
+		p.mu.Lock()
+		deadline, changed := p.readDeadline, p.changed
+		p.mu.Unlock()
+		var timer *time.Timer
+		var expired <-chan time.Time
+		if !deadline.IsZero() {
+			wait := time.Until(deadline)
+			if wait <= 0 {
+				return 0, nil, os.ErrDeadlineExceeded
+			}
+			timer = time.NewTimer(wait)
+			expired = timer.C
+		}
+		var (
+			d   datagram
+			got bool
+			err error
+		)
+		select {
+		case d = <-p.incoming:
+			got = true
+		case <-p.closed:
+			err = net.ErrClosed
+		case <-p.client.closed:
+			err = net.ErrClosed
+		case <-expired:
+			err = os.ErrDeadlineExceeded
+		case <-changed:
+			// The deadline changed; evaluate it again.
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		if !got && err != nil {
+			// A datagram that arrived together with the timeout still wins.
+			select {
+			case d = <-p.incoming:
+				got = true
+			default:
+			}
+		}
+		if got {
+			return copy(b, d.data), d.from, nil
+		}
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+}
+
+func (p *scopedPacket) Close() error {
+	p.once.Do(func() {
+		p.mu.Lock()
+		p.done = true
+		close(p.closed)
+		for _, s := range p.tunnel {
+			_ = s.Close()
+		}
+		for _, s := range p.direct {
+			_ = s.Close()
+		}
+		p.mu.Unlock()
+		p.wg.Wait()
+		p.client.disown(p)
+	})
+	return nil
+}
+
+func (p *scopedPacket) LocalAddr() net.Addr { return &net.UDPAddr{} }
+
+func (p *scopedPacket) SetDeadline(t time.Time) error {
+	_ = p.SetWriteDeadline(t)
+	return p.SetReadDeadline(t)
+}
+
+func (p *scopedPacket) SetReadDeadline(t time.Time) error {
+	p.mu.Lock()
+	p.readDeadline = t
+	close(p.changed)
+	p.changed = make(chan struct{})
+	p.mu.Unlock()
+	return nil
+}
+
+// SetWriteDeadline applies to existing sockets and to sockets opened later.
+func (p *scopedPacket) SetWriteDeadline(t time.Time) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.writeDeadline = t
+	var err error
+	for _, s := range p.tunnel {
+		err = errors.Join(err, s.SetWriteDeadline(t))
+	}
+	for _, s := range p.direct {
+		err = errors.Join(err, s.SetWriteDeadline(t))
+	}
+	return err
+}

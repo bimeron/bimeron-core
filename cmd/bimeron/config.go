@@ -28,7 +28,8 @@ func loadConfig(flags *flag.FlagSet, path, command string) (*config.File, error)
 	if conflict {
 		return nil, fmt.Errorf("-config cannot be combined with tunnel or policy flags; edit the config instead")
 	}
-	c, err := config.Load(path)
+	// A plain WireGuard or AmneziaWG file runs directly as a VPN profile.
+	c, err := config.LoadAny(path)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func runConfig(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: bimeron run <config-file>")
 	}
-	c, err := config.Load(args[0])
+	c, err := config.LoadAny(args[0])
 	if err != nil {
 		return err
 	}
