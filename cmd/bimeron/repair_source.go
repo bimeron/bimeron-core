@@ -74,9 +74,12 @@ func validateRepairHello(a control.Response) error {
 	return nil
 }
 
-func validateRepairStatus(a control.Response, instance string) error {
+func validateServiceStatus(a control.Response, instance string, kept bool) error {
 	if instance == "" || a.Error != "" || a.Version != control.Version || a.Instance != instance {
 		return fmt.Errorf("service status not ready")
+	}
+	if kept && a.Status.HasUpdateHold() {
+		return nil
 	}
 	switch a.Status.State {
 	case core.Disconnected, core.Connected, core.Connecting, core.Reconnecting:
@@ -85,7 +88,7 @@ func validateRepairStatus(a control.Response, instance string) error {
 	return fmt.Errorf("service status not ready")
 }
 
-func verifyServiceReadiness(ctx context.Context, call func(context.Context, control.Request) (control.Response, error), validateHello func(control.Response) error) error {
+func verifyServiceReadiness(ctx context.Context, call func(context.Context, control.Request) (control.Response, error), validateHello func(control.Response) error, kept bool) error {
 	hello, err := call(ctx, control.Request{Command: "hello"})
 	if err != nil {
 		return err
@@ -99,7 +102,7 @@ func verifyServiceReadiness(ctx context.Context, call func(context.Context, cont
 	if err != nil {
 		return err
 	}
-	return validateRepairStatus(status, hello.Instance)
+	return validateServiceStatus(status, hello.Instance, kept)
 }
 
 // repairPayloadDiffers compares bytes, not PE/ELF parseability or release strings.

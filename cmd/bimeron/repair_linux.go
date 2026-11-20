@@ -291,7 +291,7 @@ func (b *linuxRepairBackend) Start(ctx context.Context) error {
 	return err
 }
 func (b *linuxRepairBackend) readyOnce(ctx context.Context) error {
-	return verifyServiceReadiness(ctx, control.CallService, validateRepairHello)
+	return verifyServiceReadiness(ctx, control.CallService, validateRepairHello, false)
 }
 func (b *linuxRepairBackend) Rollback(ctx context.Context) error {
 	if err := b.Stop(ctx); err != nil {

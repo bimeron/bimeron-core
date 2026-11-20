@@ -208,7 +208,7 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 					return err
 				}
 				if forceActivate {
-					return waitUpdatedServiceWithCall(ctx, expect.version, func(ctx context.Context, r control.Request) (control.Response, error) {
+					return waitUpdatedServiceWithCall(ctx, expect.version, false, func(ctx context.Context, r control.Request) (control.Response, error) {
 						state, err := s.Query()
 						if err != nil {
 							return control.Response{}, err
@@ -219,7 +219,7 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 						return control.CallServiceReadiness(ctx, state.ProcessId, r)
 					})
 				}
-				return waitUpdatedServiceContext(ctx, expect.version)
+				return waitUpdatedServiceWithCall(ctx, expect.version, kept, control.CallService)
 			})
 		}, func() error {
 			// A client may already have restarted the held profile on the

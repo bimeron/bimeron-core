@@ -120,9 +120,9 @@ func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string
 }
 
 func waitUpdatedServiceContext(parent context.Context, wantVersion string) error {
-	return waitUpdatedServiceWithCall(parent, wantVersion, control.CallService)
+	return waitUpdatedServiceWithCall(parent, wantVersion, false, control.CallService)
 }
-func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, call func(context.Context, control.Request) (control.Response, error)) error {
+func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, kept bool, call func(context.Context, control.Request) (control.Response, error)) error {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	var last error
@@ -130,7 +130,7 @@ func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, call
 		probe, probeCancel := context.WithTimeout(ctx, 2*time.Second)
 		err := verifyServiceReadiness(probe, call, func(hello control.Response) error {
 			return validateUpdatedHello(hello, wantVersion)
-		})
+		}, kept)
 		probeCancel()
 		if err == nil {
 			return nil

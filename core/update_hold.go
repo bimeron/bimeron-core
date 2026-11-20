@@ -70,6 +70,12 @@ func (h UpdateHold) Clear() error {
 	return nil
 }
 
+// HasUpdateHold reports the failed cleanup state of a held update profile.
+func (s Status) HasUpdateHold() bool {
+	return s.State == Failed && s.KillSwitch == KillSwitchResidual && s.ResidualReason == ResidualUpdate &&
+		validProfileID(s.ResidualProfile) && s.LastError == "cleanup_failed_run_recover"
+}
+
 // validProfileID accepts the lowercase hex SHA-256 form of Session.ProfileID.
 func validProfileID(id string) bool {
 	b, err := hex.DecodeString(id)

@@ -45,6 +45,12 @@ func TestResidualProtectionReportsUpdateHold(t *testing.T) {
 	found, installed := true, true
 	b := &protectedBackend{fakeBackend: fakeBackend{open: func(context.Context) (session, error) { return fakeSession{}, nil }}}
 	e := testEngine(b)
+	e.factory = func(cfg SessionConfig) backend {
+		if !cfg.KillSwitch {
+			return &b.fakeBackend
+		}
+		return b
+	}
 	e.opts.ResidualProtection = true
 	e.opts.UpdateHold = h
 	e.residualProbe = func() (bool, error) { return found, nil }
@@ -63,6 +69,9 @@ func TestResidualProtectionReportsUpdateHold(t *testing.T) {
 	// A run without protection leaves the record for the client to retry.
 	if err := e.Start(ctx, testConfig()); err != nil {
 		t.Fatal(err)
+	}
+	if h.Read() != heldProfile {
+		t.Fatal("unprotected start consumed the record")
 	}
 	if err := e.Stop(ctx); err != nil {
 		t.Fatal(err)
