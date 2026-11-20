@@ -165,6 +165,48 @@ These rules always hold:
 - A connection that the scope sends into the tunnel fails when `Address` has
   no address of its family.
 
+### Windows adapter name
+
+On Windows the VPN adapter of a WireGuard profile is named after the
+recognized protocol and the configuration: `Bimeron WG — <label>` or
+`Bimeron AWG — <label>`. The label is the WireGuard file name without
+`.conf`, or the profile name for explicit `Type = wireguard` options. The
+adapter description stays `Bimeron Tunnel`.
+
+- This generated name is separate from `[Interface] Name`, which keeps its
+  portable rule (1–32 ASCII letters, digits, `_`, `-`) for other profiles and
+  platforms.
+- Whitespace is collapsed. Control and format characters (including bidi
+  controls) are removed. The PowerShell wildcard characters `*`, `?`, `[`,
+  `]` and `` ` `` become `_`, because the network scripts look adapters up
+  by name. The label is limited to 48 characters and the whole name to 100
+  UTF-16 units. A label that is empty after cleanup gives `Bimeron WG` or
+  `Bimeron AWG`.
+- An adapter of another owner with the same name is never touched: the
+  session fails with `adapter_name_in_use`. A stale Bimeron adapter left by
+  a crash is reused under the same name.
+- Other platforms keep `[Interface] Name`.
+
+## Running a WireGuard file directly
+
+`bimeron run <file.conf>` and `bimeron connect -config <file.conf>` accept a
+plain WireGuard or AmneziaWG file as well as a Bimeron profile; the format is
+detected from the content. A WireGuard file runs as an in-memory VPN profile,
+the way wg-quick would run it:
+
+- `AllowedIPsMode = only`: AllowedIPs alone decide what uses the tunnel.
+- DNS and MTU come from its `[Interface]`; without them the defaults apply.
+- The profile is named after the file without `.conf`, which also names the
+  Windows adapter.
+- Nothing is written to disk. Ctrl+C stops the session and restores the
+  network settings it changed.
+
+`bimeron proxy [-listen 127.0.0.1:1080] [-policy file.json] <file.conf>` runs
+such a file as a loopback SOCKS5 proxy (TCP), without an adapter, routes or
+system DNS changes. AllowedIPs decide what uses the tunnel; with `-policy`
+the policy decides and destinations outside AllowedIPs go direct. Other key
+files keep their previous handling.
+
 ## Share links
 
 `bimeron wireguard` `import_uri` turns links into wg-quick text. A link is
