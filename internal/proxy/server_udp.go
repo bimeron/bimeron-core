@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/guard"
 	"bimeron/internal/routing"
 )
 
@@ -38,22 +39,30 @@ func (s *Server) serveUDP(ctx context.Context, control net.Conn, host string, po
 		_ = reply(control, 1)
 		return
 	}
-	defer upstream.Close()
+
 	direct, err := net.ListenPacket("udp", ":0")
 	if err != nil {
+		defer guard.CloseOnExit(func() { _ = upstream.Close() })
 		_ = reply(control, 1)
 		return
 	}
-	defer direct.Close()
 	var wg sync.WaitGroup
-	stop := context.AfterFunc(owned, func() { _ = relay.Close(); _ = upstream.Close(); _ = direct.Close(); _ = control.Close() })
-	defer func() {
-		cancel()
+	closed := make(chan struct{})
+	context.AfterFunc(owned, func() {
+		defer guard.Recover()
+		defer close(closed)
 		_ = relay.Close()
-		_ = upstream.Close()
 		_ = direct.Close()
 		_ = control.Close()
-		stop()
+		_ = upstream.Close()
+	})
+	defer func() {
+		cancel()
+		// The crash boundary must run even if a transport never closes.
+		if p := recover(); p != nil {
+			panic(p)
+		}
+		<-closed
 		wg.Wait()
 	}()
 	encoded, err := socksAddress(relay.LocalAddr().String())
@@ -104,9 +113,9 @@ func (s *Server) serveUDP(ctx context.Context, control net.Conn, host string, po
 		}
 	}
 	wg.Add(3)
-	go forward(upstream, routing.Proxy)
-	go forward(direct, routing.Direct)
-	go func() { defer wg.Done(); defer cancel(); _, _ = io.Copy(io.Discard, control) }()
+	guard.Go(func() { forward(upstream, routing.Proxy) })
+	guard.Go(func() { forward(direct, routing.Direct) })
+	go func() { defer guard.Recover(); defer wg.Done(); defer cancel(); _, _ = io.Copy(io.Discard, control) }()
 	b := make([]byte, 65535)
 	for {
 		_ = relay.SetReadDeadline(time.Now().Add(60 * time.Second))

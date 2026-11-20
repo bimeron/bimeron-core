@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/routing"
 	"bimeron/internal/telemetry"
 	"golang.getoutline.org/sdk/transport"
@@ -198,5 +199,82 @@ func TestDirectRelay(t *testing.T) {
 	var payload [4]byte
 	if _, err = io.ReadFull(c, payload[:]); err != nil || string(payload[:]) != "ping" {
 		t.Fatalf("direct relay: %v", err)
+	}
+}
+
+type panicUploadStream struct {
+	net.Conn
+	unblock <-chan struct{}
+}
+
+func (panicUploadStream) Write([]byte) (int, error) { panic("upload write") }
+func (s panicUploadStream) CloseWrite() error       { <-s.unblock; return nil }
+func (s panicUploadStream) CloseRead() error        { return s.Close() }
+
+func TestUploadPanicSkipsBlockingHalfClose(t *testing.T) {
+	unblock := make(chan struct{})
+	defer close(unblock)
+	a, b := net.Pipe()
+	defer b.Close()
+	upstream := panicUploadStream{a, unblock}
+	address, cancel, done := start(t, &Server{Stats: &telemetry.Counters{}, Proxy: transport.FuncStreamDialer(func(context.Context, string) (transport.StreamConn, error) { return upstream, nil })})
+	rethrown := make(chan any, 1)
+	defer guard.SetRethrow(func(p any) { rethrown <- p })()
+	c := handshake(t, address, 1)
+	var response [10]byte
+	if _, err := io.ReadFull(c, response[:]); err != nil || response[1] != 0 {
+		t.Fatalf("CONNECT failed: %v %v", response, err)
+	}
+	if _, err := c.Write([]byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-rethrown:
+		if p != "upload write" {
+			t.Fatal(p)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("upload blocked before recovery")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server shutdown blocked")
+	}
+}
+
+type panicDownloadStream struct {
+	transport.StreamConn
+	unblock <-chan struct{}
+}
+
+func (panicDownloadStream) Read([]byte) (int, error) { panic("download read") }
+func (s panicDownloadStream) Close() error           { <-s.unblock; return s.StreamConn.Close() }
+
+func TestDownloadPanicWithBlockedUpstreamClose(t *testing.T) {
+	unblock := make(chan struct{})
+	defer close(unblock)
+	rethrown := make(chan any, 1)
+	defer guard.SetRethrow(func(p any) { rethrown <- p })()
+
+	upstream, peer := net.Pipe()
+	defer peer.Close()
+	address, cancel, _ := start(t, &Server{Proxy: transport.FuncStreamDialer(func(context.Context, string) (transport.StreamConn, error) {
+		return panicDownloadStream{panicUploadStream{upstream, unblock}, unblock}, nil
+	})})
+	defer cancel()
+	client := handshake(t, address, 1)
+	var response [10]byte
+	if _, err := io.ReadFull(client, response[:]); err != nil || response[1] != 0 {
+		t.Fatalf("CONNECT failed: %v %v", response, err)
+	}
+	select {
+	case p := <-rethrown:
+		if p != "download read" {
+			t.Fatal(p)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream close blocked panic dispatch")
 	}
 }

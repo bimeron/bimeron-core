@@ -113,7 +113,7 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		return nil, fault("ikev2_protection_install_failed", false)
 	}
 	c.updateNative(func(n *NativeStatus) { n.WFP = "active"; n.DNS = "installing" })
-	protected := &protectedIKEv2Session{native: observed, guard: guard, update: c.nativeUpdate, cleanupDNS: func() error {
+	protected := &protectedIKEv2Session{setupContext: ctx, native: observed, guard: guard, crashClaimed: c.nativeCrashClaimed, commitStop: c.commitNativeStop, update: c.nativeUpdate, cleanupDNS: func() error {
 		cleanup, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		return windowsnet.CleanupIKEv2DNS(cleanup, tag, network.DNS)
@@ -124,11 +124,15 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		report("ikev2_dns_protection", "Configuring protected tunnel DNS")
 		dnsSetup, finish := context.WithTimeout(context.Background(), 45*time.Second)
 		err = windowsnet.ConfigureIKEv2DNS(dnsSetup, tag, network.DNS)
-		if dnsSetup.Err() != nil {
+		if timeoutErr := dnsSetup.Err(); timeoutErr != nil {
+			err = timeoutErr
 			protected.lost = true
 			c.updateNative(func(n *NativeStatus) { n.DNS = "unknown" })
 		} // Outcome uncertain; explicit recovery.
 		finish()
+		if err == nil {
+			c.updateNative(func(n *NativeStatus) { n.DNS = "active" })
+		}
 	}
 	if err == nil {
 		err = ctx.Err()
@@ -142,7 +146,6 @@ func (ikev2Backend) Open(ctx context.Context, c SessionConfig, report func(strin
 		}
 		return nil, fault("ikev2_dns_protection_install_failed", false)
 	}
-	c.updateNative(func(n *NativeStatus) { n.DNS = "active" })
 	report("ikev2_protection_active", "Persistent Windows traffic protection and tunnel DNS are active")
 	return protected, nil
 }

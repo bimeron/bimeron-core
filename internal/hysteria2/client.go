@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	hy "github.com/apernet/hysteria/core/v2/client"
 	hyerrors "github.com/apernet/hysteria/core/v2/errors"
 	"github.com/apernet/quic-go"
@@ -159,6 +160,7 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	}
 	done := make(chan result, 1)
 	go func() {
+		defer guard.Recover()
 		conn, err := c.upstream.TCP(address)
 		done <- result{conn, err}
 	}()
@@ -170,6 +172,7 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 		return streamConn{Conn: r.conn}, nil
 	case <-ctx.Done():
 		go func() {
+			defer guard.Recover()
 			if r := <-done; r.conn != nil {
 				_ = r.conn.Close()
 			}
@@ -225,7 +228,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		p.stop = stop
 	}
 	p.mu.Unlock()
-	go p.receive()
+	guard.Go(func() { p.receive() })
 	return p, nil
 }
 

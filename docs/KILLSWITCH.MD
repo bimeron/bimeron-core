@@ -147,6 +147,22 @@ session and reports `failed` with `cleanup_failed_run_recover` and
 `KillSwitch: "residual"` while the filters keep blocking. Connect a profile
 with `KillSwitch = true` or run `recover` to leave this state.
 
+An internal error (a Go panic) in a goroutine that Core starts for a session,
+such as connection relays, DNS handling, transport read loops or control
+workers, is handled like a crash on the session itself: the kill switch
+filters stay installed, the session's other network state (tunnel adapter,
+routes, DNS settings, listeners) is released, and then the process exits with
+the original panic. A native IKEv2 session also keeps its tunnel DNS rule, as
+after any crash, until `recover` (see [IKEV2.MD](IKEV2.MD)). On Android and
+Apple the process likewise exits after the cleanup, which can delay the exit
+by up to the bound below; a panic in one engine of a process cleans up every
+engine in that process. The installed service is then restarted by the service
+manager as after any crash; a console session simply ends. Cleanup is bounded
+to 30 seconds; after that the process exits anyway. Without an active session
+the process exits immediately, as before. Timer callbacks and goroutines
+inside third-party libraries are not covered and still end the process
+without cleanup.
+
 Restarting with `KillSwitch = true` atomically replaces old filters at the
 start of the new session. With `KillSwitch = false`, protection left after a
 crash is not removed automatically: the command returns

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/routing"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -251,5 +252,85 @@ func TestUDPPeersLeastRecentlyUsedEviction(t *testing.T) {
 	}
 	if peers.domains != 0 || peers.allows("192.0.2.1:53", routing.Proxy) {
 		t.Fatal("evicted domain destination still accepted")
+	}
+}
+
+type panicPacket struct {
+	net.PacketConn
+	release chan struct{}
+}
+
+func (p panicPacket) ListenPacket(context.Context) (net.PacketConn, error) { return p, nil }
+func (p panicPacket) WriteTo([]byte, net.Addr) (int, error)                { panic("UDP write") }
+func (p panicPacket) Close() error                                         { <-p.release; return p.PacketConn.Close() }
+
+func TestUDPWritePanicWithBlockedUpstreamClose(t *testing.T) {
+	upstream, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	packet := panicPacket{upstream, release}
+	rethrown := make(chan any, 1)
+	defer guard.SetRethrow(func(p any) { rethrown <- p })()
+	defer close(release)
+
+	client := socksUDP(t, &Server{Proxy: &transport.TCPDialer{}, Packet: packet})
+	_, err = client.WriteTo([]byte("data"), udpTarget("192.0.2.1:53"))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-rethrown:
+		if p != "UDP write" {
+			t.Fatal(p)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked upstream close prevented panic dispatch")
+	}
+}
+
+type panicClosePacket struct{ net.PacketConn }
+
+func (p panicClosePacket) ListenPacket(context.Context) (net.PacketConn, error) { return p, nil }
+func (p panicClosePacket) Close() error {
+	_ = p.PacketConn.Close()
+	panic("UDP close")
+}
+
+func TestUDPAssociationClosePanic(t *testing.T) {
+	upstream, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstream.Close()
+	rethrown := make(chan any, 1)
+	defer guard.SetRethrow(func(p any) { rethrown <- p })()
+	address, cancel, done := start(t, &Server{Proxy: &transport.TCPDialer{}, Packet: panicClosePacket{upstream}})
+	defer cancel()
+	host, portText, _ := net.SplitHostPort(address)
+	port, _ := strconv.Atoi(portText)
+	client, err := (&SOCKS5{Endpoint: accesskey.Endpoint{Host: host, Port: port}}).ListenPacket(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	cancel()
+	select {
+	case p := <-rethrown:
+		if p != "UDP close" {
+			t.Fatal(p)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream close panic was not dispatched")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("UDP association prevented shutdown")
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -87,7 +88,7 @@ func New(profile accesskey.Profile, dialer net.Dialer) (*Client, error) {
 		return nil, err
 	}
 	c := &Client{profile: profile, dialer: dialer, padding: padding, active: make(map[*session]struct{}), stop: make(chan struct{})}
-	go c.reapIdle()
+	guard.Go(func() { c.reapIdle() })
 	return c, nil
 }
 
@@ -189,7 +190,7 @@ func (c *Client) newSession(ctx context.Context) (*session, error) {
 		s.discard()
 		return nil, err
 	}
-	go s.readLoop()
+	guard.Go(func() { s.readLoop() })
 	return s, nil
 }
 

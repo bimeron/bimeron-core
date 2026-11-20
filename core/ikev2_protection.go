@@ -13,19 +13,22 @@ type retainedGuard interface {
 // Native protection is released only after an explicitly requested stop and
 // successful RAS/DNS cleanup. Unexpected loss keeps the persistent policy armed.
 type protectedIKEv2Session struct {
-	native     session
-	guard      retainedGuard
-	cleanupDNS func() error
-	mu         sync.Mutex
-	lost       bool
-	once       sync.Once
-	closeErr   error
-	update     func(func(*NativeStatus))
+	setupContext context.Context
+	commitStop   func() bool
+	crashClaimed func() bool
+	native       session
+	guard        retainedGuard
+	cleanupDNS   func() error
+	mu           sync.Mutex
+	lost         bool
+	once         sync.Once
+	closeErr     error
+	update       func(func(*NativeStatus))
 }
 
 func (s *protectedIKEv2Session) Wait(ctx context.Context) error {
 	err := s.native.Wait(ctx)
-	if ctx.Err() == nil {
+	if ctx.Err() == nil || context.Cause(ctx) == errGuardedPanic {
 		s.mu.Lock()
 		s.lost = true
 		s.mu.Unlock()
@@ -51,7 +54,9 @@ func (s *protectedIKEv2Session) Close() error {
 		s.mu.Lock()
 		lost := s.lost
 		s.mu.Unlock()
-		if err != nil || lost {
+		// Open may close this session before Wait observes a crash.
+		// Stop can win context cancellation before the guard claims a crash.
+		if err != nil || lost || (s.crashClaimed != nil && s.crashClaimed()) || (s.setupContext != nil && context.Cause(s.setupContext) == errGuardedPanic) {
 			_ = s.guard.Retain()
 			update(func(n *NativeStatus) {
 				n.WFP = "retained"
@@ -78,7 +83,15 @@ func (s *protectedIKEv2Session) Close() error {
 			s.closeErr = fault("ikev2_dns_cleanup_failed_run_recover", false)
 			return
 		}
-		update(func(n *NativeStatus) { n.DNS = "inactive"; n.DNSCleanup = "succeeded"; n.WFPCleanup = "pending" })
+		update(func(n *NativeStatus) { n.DNS = "inactive"; n.DNSCleanup = "succeeded" })
+		// Native WFP release is the final protection decision for this run.
+		if s.commitStop != nil && !s.commitStop() {
+			_ = s.guard.Retain()
+			update(func(n *NativeStatus) { n.WFP = "retained"; n.RecoveryRequired = true })
+			s.closeErr = fault("ikev2_protection_retained_run_recover", false)
+			return
+		}
+		update(func(n *NativeStatus) { n.WFPCleanup = "pending" })
 		if s.guard.Close() != nil {
 			update(func(n *NativeStatus) { n.WFP = "unknown"; n.WFPCleanup = "failed"; n.RecoveryRequired = true })
 			s.closeErr = fault("ikev2_protection_cleanup_failed_run_recover", false)

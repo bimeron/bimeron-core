@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"bimeron/internal/guard"
 )
 
 var (
@@ -148,7 +150,7 @@ func (c *maintenanceCoordinator) admit(request maintenanceRequest) (<-chan struc
 	c.done = make(chan struct{})
 	done := c.done
 	c.mu.Unlock()
-	go c.stop(request, done)
+	guard.Go(func() { c.stop(request, done) })
 	return done, nil
 }
 func (c *maintenanceCoordinator) stop(request maintenanceRequest, done chan struct{}) {

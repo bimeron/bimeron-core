@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/guard"
 	"bimeron/internal/relay"
 	"bimeron/internal/routing"
 	"bimeron/internal/telemetry"
@@ -63,6 +64,7 @@ func (h *Handler) start(c net.Conn, run func(closeLocal func())) {
 	h.wg.Add(1)
 	h.mu.Unlock()
 	go func() {
+		defer guard.Recover()
 		defer h.wg.Done()
 		defer func() { <-h.slots }()
 		closeLocal := sync.OnceFunc(func() { _ = c.Close() })
@@ -125,7 +127,7 @@ func (h *Handler) HandleTCP(c adapter.TCPConn) {
 		h.Stats.EstablishTCP()
 		defer h.Stats.EndTCP()
 		closeUpstream := sync.OnceFunc(func() { _ = upstream.Close() })
-		defer closeUpstream()
+		defer guard.CloseOnExit(closeUpstream)
 		stop := context.AfterFunc(h.ctx, closeUpstream)
 		defer stop()
 		idleLimit, halfIdle := relay.IdleTimeout, relay.HalfClosedIdleTimeout
@@ -137,10 +139,11 @@ func (h *Handler) HandleTCP(c adapter.TCPConn) {
 		defer idle.Stop()
 		done := make(chan struct{})
 		go func() {
+			defer guard.Recover()
+			defer close(done)
 			_, _ = h.Stats.CopyUp(idle.Writer(upstream), c)
 			idle.SetLimit(halfIdle)
 			_ = upstream.CloseWrite()
-			close(done)
 		}()
 		_, err = h.Stats.CopyDown(idle.Writer(c), upstream)
 		idle.SetLimit(halfIdle)
@@ -185,7 +188,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 				h.Stats.FailUDP()
 				return
 			}
-			defer direct.Close()
+			defer guard.CloseOnExit(func() { _ = direct.Close() })
 		} else {
 			if h.UDP == nil {
 				return
@@ -195,7 +198,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 				h.Stats.FailUDP()
 				return
 			}
-			defer upstream.Close()
+			defer guard.CloseOnExit(func() { _ = upstream.Close() })
 		}
 		h.Stats.EstablishUDP()
 		defer h.Stats.EndUDP()
@@ -214,6 +217,7 @@ func (h *Handler) HandleUDP(c adapter.UDPConn) {
 		defer stop()
 		done := make(chan struct{})
 		go func() {
+			defer guard.Recover()
 			defer close(done)
 			defer c.Close()
 			buffer := make([]byte, 16*1024)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"github.com/quic-go/quic-go"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -156,9 +157,9 @@ func (c *Client) acquire(ctx context.Context, udp bool) (*session, uint16, error
 	if old != nil && old.refs == 0 {
 		_ = old.conn.CloseWithError(0, "drained")
 	}
-	go c.sendDissociates(s)
-	go c.readPackets(s)
-	go c.heartbeat(conn)
+	guard.Go(func() { c.sendDissociates(s) })
+	guard.Go(func() { c.readPackets(s) })
+	guard.Go(func() { c.heartbeat(conn) })
 	return s, s.reserve(udp), nil
 }
 
@@ -268,7 +269,7 @@ func (c *Client) readPackets(s *session) {
 		if err != nil {
 			return
 		}
-		go c.readPacketStream(s, stream)
+		guard.Go(func() { c.readPacketStream(s, stream) })
 	}
 }
 
@@ -380,6 +381,7 @@ func (s *streamConn) Close() error {
 		_ = s.Stream.Close()
 		s.writeMu.Unlock()
 		go func() {
+			defer guard.Recover()
 			timer := time.NewTimer(closeSendTimeout)
 			defer timer.Stop()
 			select {

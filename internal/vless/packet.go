@@ -12,6 +12,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"bimeron/internal/guard"
 )
 
 const maxPacket = 8192 // Xray's common/buf.Size at the pinned protocol version.
@@ -121,7 +123,7 @@ func (p *packetConn) WriteTo(b []byte, address net.Addr) (int, error) {
 			}
 			s = candidate
 			p.sessions[key] = s
-			go p.readSession(key, s)
+			guard.Go(func() { p.readSession(key, s) })
 		} else {
 			_ = conn.Close()
 		}

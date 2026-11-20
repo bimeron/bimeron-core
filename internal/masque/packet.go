@@ -11,6 +11,8 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/quic-go/quicvarint"
+
+	"bimeron/internal/guard"
 )
 
 const maxDestinations = 32
@@ -59,7 +61,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	p.mu.Lock()
 	p.stop = context.AfterFunc(owned, func() { _ = p.Close() })
 	p.mu.Unlock()
-	go p.reap()
+	guard.Go(func() { p.reap() })
 	return p, nil
 }
 
@@ -68,6 +70,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 func (p *packetConn) writeContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(p.ctx)
 	go func() {
+		defer guard.Recover()
 		for {
 			p.mu.Lock()
 			deadline, changed := p.writeDeadline, p.changed
@@ -160,8 +163,8 @@ func (p *packetConn) WriteTo(b []byte, address net.Addr) (int, error) {
 		p.sessions[target] = session
 		p.wg.Add(2)
 		p.mu.Unlock()
-		go p.receive(target, session)
-		go p.capsules(session)
+		guard.Go(func() { p.receive(target, session) })
+		guard.Go(func() { p.capsules(session) })
 	}
 	p.mu.Lock()
 	session.used = time.Now()

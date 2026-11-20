@@ -2,6 +2,7 @@ package control
 
 import (
 	core "bimeron/core"
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/telemetry"
 	"context"
@@ -236,53 +237,52 @@ func TestListenerFailureAbandonsSessionBeforeCancel(t *testing.T) {
 	}
 }
 
-// panickingListener hands out queued connections, then panics.
-type panickingListener struct {
-	conns chan net.Conn
-	fail  chan struct{}
-}
+type panickingListener struct{ scriptedListener }
 
 func (l panickingListener) Accept() (net.Conn, error) {
-	select {
-	case c := <-l.conns:
-		return c, nil
-	case <-l.fail:
+	c, err := l.scriptedListener.Accept()
+	if err != nil {
 		panic("accept")
 	}
+	return c, nil
 }
-func (panickingListener) Close() error   { return nil }
-func (panickingListener) Addr() net.Addr { return &net.TCPAddr{} }
 
-// A panic in Serve keeps kill switch protection: the session is marked
-// abandoned while its context is still live, then stopped, and the panic is
-// rethrown.
-func TestServePanicAbandonsSession(t *testing.T) {
+func TestServeDispatchesListenerPanicBeforeSessionCancellation(t *testing.T) {
 	e := &abandonEngine{fakeEngine: fakeEngine{state: core.Disconnected, events: make(chan core.Event)}}
 	s := NewServer(e)
 	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
-	l := panickingListener{conns: make(chan net.Conn), fail: make(chan struct{})}
-	panicked := make(chan any, 1)
+	l := panickingListener{scriptedListener{conns: make(chan net.Conn), fail: make(chan struct{})}}
+	dispatched := false
+	defer guard.Register(func(p any) <-chan struct{} {
+		e.mu.Lock()
+		dispatched = p == "accept" && !e.marked && !e.stopped && e.session != nil && e.session.Err() == nil
+		e.mu.Unlock()
+		done := make(chan struct{})
+		close(done)
+		return done
+	})()
+	result := make(chan any, 1)
 	go func() {
-		defer func() { panicked <- recover() }()
+		defer func() { result <- recover() }()
 		_ = s.Serve(context.Background(), l)
 	}()
 	client, server := net.Pipe()
 	l.conns <- server
 	path, _ := filepath.Abs("held.conf")
-	ctx, end := context.WithTimeout(context.Background(), 3*time.Second)
-	defer end()
-	if _, err := exchange(ctx, client, Request{Command: "start", Config: path}); err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := exchange(ctx, client, Request{Command: "start", Config: path})
 	client.Close()
 	close(l.fail)
-	if p := <-panicked; p != "accept" {
-		t.Fatal("panic not rethrown", p)
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if !e.marked || !e.liveAtMark || !e.stopped {
-		t.Fatal("panic did not abandon the live session", e.marked, e.liveAtMark, e.stopped)
+	select {
+	case p := <-result:
+		// The session already ran its crash cleanup through the guard; a real
+		// engine's Stop would wait for a run that never finishes.
+		if err != nil || p != "accept" || !dispatched || e.marked || e.stopped {
+			t.Fatalf("start=%v panic=%v live at dispatch=%v marked=%v stopped=%v", err, p, dispatched, e.marked, e.stopped)
+		}
+	case <-ctx.Done():
+		t.Fatal("listener panic stalled")
 	}
 }
 

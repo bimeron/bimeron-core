@@ -12,6 +12,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
+	"bimeron/internal/guard"
 	"bimeron/internal/hysteria2"
 	"bimeron/internal/masque"
 	"bimeron/internal/naive"
@@ -600,8 +601,9 @@ func (proxyBackend) Open(ctx context.Context, c SessionConfig, report func(strin
 	}
 	report("proxy_listen", fmt.Sprintf("SOCKS5 %s listening on %s", protocols, l.Addr()))
 	go func() {
+		defer guard.Recover()
+		defer close(s.done)
 		s.err = (&proxy.Server{Proxy: d, Packet: packets, Policy: c.Policy, Stats: c.stats, Auth: socksauth.New(c.ListenUsername, c.ListenPassword)}).Serve(serveCtx, l)
-		close(s.done)
 	}()
 	return s, nil
 }

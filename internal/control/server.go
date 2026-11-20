@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	core "bimeron/core"
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/sshtunnel"
 	"bimeron/internal/systemvpn"
@@ -189,18 +190,22 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	defer func() {
-		// A panic here is not a user's stop either: keep protection, close the
-		// session, then rethrow.
-		panicked := recover()
-		stopEngine := !s.foreground || ctx.Err() != nil || panicked != nil
+		if panicked := recover(); panicked != nil {
+			// guard.Recover below has already handed the panic to the active
+			// session, which ran its crash cleanup and kept protection (or there
+			// was no session). That session never finishes its run, so waiting
+			// for workers or stopping the engine could block forever: release
+			// the listener and rethrow.
+			cancel()
+			_ = l.Close()
+			panic(panicked)
+		}
+		stopEngine := !s.foreground || ctx.Err() != nil
 		// A broken listener is not a user's stop: keep kill switch protection.
 		// Sessions run under contexts derived from ctx, so mark the session
 		// before anything is cancelled.
-		if a, ok := s.engine.(abandoner); ok && stopEngine && (panicked != nil || result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
+		if a, ok := s.engine.(abandoner); ok && stopEngine && (result != nil && ctx.Err() == nil || s.abandonOnExit.Load()) {
 			a.MarkAbandon()
-		}
-		if panicked != nil {
-			defer panic(panicked)
 		}
 		cancel()
 		_ = l.Close()
@@ -209,9 +214,12 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 			result = errors.Join(result, s.engine.Stop(context.Background()))
 		}
 	}()
+	// Claim active sessions before shutdown can cancel them or commit a normal stop.
+	defer guard.Recover()
 	slots := make(chan struct{}, 32)
 	workers.Add(1)
 	go func() {
+		defer guard.Recover()
 		defer workers.Done()
 		for {
 			select {
@@ -246,7 +254,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 			continue
 		}
 		workers.Add(1)
-		go func() { defer workers.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
+		go func() { defer guard.Recover(); defer workers.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
 	}
 }
 func (s *Server) record(e core.Event) {

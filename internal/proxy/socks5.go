@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"golang.getoutline.org/sdk/transport"
 )
 
@@ -215,7 +216,7 @@ func (s *SOCKS5) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		return nil, fmt.Errorf("invalid SOCKS5 UDP relay")
 	}
 	u := &socksPacketConn{PacketConn: packet, control: c, relay: relayAddr}
-	go func() { _, _ = io.Copy(io.Discard, c); _ = u.Close() }()
+	go func() { defer guard.Recover(); _, _ = io.Copy(io.Discard, c); _ = u.Close() }()
 	return u, nil
 }
 

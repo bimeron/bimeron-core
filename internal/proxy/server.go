@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/guard"
 	"bimeron/internal/relay"
 	"bimeron/internal/routing"
 	"bimeron/internal/socksauth"
@@ -129,7 +130,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 			continue
 		}
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
+		go func() { defer guard.Recover(); defer wg.Done(); defer func() { <-slots }(); s.handle(ctx, c) }()
 	}
 }
 func reply(c net.Conn, code byte) error {
@@ -239,7 +240,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	s.Stats.EstablishTCP()
 	defer s.Stats.EndTCP()
 	closeUpstream := sync.OnceFunc(func() { _ = upstream.Close() })
-	defer closeUpstream()
+	defer guard.CloseOnExit(closeUpstream)
 	stopUpstream := context.AfterFunc(ctx, closeUpstream)
 	defer stopUpstream()
 	if err := reply(c, 0); err != nil {
@@ -255,10 +256,11 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	defer idle.Stop()
 	done := make(chan struct{})
 	go func() {
+		defer guard.Recover()
+		defer close(done)
 		_, _ = s.Stats.CopyUp(idle.Writer(upstream), c)
 		idle.SetLimit(halfIdle)
 		_ = upstream.CloseWrite()
-		close(done)
 	}()
 	_, err = s.Stats.CopyDown(idle.Writer(c), upstream)
 	idle.SetLimit(halfIdle)

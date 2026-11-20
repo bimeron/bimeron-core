@@ -6,11 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/guard"
 	"bimeron/internal/problem"
 	"bimeron/internal/telemetry"
 )
 
 type State string
+
+var errGuardedPanic = errors.New("guarded goroutine panicked")
 
 var ErrSessionRunning = errors.New("session already running")
 
@@ -548,19 +551,49 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	release := func() {}
 	var owner protectionOwner
 	acquired := sync.OnceFunc(func() { close(r.acquired) })
+	// A panic in a guarded Core goroutine (relays, DNS, transport loops) ends
+	// the run through the same crash path as a panic on this goroutine.
+	ctx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
+	crash := make(chan any, 1)
+	cleaned := make(chan struct{})
+	finished := sync.OnceFunc(func() { close(cleaned) })
+	crashClaimed, commitStop, unregister := guard.RegisterSession(func(p any) <-chan struct{} {
+		select {
+		case crash <- p:
+		default:
+		}
+		cancelRun(errGuardedPanic)
+		return cleaned
+	})
+	cfg.nativeCrashClaimed = crashClaimed
+	cfg.commitNativeStop = commitStop
+	// Runs after the handler below, so a second panic during crash cleanup
+	// still waits for it.
+	defer unregister()
 	defer func() {
 		acquired()
-		if p := recover(); p != nil {
+		p := recover()
+		guarded := false
+		if p == nil && !commitStop() {
+			p = <-crash
+			guarded = true
+		}
+		if p != nil {
 			// A crash keeps persistent protection, as after process termination.
 			if owner != nil {
 				owner.RetainProtection()
 			}
 			release()
-			// Rethrow from this handler, before the stack unwinds: the crash
-			// traceback then still shows the frames where the panic happened.
-			e.repanic(p)
+			finished()
+			if !guarded {
+				e.repanic(p)
+			}
+			// A guarded goroutine rethrows its own panic, with the original
+			// stack, once cleaned is closed.
 			return
 		}
+		defer finished()
 		e.mu.Lock()
 		handover := e.handover
 		e.mu.Unlock()

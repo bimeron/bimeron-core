@@ -16,6 +16,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/displaytext"
+	"bimeron/internal/guard"
 	"bimeron/internal/safefile"
 	"bimeron/internal/sshtunnel/knownhosts"
 	"bimeron/internal/streamtransport"
@@ -406,6 +407,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		err  error
 	}, 1)
 	go func() {
+		defer guard.Recover()
 		conn, err := c.ssh.Dial("tcp", target)
 		result <- struct {
 			conn net.Conn
@@ -425,6 +427,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		return streamConn{Conn: r.conn, closeWrite: stream.CloseWrite}, nil
 	case <-ctx.Done():
 		go func() {
+			defer guard.Recover()
 			r := <-result
 			if r.conn != nil {
 				r.conn.Close()
