@@ -9,6 +9,8 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -253,9 +255,11 @@ func TestServeDispatchesListenerPanicBeforeSessionCancellation(t *testing.T) {
 	s.load = func(string) (core.SessionConfig, error) { return core.SessionConfig{}, nil }
 	l := panickingListener{scriptedListener{conns: make(chan net.Conn), fail: make(chan struct{})}}
 	dispatched := false
+	var stack string
 	defer guard.Register(func(p any) <-chan struct{} {
+		stack = string(debug.Stack())
 		e.mu.Lock()
-		dispatched = p == "accept" && !e.marked && !e.stopped && e.session != nil && e.session.Err() == nil
+		dispatched = p == "accept" && e.liveAtMark && e.marked && !e.stopped && e.session != nil && e.session.Err() == nil
 		e.mu.Unlock()
 		done := make(chan struct{})
 		close(done)
@@ -276,9 +280,12 @@ func TestServeDispatchesListenerPanicBeforeSessionCancellation(t *testing.T) {
 	close(l.fail)
 	select {
 	case p := <-result:
+		if !strings.Contains(stack, "panickingListener.Accept(") {
+			t.Fatalf("listener panic frame missing at guard dispatch:\n%s", stack)
+		}
 		// The session already ran its crash cleanup through the guard; a real
 		// engine's Stop would wait for a run that never finishes.
-		if err != nil || p != "accept" || !dispatched || e.marked || e.stopped {
+		if err != nil || p != "accept" || !dispatched || e.stopped {
 			t.Fatalf("start=%v panic=%v live at dispatch=%v marked=%v stopped=%v", err, p, dispatched, e.marked, e.stopped)
 		}
 	case <-ctx.Done():

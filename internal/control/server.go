@@ -191,11 +191,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	defer stop()
 	defer func() {
 		if panicked := recover(); panicked != nil {
-			// guard.Recover below has already handed the panic to the active
-			// session, which ran its crash cleanup and kept protection (or there
-			// was no session). That session never finishes its run, so waiting
-			// for workers or stopping the engine could block forever: release
-			// the listener and rethrow.
+			// A guard-claimed run may never finish. Release the listener
+			// without waiting for Stop or the workers.
 			cancel()
 			_ = l.Close()
 			panic(panicked)
@@ -216,6 +213,16 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) (result error) {
 	}()
 	// Claim active sessions before shutdown can cancel them or commit a normal stop.
 	defer guard.Recover()
+	defer func() {
+		if p := recover(); p != nil {
+			// Start may have admitted a run whose guard is not registered yet.
+			// Close admission and mark that run before dispatch or cancellation.
+			if a, ok := s.engine.(abandoner); ok {
+				a.MarkAbandon()
+			}
+			panic(p)
+		}
+	}()
 	slots := make(chan struct{}, 32)
 	workers.Add(1)
 	go func() {

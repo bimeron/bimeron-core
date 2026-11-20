@@ -902,10 +902,16 @@ func TestAbandonDuringHandoverWithoutCancelKeepsProtection(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- e.Start(ctx, otherKillSwitchProfile()) }()
 	awaitStatus(t, e, func(s Status) bool { return s.State == Stopping })
+	// A second Start races the owner failure while handover owns lifecycle.
+	queued := make(chan error, 1)
+	go func() { queued <- e.Start(ctx, killSwitchConfig()) }()
 	e.MarkAbandon()
 	close(release)
 	if err := <-result; !errors.Is(err, ErrEngineExiting) {
 		t.Fatal("handover started after the owner failed", err)
+	}
+	if err := <-queued; !errors.Is(err, ErrEngineExiting) {
+		t.Fatal("concurrent start admitted after owner failure", err)
 	}
 	if acquires, _, retains, installed := b.snapshot(); acquires != 1 || retains != 1 || !installed {
 		t.Fatal("protection released", acquires, retains, installed)

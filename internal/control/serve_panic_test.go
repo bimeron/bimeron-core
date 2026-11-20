@@ -87,7 +87,7 @@ func TestServeListenerPanicWithoutSession(t *testing.T) {
 	close(l.fail)
 	select {
 	case p := <-result:
-		if p != "accept" || e.marked || e.stopped {
+		if p != "accept" || !e.marked || e.stopped {
 			t.Fatal(p, e.marked, e.stopped)
 		}
 	case <-time.After(5 * time.Second):
