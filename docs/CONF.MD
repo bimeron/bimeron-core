@@ -73,6 +73,9 @@ for the rules that apply to every path in a profile.
 
 ### WireGuard and AmneziaWG (experimental)
 
+To use a standalone WireGuard file from the terminal, see the
+[WireGuard CLI guide](WIREGUARD_CLI.MD).
+
 ```ini
 [AccessKey]
 File = home.wg.conf

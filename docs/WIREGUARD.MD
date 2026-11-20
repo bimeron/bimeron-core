@@ -189,6 +189,9 @@ adapter description stays `Bimeron Tunnel`.
 
 ## Running a WireGuard file directly
 
+For step-by-step commands and connection checks, see the
+[WireGuard CLI guide](WIREGUARD_CLI.MD).
+
 `bimeron run <file.conf>` and `bimeron connect -config <file.conf>` accept a
 plain WireGuard or AmneziaWG file as well as a Bimeron profile; the format is
 detected from the content. A WireGuard file runs as an in-memory VPN profile,

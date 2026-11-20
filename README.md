@@ -73,6 +73,9 @@ Connections to a remote SOCKS5 upstream are not encrypted by the core. HTTP CONN
 and Basic credentials use plaintext transport. Not every combination has passed live
 interoperability testing.
 
+To start a VPN or a local SOCKS5 proxy from a WireGuard file, follow the
+[WireGuard CLI guide](docs/WIREGUARD_CLI.MD).
+
 On Windows, an [experimental IKEv2/IPsec backend](docs/IKEV2.MD) controls a pre-provisioned
 system profile instead of an upstream from the table. It requires an elevated foreground process
 and has no local SOCKS mode, routing rules, or traffic statistics. `bimeron ikev2 profile`
