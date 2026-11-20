@@ -144,3 +144,39 @@ func TestDialStreamRejectionIsSanitized(t *testing.T) {
 		t.Fatal("server message leaked")
 	}
 }
+
+type contextUpstream struct {
+	blockingUpstream
+	cancelled chan struct{}
+	err       error
+}
+
+func (u *contextUpstream) TCPContext(ctx context.Context, _ string) (net.Conn, error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	<-ctx.Done()
+	close(u.cancelled)
+	return nil, ctx.Err()
+}
+
+func TestDialStreamPassesContextToUpstream(t *testing.T) {
+	upstream := &contextUpstream{cancelled: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := (&Client{upstream: upstream}).DialStream(ctx, "example.com:443"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DialStream error: %v", err)
+	}
+	select {
+	case <-upstream.cancelled:
+	default:
+		t.Fatal("upstream did not observe cancellation")
+	}
+
+	rejected := &contextUpstream{err: hyerrors.DialError{Message: "synthetic-secret"}}
+	_, err := (&Client{upstream: rejected}).DialStream(context.Background(), "example.com:443")
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != "hysteria2_dial_rejected" || strings.Contains(err.Error(), "synthetic-secret") {
+		t.Fatalf("rejection: %#v", err)
+	}
+}

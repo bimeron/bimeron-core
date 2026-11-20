@@ -21,8 +21,8 @@ or `chacha20-poly1305`. The core supports TCP and UDP upstream requests on
 each supported network. TLS certificates are verified; REALITY authenticates
 the server with its public key and requires a client fingerprint. WebSocket
 and HTTPUpgrade require ALPN `http/1.1` when explicitly set; gRPC uses HTTP/2.
-Their upgrade responses, including bytes read ahead with them, are limited to
-64 KiB.
+For both, the server's upgrade response, including any bytes read ahead with
+it, is limited to 64 KiB.
 XHTTP accepts `h2` or `h3` over TLS. An omitted ALPN selects the transport
 default. XHTTP `extra` is a JSON string with the validated settings described
 in [XHTTP transport options](VLESS_TRANSPORTS.MD).
