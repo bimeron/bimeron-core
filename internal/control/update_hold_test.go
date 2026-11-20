@@ -2,7 +2,9 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -192,5 +194,54 @@ func TestUpdateHoldBoundToUpdaterAndCancelledByStop(t *testing.T) {
 	s.readinessAnswer(Request{Version: Version, Command: "prepare_update"}, fakeWatch{alive: true, closed: &closed})
 	if kept, _ := s.StopForUpdate(nil); !kept || !e.abandoned || closed != 4 {
 		t.Fatal("live updater's hold not applied", kept, e.abandoned, closed)
+	}
+}
+
+func (s *Server) readinessResponse(r Request) Response { return s.readinessAnswer(r, nil) }
+func (s *Server) readinessAnswer(r Request, peer ProcessWatch) Response {
+	var a Response
+	s.replyReadiness(context.Background(), time.Now().Add(time.Minute), r, peer, func(v any) error { a = v.(Response); return nil })
+	return a
+}
+
+func TestPrepareConnectionFailedWrite(t *testing.T) {
+	s := NewServer(&holdEngine{})
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	closed := 0
+	s.PeerProcess = func(net.Conn) ProcessWatch { return fakeWatch{alive: true, closed: &closed} }
+	go func() { defer close(done); s.readinessConnection(context.Background(), server) }()
+	if err := json.NewEncoder(client).Encode(Request{Version: Version, Command: "prepare_update"}); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	<-done
+	if kept, _ := s.StopForUpdate(nil); kept || closed != 1 {
+		t.Fatal(kept, closed)
+	}
+}
+
+func TestPrepareConnectionDelayedCommand(t *testing.T) {
+	e := &holdEngine{}
+	s := NewServer(e)
+	client, server := net.Pipe()
+	defer client.Close()
+	done, admitted := make(chan struct{}), make(chan struct{})
+	closed := 0
+	s.PeerProcess = func(net.Conn) ProcessWatch { close(admitted); return fakeWatch{alive: true, closed: &closed} }
+	s.command.Lock()
+	go func() { defer close(done); s.readinessConnection(context.Background(), server) }()
+	err := json.NewEncoder(client).Encode(Request{Version: Version, Command: "prepare_update"})
+	if err == nil {
+		<-admitted
+		time.Sleep(2 * time.Second)
+	}
+	s.command.Unlock()
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := s.StopForUpdate(nil); kept || closed != 1 || e.statusRead != 0 {
+		t.Fatal(kept, closed, e.statusRead)
 	}
 }

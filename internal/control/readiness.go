@@ -31,7 +31,10 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
-	c.SetDeadline(time.Now().Add(2 * time.Second))
+	deadline := time.Now().Add(2 * time.Second)
+	if err := c.SetDeadline(deadline); err != nil {
+		return
+	}
 	var r Request
 	if json.NewDecoder(io.LimitReader(c, 1024)).Decode(&r) != nil {
 		return
@@ -44,19 +47,37 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 			return
 		}
 	}
-	a := s.readinessAnswer(r, peer)
-	json.NewEncoder(c).Encode(a)
+	s.replyReadiness(ctx, deadline, r, peer, json.NewEncoder(c).Encode)
 }
-func (s *Server) readinessResponse(r Request) Response { return s.readinessAnswer(r, nil) }
 
-// readinessAnswer answers a readiness request; peer, when set, is the
-// requesting process that a prepare_update hold is bound to.
-func (s *Server) readinessAnswer(r Request, peer ProcessWatch) Response {
-	a := Response{Version: Version, Instance: s.instance}
-	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update") || r.ID != "" || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
+// Serialize the acknowledgement with SCM stop. A failed write must release
+// the captured peer without publishing a hold for another stop to consume.
+func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Request, peer ProcessWatch, reply func(any) error) {
+	if r.Command == "prepare_update" {
+		s.command.Lock()
+		defer s.command.Unlock()
+	}
+	defer func() {
 		if peer != nil {
 			peer.Close()
 		}
+	}()
+	if ctx.Err() != nil || !time.Now().Before(deadline) {
+		return
+	}
+	a := s.readinessAnswerFor(r)
+	if ctx.Err() != nil || !time.Now().Before(deadline) {
+		return
+	}
+	if err := reply(a); err == nil && a.Error == "" && r.Command == "prepare_update" {
+		s.armUpdateHold(&updateHold{until: s.now().Add(UpdateHoldWindow), peer: peer})
+		peer = nil
+	}
+}
+
+func (s *Server) readinessAnswerFor(r Request) Response {
+	a := Response{Version: Version, Instance: s.instance}
+	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update") || r.ID != "" || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
 		a.Error = "invalid_request"
 		return a
 	}
@@ -67,9 +88,6 @@ func (s *Server) readinessAnswer(r Request, peer ProcessWatch) Response {
 	case "prepare_update":
 		// The updater asks to keep kill switch protection on the next
 		// service stop (ADR 0041). Only administrators reach this pipe.
-		s.command.Lock()
-		defer s.command.Unlock()
-		s.armUpdateHold(&updateHold{until: s.now().Add(UpdateHoldWindow), peer: peer})
 		status := s.engine.Status()
 		a.Status = core.Status{State: status.State, KillSwitch: status.KillSwitch}
 		if status.HasUpdateHold() {

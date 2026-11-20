@@ -215,8 +215,8 @@ lapses when that process has exited, and an IPC `stop` or `shutdown` or a
 newer request cancels it. An OS shutdown never uses it. The reply's
 `Status.KillSwitch` shows whether a run owns protection. For verified residual protection from a previous update, the reply also includes `Status.ResidualReason` set to `update` and omits the profile ID. On the stop, a run
 that owns protection is ended as an owner exit, so its filters stay installed;
-the service records the session's `profile_id`. A marker write failure retains the filters and reports failed cleanup to SCM. Older
-services answer `invalid_request`. See
+the service records the session's `profile_id` and the digest of the full set of installed WFP rule IDs. The service reports the recorded profile only while the installed rule set matches the digest. A marker write failure retains the filters and reports failed cleanup to SCM. Older
+services answer `invalid_request`. An ambiguous acknowledgement aborts the update before SCM stop. See
 [ADR 0041](adr/0041-kill-switch-across-service-updates.md).
 
 ### Windows console daemon pipe

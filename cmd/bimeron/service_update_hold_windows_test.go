@@ -28,12 +28,21 @@ func TestUpdateHoldMessage(t *testing.T) {
 		{"existing hold", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate}}, nil, true, "is kept"},
 		{"residual", control.Response{Status: core.Status{KillSwitch: core.KillSwitchResidual}}, nil, false, "stays installed"},
 		{"no protection", control.Response{}, nil, false, ""},
-		{"old service", control.Response{Error: "invalid_request"}, errors.New("invalid_request"), false, "cannot keep"},
-		{"unreachable", control.Response{}, errors.New("readiness service identity rejected"), false, "could not ask"},
+		{"old service", control.Response{Version: control.Version, Instance: "old", Error: "invalid_request"}, errors.New("invalid_request"), false, "cannot keep"},
+		{"unreachable", control.Response{}, errors.New("readiness service identity rejected"), false, ""},
 	} {
-		kept, message := updateHoldMessage(tc.answer, tc.err)
+		kept, message, err := updateHoldMessage(tc.answer, tc.err)
 		if kept != tc.kept || !strings.Contains(message, tc.message) || (tc.message == "" && message != "") {
 			t.Fatal(tc.name, kept, message)
+		}
+		if tc.err != nil && tc.answer.Error == "" {
+			if err == nil {
+				t.Fatal(tc.name, "ambiguous response allowed stop")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 		if !tc.kept && tc.err != nil && !strings.Contains(message, "released") {
 			t.Fatal(tc.name, "warning does not say protection is released", message)

@@ -18,11 +18,14 @@ func (e *Engine) refreshResidual() {
 	}
 	// The probe may take the session lock for an instant; never race a Start.
 	if !e.lifecycle.TryLock() {
+		e.mu.Lock()
+		e.residualProfile = ""
+		e.mu.Unlock()
 		return
 	}
 	defer e.lifecycle.Unlock()
 	e.mu.Lock()
-	if e.active || time.Since(e.residualChecked) < residualInterval {
+	if e.active || (e.residualProfile == "" && time.Since(e.residualChecked) < residualInterval) {
 		e.mu.Unlock()
 		return
 	}
@@ -46,9 +49,7 @@ func (e *Engine) refreshResidual() {
 	}
 	e.mu.Lock()
 	e.residual = found || err != nil && e.residual
-	if found || err == nil {
-		e.residualProfile = profile
-	}
+	e.residualProfile = profile
 	e.mu.Unlock()
 }
 

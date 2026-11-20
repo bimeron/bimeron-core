@@ -76,7 +76,7 @@ func TestUpdateStopDuringHandover(t *testing.T) {
 // The record stores only a valid profile id and survives a reread.
 func TestUpdateHoldRecord(t *testing.T) {
 	requireHoldWriter(t)
-	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json")}
+	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json"), filterGeneration: testFilterGeneration}
 	if h.Read() != "" || h.Clear() != nil {
 		t.Fatal("missing record misread")
 	}
@@ -86,11 +86,11 @@ func TestUpdateHoldRecord(t *testing.T) {
 	if err := h.Write(heldProfile); err != nil || h.Read() != heldProfile {
 		t.Fatal("record not read back", err)
 	}
-	if err := os.WriteFile(h.Path, []byte(`{"version":2,"profile_id":"`+heldProfile+`"}`), 0o600); err != nil {
+	if err := os.WriteFile(h.Path, []byte(`{"version":1,"profile_id":"`+heldProfile+`"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if h.Read() != "" {
-		t.Fatal("unknown record version accepted")
+		t.Fatal("unbound legacy marker accepted")
 	}
 	if err := h.Clear(); err != nil || h.Read() != "" {
 		t.Fatal("record not cleared", err)
@@ -103,7 +103,7 @@ func TestUpdateHoldRecord(t *testing.T) {
 // it, and it is removed once no protection is installed.
 func TestResidualProtectionReportsUpdateHold(t *testing.T) {
 	requireHoldWriter(t)
-	h := &UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json")}
+	h := &UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json"), filterGeneration: testFilterGeneration}
 	if err := h.Write(heldProfile); err != nil {
 		t.Fatal(err)
 	}
@@ -172,3 +172,5 @@ func TestResidualProtectionReportsUpdateHold(t *testing.T) {
 		t.Fatal("record outlived the protection", s)
 	}
 }
+
+func testFilterGeneration() (string, error) { return "generation-A", nil }

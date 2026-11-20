@@ -180,6 +180,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	}
 	wasRunning := status.State == svc.Running
 	if !wasRunning {
+		if expect.keepKillSwitch {
+			fmt.Println("warning: the service is stopped; no running session can keep kill switch protection during the update")
+		}
 		if err := windowsUpdateCleanupProven(status); err != nil {
 			return err
 		}
@@ -187,16 +190,17 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
 	kept := false
-	err = runServiceUpdate(wasRunning, func() error {
-		// Ask right before the stop: the hold applies only to the next stop
-		// within control.UpdateHoldWindow.
-		if wasRunning && expect.keepKillSwitch {
-			var message string
-			kept, message = updateHoldMessage(requestUpdateHold(ctx, s))
-			if message != "" {
-				fmt.Println(message)
-			}
+	if wasRunning && expect.keepKillSwitch {
+		var message string
+		kept, message, err = updateHoldMessage(requestUpdateHold(ctx, s))
+		if err != nil {
+			return err
 		}
+		if message != "" {
+			fmt.Println(message)
+		}
+	}
+	err = runServiceUpdate(wasRunning, func() error {
 		return stopUpdateServiceContext(ctx, s)
 	}, func() error {
 		return replaceServiceExecutable(target, staged, backup, func() error {
@@ -293,29 +297,33 @@ func requestUpdateHold(ctx context.Context, s *mgr.Service) (control.Response, e
 	}
 	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return control.CallServiceReadiness(probe, status.ProcessId, control.Request{Command: "prepare_update"})
+	answer, err := control.CallServiceReadiness(probe, status.ProcessId, control.Request{Command: "prepare_update"})
+	if err == nil && answer.Instance == "" {
+		return control.Response{}, fmt.Errorf("missing readiness service instance")
+	}
+	return answer, err
 }
 
 // updateHoldMessage reports whether the installed service keeps kill switch
 // protection across the update and what to tell the caller. An installed
 // service without the capability rejects the request; the update then
 // continues with protection released, as before.
-func updateHoldMessage(a control.Response, err error) (bool, string) {
+func updateHoldMessage(a control.Response, err error) (bool, string, error) {
 	const released = "the kill switch protection is released while the service restarts"
 	if err != nil {
-		if a.Error == "invalid_request" {
-			return false, "warning: the installed service cannot keep kill switch protection during an update; " + released
+		if a.Version == control.Version && a.Instance != "" && a.Error == "invalid_request" {
+			return false, "warning: the installed service cannot keep kill switch protection during an update; " + released, nil
 		}
-		return false, "warning: could not ask the installed service to keep kill switch protection; " + released
+		return false, "", fmt.Errorf("could not confirm the kill switch update hold; service stop was not requested: %w", err)
 	}
 	switch a.Status.KillSwitch {
 	case core.KillSwitchActive, core.KillSwitchHolding:
-		return true, "Kill switch protection is kept during the update."
+		return true, "Kill switch protection is kept during the update.", nil
 	case core.KillSwitchResidual:
 		if a.Status.ResidualReason == core.ResidualUpdate {
-			return true, "Kill switch protection is kept during the update."
+			return true, "Kill switch protection is kept during the update.", nil
 		}
-		return false, "Residual kill switch protection stays installed during the update."
+		return false, "Residual kill switch protection stays installed during the update.", nil
 	}
-	return false, ""
+	return false, "", nil
 }

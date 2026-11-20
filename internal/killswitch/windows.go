@@ -3,10 +3,13 @@
 package killswitch
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
+	"sort"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -69,6 +72,33 @@ func Pending() (bool, error) {
 	defer s.Close()
 	r, err := owned(s)
 	return len(r) > 0, err
+}
+
+// FilterGeneration identifies the installed rules across process restarts.
+// Each successful replacement installs a fresh GUID for every rule.
+func FilterGeneration() (string, error) {
+	s, err := open()
+	if err != nil {
+		return "", err
+	}
+	defer s.Close()
+	rules, err := owned(s)
+	if err != nil {
+		return "", err
+	}
+	if len(rules) == 0 {
+		return "", errors.New("no installed kill switch rules")
+	}
+	ids := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		ids = append(ids, windows.GUID(rule.ID).String())
+	}
+	sort.Strings(ids)
+	digest := sha256.New()
+	for _, id := range ids {
+		digest.Write([]byte(id))
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // CurrentImagePermitted reports whether the installed core permit matches

@@ -3,6 +3,7 @@
 package core
 
 import (
+	"bimeron/internal/killswitch"
 	"errors"
 	"io"
 	"unsafe"
@@ -44,3 +45,5 @@ func writeHoldFile(path string, b []byte) error {
 	}
 	return windows.CloseHandle(h)
 }
+
+func installedFilterGeneration() (string, error) { return killswitch.FilterGeneration() }

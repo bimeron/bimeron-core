@@ -153,14 +153,12 @@ explicitly call start <config>. If it was stopped, it stays stopped.
 With `-keep-kill-switch`, the command asks the running service, just before
 stopping it, to keep kill switch protection on that stop
 ([ADR 0041](adr/0041-kill-switch-across-service-updates.md)). The service then
-leaves the filters installed, records the held session's `profile_id` in
+leaves the filters installed, records the held session's `profile_id` and a digest of its installed WFP rule IDs in
 `kill-switch-update-hold.json` in its installation directory, and exits
 cleanly; the updated service reports the protection as residual with
 `ResidualReason: "update"`. The command prints whether protection was kept.
 Start the same profile again to resume the VPN; until then, traffic stays
-blocked, also across a reboot. An installed service without
-`kill_switch_update_hold`, or one that cannot be reached, releases protection
-as before, and the command prints a warning. If the updated service fails its
+blocked, also across a reboot. If an older service explicitly rejects the request, the command warns that protection is released and continues. If the running service cannot confirm the request, the update ends before requesting a stop. An already stopped service stays stopped and the command warns that no running session can keep protection. If the updated service fails its
 check, the command asks the running replacement for a fresh hold before the rollback stop, even if the original service had no protection. If preparation fails, rollback stops before sending the stop request and retains the backup. A verified update hold also survives a second opt-in update. Linux
 rejects the flag. Uninstall removes the record.
 The owner, automatic-start setting, and recovery settings are preserved.

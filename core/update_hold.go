@@ -20,12 +20,23 @@ const ResidualUpdate = "update"
 // service reads it to report the held profile with the residual protection,
 // so a client can start that profile again. Path must be in a directory that
 // only SYSTEM and administrators can write.
-type UpdateHold struct{ Path string }
+type UpdateHold struct {
+	Path             string
+	filterGeneration func() (string, error)
+}
+
+func (h UpdateHold) generation() (string, error) {
+	if h.filterGeneration != nil {
+		return h.filterGeneration()
+	}
+	return installedFilterGeneration()
+}
 
 type updateHoldRecord struct {
-	Version   int       `json:"version"`
-	ProfileID string    `json:"profile_id"`
-	Time      time.Time `json:"time"`
+	Version    int       `json:"version"`
+	Generation string    `json:"filter_generation"`
+	ProfileID  string    `json:"profile_id"`
+	Time       time.Time `json:"time"`
 }
 
 // Write records profileID, replacing an earlier record.
@@ -33,7 +44,14 @@ func (h UpdateHold) Write(profileID string) error {
 	if !validProfileID(profileID) {
 		return fmt.Errorf("invalid profile id")
 	}
-	b, err := json.Marshal(updateHoldRecord{Version: 1, ProfileID: profileID, Time: time.Now().UTC()})
+	generation, err := h.generation()
+	if err != nil {
+		return err
+	}
+	if generation == "" {
+		return errors.New("missing filter generation")
+	}
+	b, err := json.Marshal(updateHoldRecord{Version: 2, Generation: generation, ProfileID: profileID, Time: time.Now().UTC()})
 	if err != nil {
 		return err
 	}
@@ -56,7 +74,11 @@ func (h UpdateHold) Read() string {
 		return ""
 	}
 	var r updateHoldRecord
-	if json.Unmarshal(b, &r) != nil || r.Version != 1 || !validProfileID(r.ProfileID) {
+	if json.Unmarshal(b, &r) != nil || r.Version != 2 || r.Generation == "" || !validProfileID(r.ProfileID) {
+		return ""
+	}
+	generation, err := h.generation()
+	if err != nil || generation != r.Generation {
 		return ""
 	}
 	return r.ProfileID
