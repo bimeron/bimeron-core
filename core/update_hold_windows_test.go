@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +110,42 @@ func TestReplacementRulesCannotConfirmOldMarker(t *testing.T) {
 		if _, err := os.Stat(h.Path); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestUpdateResumeChecksGenerationAndEffectiveProfile(t *testing.T) {
+	generation := strings.Repeat("a", 64)
+	h := UpdateHold{Path: filepath.Join(t.TempDir(), "hold.json"), filterGeneration: func() (string, error) { return generation, nil }}
+	data, err := json.Marshal(updateHoldRecord{Version: 2, Generation: generation, ProfileID: heldProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.Path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	resume := updateResume{hold: h, profile: heldProfile, generation: generation}
+	if !resume.matches() {
+		t.Fatal("matching generation rejected")
+	}
+	otherProfile := strings.Repeat("b", 64)
+	resume.profile = otherProfile
+	if resume.matches() {
+		t.Fatal("wrong profile accepted")
+	}
+	resume.profile = heldProfile
+	generation = strings.Repeat("c", 64)
+	if resume.matches() {
+		t.Fatal("replacement generation accepted")
+	}
+	e := New(Options{UpdateHold: &h, ResidualProtection: true})
+	cfg := killSwitchConfig()
+	cfg.ProfileID = otherProfile
+	if err := e.ResumeUpdate(context.Background(), cfg, heldProfile, generation); !errors.Is(err, ErrUpdateResumeConflict) {
+		t.Fatal(err)
+	}
+	cfg.ProfileID = heldProfile
+	cfg.KillSwitch = false
+	if err := e.ResumeUpdate(context.Background(), cfg, heldProfile, generation); !errors.Is(err, ErrUpdateResumeConflict) {
+		t.Fatal(err)
 	}
 }

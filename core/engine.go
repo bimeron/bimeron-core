@@ -60,8 +60,9 @@ type Status struct {
 	// ResidualReason is ResidualUpdate when residual protection was kept on
 	// purpose across a service update (ADR 0041); omitted otherwise.
 	ResidualReason string `json:",omitempty"`
-	// ResidualProfile is the profile_id of the session whose protection was
-	// kept across the update; omitted otherwise.
+	// ResidualGeneration identifies the verified WFP rules held across the update.
+	ResidualGeneration string `json:",omitempty"`
+	// ResidualProfile is the profile_id of the session held across the update.
 	ResidualProfile string        `json:",omitempty"`
 	Native          *NativeStatus `json:"native,omitempty"`
 	Session         *SessionInfo  `json:"Session,omitempty"`
@@ -176,9 +177,10 @@ type Engine struct {
 	residual bool
 	// residualProfile is the profile whose protection was kept across a
 	// service update, while that protection is residual.
-	residualProfile string
-	residualChecked time.Time
-	residualProbe   func() (bool, error)
+	residualProfile    string
+	residualGeneration string
+	residualChecked    time.Time
+	residualProbe      func() (bool, error)
 	// installedProbe reports whether any Bimeron protection is installed,
 	// owned or not; the update record is kept until it is gone.
 	installedProbe func() (bool, error)
@@ -210,8 +212,9 @@ func (e *Engine) Stats() telemetry.Snapshot {
 }
 
 type runResult struct {
-	writeUpdateHold func() error // set under mu before teardown commits to retention
-	done            chan struct{}
+	protectionAcquired bool
+	writeUpdateHold    func() error // set under mu before teardown commits to retention
+	done               chan struct{}
 	// acquired is closed once Acquire has returned or the run ended earlier.
 	acquired chan struct{}
 	err      error
@@ -389,6 +392,9 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		return err
 	}
 	keepsProtection := cfg.KillSwitch && cfg.Mode == "vpn" && cfg.IKEv2 == nil
+	if cfg.updateResume != nil && e.active {
+		return ErrUpdateResumeConflict
+	}
 	if e.active && e.holding && !keepsProtection {
 		return ErrKillSwitchHeld
 	}
@@ -448,6 +454,7 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.holding, e.handover, e.protected, e.abandon, e.stopRequested = false, false, false, false, false
 	e.residual = false // the run owns or replaces any earlier protection
 	e.residualProfile = ""
+	e.residualGeneration = ""
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
 	observe, tunnel := e.observe, cfg.Name
@@ -471,6 +478,12 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		e.mu.Unlock()
 		<-r.acquired
 		e.mu.Lock()
+		if cfg.updateResume != nil && !r.protectionAcquired {
+			e.mu.Unlock()
+			<-r.done
+			e.mu.Lock()
+			return ErrUpdateResumeConflict
+		}
 	}
 	return nil
 }
@@ -737,6 +750,7 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.emitLocked("kill_switch_holding", "Kill switch active; traffic outside the tunnel is blocked until connection or stop")
 		e.mu.Unlock()
 	}
+	r.protectionAcquired = owner != nil
 	acquired()
 	for {
 		err, settled := e.connect(ctx, cfg, b)

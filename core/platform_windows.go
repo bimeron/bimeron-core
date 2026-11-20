@@ -28,12 +28,13 @@ import (
 // before any session traffic, each Open re-arms it for the new adapter, and the
 // release returned by Acquire removes it unless RetainProtection was called.
 type windowsPlatform struct {
-	killSwitch  bool
-	policy      *routing.Policy
-	disableIPv6 bool
-	guard       *killswitch.Guard
-	retain      bool
-	releaseErr  error // a failed removal, read after release returns
+	updateResume *updateResume
+	killSwitch   bool
+	policy       *routing.Policy
+	disableIPv6  bool
+	guard        *killswitch.Guard
+	retain       bool
+	releaseErr   error // a failed removal, read after release returns
 }
 
 var _ protectedPlatform = (*windowsPlatform)(nil)
@@ -41,7 +42,7 @@ var _ protectedPlatform = (*windowsPlatform)(nil)
 func init() { winTun.WintunTunnelType = windowsnet.TunnelType }
 
 func newPlatform(c SessionConfig) platform {
-	return &windowsPlatform{killSwitch: c.KillSwitch, policy: c.Policy, disableIPv6: c.DisableIPv6}
+	return &windowsPlatform{updateResume: c.updateResume, killSwitch: c.KillSwitch, policy: c.Policy, disableIPv6: c.DisableIPv6}
 }
 func (p *windowsPlatform) Protected() bool     { return p.guard != nil }
 func (p *windowsPlatform) RetainProtection()   { p.retain = true }
@@ -65,6 +66,10 @@ func (p *windowsPlatform) Acquire(ctx context.Context) (func(), error) {
 	if pending, inspectErr := killswitch.NativePending(); inspectErr != nil || pending {
 		release()
 		return nil, fault("ikev2_protection_pending_run_recover", false)
+	}
+	if p.updateResume != nil && !p.updateResume.matches() {
+		release()
+		return nil, ErrUpdateResumeConflict
 	}
 	if !p.killSwitch {
 		pending, err := killswitch.Pending()

@@ -7,7 +7,7 @@ func validDaemonGuardRequest(r Request) bool {
 		return r.Session == ""
 	}
 	switch r.Command {
-	case "start":
+	case "start", "resume_update":
 		return r.Session == ""
 	case "stop", "reconnect_now":
 		return r.Session != ""

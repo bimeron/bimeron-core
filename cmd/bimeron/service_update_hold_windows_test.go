@@ -69,7 +69,7 @@ func TestUpdateHoldNegotiation(t *testing.T) {
 				a := control.Response{Version: control.Version, Instance: "old"}
 				if r.Command == "hello" {
 					a.Core = &core.BuildDetails{Version: "1"}
-					a.UpdateStopSupported = tc.supported
+					a.UpdateCommitSupported = tc.supported
 					return a, nil
 				}
 				prepared = true
@@ -132,6 +132,21 @@ func TestOptInRollbackRequiresFreshPreparation(t *testing.T) {
 		})
 		if !prepared || stopped == fail || (err != nil) != fail {
 			t.Fatal(prepared, stopped, err)
+		}
+	}
+}
+
+func TestRetainedUpdateRequiresExactLiveProfile(t *testing.T) {
+	profile := strings.Repeat("a", 64)
+	for _, protection := range []string{core.KillSwitchActive, core.KillSwitchHolding} {
+		for _, actual := range []string{"", profile, strings.Repeat("b", 64)} {
+			status := core.Status{State: core.Connecting, KillSwitch: protection}
+			if actual != "" {
+				status.Session = &core.SessionInfo{ProfileID: actual}
+			}
+			if err := verifyRetainedUpdate(status, profile, ""); (err == nil) != (actual == profile) {
+				t.Fatalf("protection %s, profile %q: %v", protection, actual, err)
+			}
 		}
 	}
 }

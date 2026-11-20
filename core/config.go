@@ -39,6 +39,7 @@ type IKEv2Config = systemvpn.Config
 // SessionConfig is copied by Start. Resolve must honor cancellation and must not
 // modify shared state. It is called again after every reconnect (refreshing ssconf).
 type SessionConfig struct {
+	updateResume           *updateResume
 	retainNativeProtection func() bool
 	commitNativeStop       func() bool
 	nativeUpdate           func(func(*NativeStatus))

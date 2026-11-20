@@ -1,8 +1,12 @@
 package release_test
 
 import (
+	"archive/zip"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,11 +24,21 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			name := "bimeron-v0.1.0-beta.2-" + platform + "-" + arch + ".zip"
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeManifestArchive(t, filepath.Join(dir, name), "fixture", []byte(name))
 		}
 	}
+	bin := filepath.Join(dir, "test-core.exe")
+	build := exec.Command("go", "build", "-ldflags", "-s -w -X main.windowsUpdateArtifactContract=1", "-o", bin, "../cmd/bimeron")
+	build.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Windows contract fixture: %v: %s", err, out)
+	}
+	executable, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifestArchive(t, filepath.Join(dir, "bimeron-v0.1.0-beta.2-windows-amd64.zip"), "windows-amd64/bimeron.exe", executable)
+	writeManifestArchive(t, filepath.Join(dir, "bimeron-v0.1.0-beta.2-windows-arm64.zip"), "windows-arm64/bimeron.exe", executable)
 	seed := make([]byte, ed25519.SeedSize)
 	key := ed25519.NewKeyFromSeed(seed)
 	run := func(verify bool) error {
@@ -53,6 +67,27 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.3.1"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.3.3"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
 		t.Fatal(string(data))
+	}
+	var manifest struct {
+		Archives []struct {
+			OS               string `json:"os"`
+			Arch             string `json:"arch"`
+			UpdateContract   int    `json:"kill_switch_update_hold_contract"`
+			ExecutableSHA256 string `json:"executable_sha256"`
+		} `json:"archives"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range manifest.Archives {
+		if artifact.OS == "windows" && artifact.Arch == "amd64" {
+			want := fmt.Sprintf("%x", sha256.Sum256(executable))
+			if artifact.UpdateContract != 1 || artifact.ExecutableSHA256 != want {
+				t.Fatal("contract not bound to the amd64 executable", artifact)
+			}
+		} else if artifact.UpdateContract != 0 || artifact.ExecutableSHA256 != "" {
+			t.Fatal("unexpected contract for unsupported artifact", artifact)
+		}
 	}
 	signature, err := os.ReadFile(filepath.Join(dir, "update-manifest.json.sig"))
 	if err != nil {
@@ -92,9 +127,7 @@ func TestStableManifestRejectsWrongKeyAndMissingArchive(t *testing.T) {
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			name := "bimeron-v0.5.0-" + platform + "-" + arch + ".zip"
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeManifestArchive(t, filepath.Join(dir, name), "fixture", []byte(name))
 		}
 	}
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
@@ -170,9 +203,7 @@ func TestManifestSizeBound(t *testing.T) {
 	for _, platform := range []string{"windows", "linux"} {
 		for _, arch := range []string{"amd64", "arm64"} {
 			name := "bimeron-v0.12.34-beta.56-" + platform + "-" + arch + ".zip"
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeManifestArchive(t, filepath.Join(dir, name), "fixture", []byte(name))
 		}
 	}
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
@@ -296,5 +327,25 @@ func TestReleaseScriptsRefuseTestKey(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), tc.want) {
 			t.Fatalf("publisher ran with %s: %v %s", tc.env, err, out)
 		}
+	}
+}
+
+func writeManifestArchive(t *testing.T, path, name string, content []byte) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	archive := zip.NewWriter(file)
+	entry, err := archive.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

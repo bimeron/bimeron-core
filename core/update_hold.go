@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -159,4 +161,33 @@ func (s Status) HasUpdateHold() bool {
 func validProfileID(id string) bool {
 	b, err := hex.DecodeString(id)
 	return err == nil && len(b) == 32 && hex.EncodeToString(b) == id
+}
+
+// ErrUpdateResumeConflict means the held protection could not be claimed.
+var ErrUpdateResumeConflict = errors.New("update_resume_conflict")
+
+type updateResume struct {
+	hold       UpdateHold
+	profile    string
+	generation string
+}
+
+func (e *Engine) SupportsUpdateResume() bool {
+	return runtime.GOOS == "windows" && e.opts.UpdateHold != nil && e.opts.ResidualProtection
+}
+
+// ResumeUpdate starts the exact protected profile if its retained generation
+// still exists when the Windows session lock is acquired.
+func (e *Engine) ResumeUpdate(ctx context.Context, cfg SessionConfig, profile, generation string) error {
+	if !e.SupportsUpdateResume() || !validProfileID(profile) || !validProfileID(generation) ||
+		cfg.ProfileID != profile || !cfg.KillSwitch || cfg.Mode != "vpn" || cfg.IKEv2 != nil {
+		return ErrUpdateResumeConflict
+	}
+	cfg.updateResume = &updateResume{hold: *e.opts.UpdateHold, profile: profile, generation: generation}
+	return e.Start(ctx, cfg)
+}
+
+func (r *updateResume) matches() bool {
+	record := r.hold.readRecord()
+	return record.ProfileID == r.profile && record.Generation == r.generation
 }

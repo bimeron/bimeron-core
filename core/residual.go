@@ -20,6 +20,7 @@ func (e *Engine) refreshResidual() {
 	if !e.lifecycle.TryLock() {
 		e.mu.Lock()
 		e.residualProfile = ""
+		e.residualGeneration = ""
 		e.mu.Unlock()
 		return
 	}
@@ -37,10 +38,10 @@ func (e *Engine) refreshResidual() {
 	// protection can also be reported as not found while another process
 	// owns the session, so the record is removed only when no Bimeron
 	// protection is installed at all.
-	profile := ""
+	var held updateHoldRecord
 	if hold := e.opts.UpdateHold; hold != nil {
 		if found {
-			profile = hold.Read()
+			held = hold.readRecord()
 		} else if err == nil {
 			if installed, inspectErr := e.installedProbe(); inspectErr == nil && !installed {
 				_ = hold.Clear()
@@ -49,7 +50,8 @@ func (e *Engine) refreshResidual() {
 	}
 	e.mu.Lock()
 	e.residual = found || err != nil && e.residual
-	e.residualProfile = profile
+	e.residualProfile = held.ProfileID
+	e.residualGeneration = held.Generation
 	e.mu.Unlock()
 }
 
@@ -85,6 +87,7 @@ func (e *Engine) residualStatusLocked(status *Status) {
 	if e.residualProfile != "" {
 		status.ResidualReason = ResidualUpdate
 		status.ResidualProfile = e.residualProfile
+		status.ResidualGeneration = e.residualGeneration
 	}
 	if status.State == Failed && status.LastError != "" {
 		return

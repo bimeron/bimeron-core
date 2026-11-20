@@ -91,7 +91,7 @@ func TestDelayedPreparedStopAndLateProtectedStart(t *testing.T) {
 			e.beforeMark = func() { now = now.Add(UpdateHoldWindow) }
 		}
 		var recorded string
-		id, err := s.StopPreparedUpdate(func(profile, transaction string) error {
+		id, err := s.stopPreparedUpdateForTest(func(profile, transaction string) error {
 			if transaction != prepared.ID {
 				t.Fatal(transaction)
 			}
@@ -237,7 +237,7 @@ func TestUpdateHoldBoundToUpdaterAndCancelledByStop(t *testing.T) {
 }
 
 func (s *Server) consumePrepared(record func(string) error) (bool, error) {
-	id, err := s.StopPreparedUpdate(func(profile, transaction string) error {
+	id, err := s.stopPreparedUpdateForTest(func(profile, transaction string) error {
 		if record == nil {
 			return nil
 		}
@@ -294,5 +294,47 @@ func TestPrepareConnectionDelayedCommand(t *testing.T) {
 	}
 	if kept, _ := s.consumePrepared(nil); kept || closed != 1 || e.statusRead != 0 {
 		t.Fatal(kept, closed, e.statusRead)
+	}
+}
+
+func (s *Server) stopPreparedUpdateForTest(write func(string, string) error) (string, error) {
+	s.command.Lock()
+	defer s.command.Unlock()
+	return s.stopPreparedUpdateLocked(write)
+}
+
+type updateTestProcess struct {
+	fakeWatch
+	pid uint32
+}
+
+func (p updateTestProcess) ProcessID() uint32 { return p.pid }
+
+func TestCommitUpdateRequiresPreparedTransactionAndProcess(t *testing.T) {
+	s := NewServer(&holdEngine{})
+	stops := 0
+	s.UpdateCommitted = func(string) { stops++ }
+	id := strings.Repeat("A", 26)
+	closed := 0
+	process := func(pid uint32) updateTestProcess {
+		return updateTestProcess{fakeWatch{alive: true, closed: &closed}, pid}
+	}
+	send := func(command, id string, pid uint32) Response {
+		return s.readinessAnswer(Request{Version: Version, Command: command, ID: id}, process(pid))
+	}
+	if a := send("prepare_update", id, 10); a.Error != "" {
+		t.Fatal(a)
+	}
+	if a := send("commit_update", id, 11); a.Error == "" {
+		t.Fatal("foreign process committed")
+	}
+	if a := send("commit_update", strings.Repeat("B", 26), 10); a.Error == "" {
+		t.Fatal("foreign transaction committed")
+	}
+	if a := send("commit_update", id, 10); a.Error != "" || a.UpdateTransaction != id {
+		t.Fatal(a)
+	}
+	if a := send("commit_update", id, 10); a.Error == "" || stops != 1 {
+		t.Fatal(a, stops)
 	}
 }

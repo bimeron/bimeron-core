@@ -309,14 +309,19 @@ func PipePeerProcess(c net.Conn) ProcessWatch {
 	if err != nil {
 		return nil
 	}
-	return processHandle(h)
+	return processHandle{handle: h, pid: pid}
 }
 
-type processHandle windows.Handle
+type processHandle struct {
+	handle windows.Handle
+	pid    uint32
+}
+
+func (h processHandle) ProcessID() uint32 { return h.pid }
 
 func (h processHandle) Alive() bool {
-	status, err := windows.WaitForSingleObject(windows.Handle(h), 0)
+	status, err := windows.WaitForSingleObject(h.handle, 0)
 	return err == nil && status == uint32(windows.WAIT_TIMEOUT)
 }
 
-func (h processHandle) Close() { windows.CloseHandle(windows.Handle(h)) }
+func (h processHandle) Close() { windows.CloseHandle(h.handle) }

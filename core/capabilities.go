@@ -42,6 +42,8 @@ type Capabilities struct {
 	// keeps kill switch protection across a client-requested service update
 	// (ADR 0041). Read it from the installed service before the update.
 	KillSwitchUpdateHold bool `json:"kill_switch_update_hold"`
+	// KillSwitchUpdateResume reports support for claiming a verified residual.
+	KillSwitchUpdateResume bool `json:"kill_switch_update_resume,omitempty"`
 	// SOCKSAuth reports optional RFC 1929 username/password authentication
 	// on the proxy-mode listener ([Interface] ListenUsername/ListenPassword).
 	SOCKSAuth bool `json:"socks_auth"`

@@ -27,7 +27,8 @@ import (
 )
 
 const serviceName = "BimeronCore"
-const stopPreparedUpdate svc.Cmd = 128
+
+var windowsUpdateArtifactContract string
 
 type windowsService struct {
 	owner  string
@@ -93,6 +94,17 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			}
 		}
 	}
+	committed := make(chan string, 1)
+	server.UpdateCommitted = func(id string) { committed <- id }
+	if hold != nil {
+		server.WriteUpdateHold = func(profile, id string) error {
+			if err := hold.WriteTransaction(profile, id); err != nil {
+				return err
+			}
+			protectedProfile = profile
+			return nil
+		}
+	}
 	if h.listen == nil {
 		readiness, err := control.ListenServiceReadiness()
 		if err != nil {
@@ -111,6 +123,12 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	for {
 		select {
 		case err := <-done:
+			if transaction == "" {
+				select {
+				case transaction = <-committed:
+				default:
+				}
+			}
 			if err == nil && transaction != "" && hold != nil {
 				holdErr = hold.Finish(transaction, protectedProfile)
 			}
@@ -121,31 +139,16 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 				return true, 2
 			}
 			return false, 0
+		case transaction = <-committed:
+			status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}
+			changes <- status
+			cancel()
 		case request := <-requests:
 			switch request.Cmd {
 			case svc.Interrogate:
 				changes <- status
-			case svc.Stop, svc.Shutdown, stopPreparedUpdate:
-				// Only an SCM stop requested by an updater that asked first
-				// keeps kill switch protection; an OS shutdown never does.
-				if request.Cmd == stopPreparedUpdate {
-					var record func(string, string) error
-					if hold != nil {
-						record = func(profile, id string) error {
-							if err := hold.WriteTransaction(profile, id); err != nil {
-								return err
-							}
-							protectedProfile = profile
-							return nil
-						}
-					}
-					id, err := server.StopPreparedUpdate(record)
-					if err != nil || id == "" {
-						changes <- status
-						continue
-					}
-					transaction = id
-				}
+			case svc.Stop, svc.Shutdown:
+				server.CancelUpdatePreparation()
 				cancel()
 				status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}
 				changes <- status
@@ -271,6 +274,14 @@ func serviceCommand(args []string) error { return serviceCommandForOwner(args, "
 func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
+	}
+	if args[0] == "update-contract" && len(args) == 1 {
+		contract := windowsUpdateArtifactContract
+		if contract == "" {
+			contract = "1"
+		}
+		fmt.Printf("{\"kill_switch_update_hold_contract\":%s}\n", contract)
+		return nil
 	}
 	if args[0] == "run" {
 		if len(args) != 2 {

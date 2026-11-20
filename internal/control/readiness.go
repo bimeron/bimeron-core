@@ -41,7 +41,7 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 		return
 	}
 	var peer ProcessWatch
-	if r.Command == "prepare_update" && s.PeerProcess != nil {
+	if (r.Command == "prepare_update" || r.Command == "commit_update") && s.PeerProcess != nil {
 		peer = s.PeerProcess(c)
 		if peer == nil {
 			json.NewEncoder(c).Encode(Response{Version: Version, Instance: s.instance, Error: "update_hold_failed"})
@@ -51,10 +51,10 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 	s.replyReadiness(ctx, deadline, r, peer, json.NewEncoder(c).Encode)
 }
 
-// Serialize the acknowledgement with SCM stop. A failed write must release
+// Serialize preparation and commit with other stop requests. A failed write must release
 // the captured peer without publishing a hold for another stop to consume.
 func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Request, peer ProcessWatch, reply func(any) error) {
-	if r.Command == "prepare_update" {
+	if r.Command == "prepare_update" || r.Command == "commit_update" {
 		s.command.Lock()
 		defer s.command.Unlock()
 	}
@@ -67,6 +67,17 @@ func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Reque
 		return
 	}
 	a := s.readinessAnswerFor(r)
+	if r.Command == "commit_update" && a.Error == "" {
+		h := s.hold
+		if s.closing || s.UpdateCommitted == nil || h == nil || h.transaction != r.ID || !sameUpdateProcess(h.peer, peer) {
+			a.Error = "update_hold_failed"
+		} else if id, err := s.stopPreparedUpdateLocked(s.WriteUpdateHold); err != nil {
+			a.Error = "update_hold_failed"
+		} else {
+			s.closing = true
+			defer s.UpdateCommitted(id)
+		}
+	}
 	var renewal func(string) error
 	if a.Status.ResidualReason == core.ResidualUpdate && s.RenewUpdateHold != nil {
 		renewal = s.RenewUpdateHold(a.Status.ResidualProfile)
@@ -74,6 +85,9 @@ func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Reque
 	a.Status.ResidualProfile = ""
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
 		return
+	}
+	if r.Command == "prepare_update" && s.closing {
+		a.Error = "update_hold_failed"
 	}
 	if r.Command == "prepare_update" && a.Error == "" {
 		s.cancelUpdateHold()
@@ -86,7 +100,7 @@ func (s *Server) replyReadiness(ctx context.Context, deadline time.Time, r Reque
 
 func (s *Server) readinessAnswerFor(r Request) Response {
 	a := Response{Version: Version, Instance: s.instance}
-	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update") || (r.Command != "prepare_update" && r.ID != "") || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
+	if r.Version != Version || (r.Command != "hello" && r.Command != "status" && r.Command != "prepare_update" && r.Command != "commit_update") || (r.Command != "prepare_update" && r.Command != "commit_update" && r.ID != "") || r.ResidualProfile != "" || r.ResidualGeneration != "" || r.Config != "" || r.After != 0 || r.Instance != "" || r.Session != "" || r.Installation != "" || r.AcceptRevision != "" || r.PlanToken != "" || r.ChallengeID != "" || len(r.Answers) != 0 {
 		a.Error = "invalid_request"
 		return a
 	}
@@ -94,8 +108,8 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 	case "hello":
 		b := s.build()
 		a.Core = &b
-		a.UpdateStopSupported = true
-	case "prepare_update":
+		a.UpdateCommitSupported = s.UpdateCommitted != nil
+	case "prepare_update", "commit_update":
 		// The updater asks to keep kill switch protection on the next
 		// service stop (ADR 0041). Only administrators reach this pipe.
 		if len(r.ID) < 26 || len(r.ID) > 64 || strings.Trim(r.ID, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") != "" {
@@ -104,6 +118,9 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 		}
 		a.ID = r.ID
 		a.UpdateTransaction = r.ID
+		if r.Command == "commit_update" {
+			return a
+		}
 		status := s.engine.Status()
 		a.Status = core.Status{State: status.State, KillSwitch: status.KillSwitch}
 		if status.HasUpdateHold() {
@@ -116,15 +133,23 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 	return a
 }
 
-// UpdateHoldWindow bounds how long a prepare_update hold waits for the
-// service stop it applies to.
+// UpdateHoldWindow bounds the time between preparation and commit.
 const UpdateHoldWindow = time.Minute
 
-// StopPreparedUpdate handles the dedicated SCM control. Rejection leaves the
-// service running. Marker errors after admission are returned through Serve.
-func (s *Server) StopPreparedUpdate(write func(string, string) error) (string, error) {
+func (s *Server) CancelUpdatePreparation() {
 	s.command.Lock()
 	defer s.command.Unlock()
+	s.closing = true
+	s.cancelUpdateHold()
+}
+
+func sameUpdateProcess(a, b ProcessWatch) bool {
+	first, ok := a.(interface{ ProcessID() uint32 })
+	second, otherOK := b.(interface{ ProcessID() uint32 })
+	return ok && otherOK && first.ProcessID() != 0 && first.ProcessID() == second.ProcessID() && a.Alive() && b.Alive()
+}
+
+func (s *Server) stopPreparedUpdateLocked(write func(string, string) error) (string, error) {
 	h := s.hold
 	s.hold = nil
 	if h == nil {

@@ -12,9 +12,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -48,11 +50,13 @@ type compatibility struct {
 	ProfileFormat   int     `json:"profile_format"`
 }
 type archive struct {
-	OS     string `json:"os"`
-	Arch   string `json:"arch"`
-	Name   string `json:"name"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	OS                 string `json:"os"`
+	Arch               string `json:"arch"`
+	Name               string `json:"name"`
+	Size               int64  `json:"size"`
+	SHA256             string `json:"sha256"`
+	UpdateHoldContract int    `json:"kill_switch_update_hold_contract,omitempty"`
+	ExecutableSHA256   string `json:"executable_sha256,omitempty"`
 }
 type manifest struct {
 	Schema        int           `json:"schema"`
@@ -179,11 +183,20 @@ func run(tag, dir, compatPath string, verify, requireReviewed bool) error {
 			}
 			h := sha256.New()
 			_, err = io.Copy(h, f)
-			f.Close()
 			if err != nil {
+				f.Close()
 				return err
 			}
-			m.Archives = append(m.Archives, archive{platform, arch, name, info.Size(), hex.EncodeToString(h.Sum(nil))})
+			artifact := archive{OS: platform, Arch: arch, Name: name, Size: info.Size(), SHA256: hex.EncodeToString(h.Sum(nil))}
+			if platform == "windows" {
+				artifact.UpdateHoldContract, artifact.ExecutableSHA256, err = windowsUpdateMetadata(f, info.Size(), name, arch)
+				if err != nil {
+					f.Close()
+					return err
+				}
+			}
+			f.Close()
+			m.Archives = append(m.Archives, artifact)
 		}
 	}
 	canonical, err := json.MarshalIndent(m, "", "  ")
@@ -255,4 +268,52 @@ func cardSign(serial string, pub ed25519.PublicKey, msg []byte) ([]byte, error) 
 	}
 	touch := func() { fmt.Fprintf(os.Stderr, "Touch the YubiKey (card %d) to sign the manifest...\n", n) }
 	return releasecard.SignManifest(uint32(n), pub, msg, pin, touch)
+}
+
+func windowsUpdateMetadata(archive io.ReaderAt, size int64, path, arch string) (int, string, error) {
+	z, err := zip.NewReader(archive, size)
+	if err != nil {
+		return 0, "", err
+	}
+	var executable *zip.File
+	for _, f := range z.File {
+		if f.Name == "windows-"+arch+"/bimeron.exe" {
+			if executable != nil {
+				return 0, "", fmt.Errorf("duplicate Windows executable in %s", path)
+			}
+			executable = f
+		}
+	}
+	if executable == nil {
+		return 0, "", nil
+	}
+	f, err := executable.Open()
+	if err != nil {
+		return 0, "", err
+	}
+	defer f.Close()
+	const maxExecutableSize = 256 << 20
+	data, err := io.ReadAll(io.LimitReader(f, maxExecutableSize+1))
+	if err != nil {
+		return 0, "", err
+	}
+	if len(data) > maxExecutableSize {
+		return 0, "", fmt.Errorf("Windows executable too large in %s", path)
+	}
+	info, err := buildinfo.Read(bytes.NewReader(data))
+	if err != nil {
+		return 0, "", nil
+	}
+	settings := map[string]string{}
+	for _, setting := range info.Settings {
+		settings[setting.Key] = setting.Value
+	}
+	if info.Path != "bimeron/cmd/bimeron" || settings["GOOS"] != "windows" || settings["GOARCH"] != arch {
+		return 0, "", nil
+	}
+	if !strings.Contains(" "+settings["-ldflags"]+" ", " -X main.windowsUpdateArtifactContract=1 ") {
+		return 0, "", nil
+	}
+	digest := sha256.Sum256(data)
+	return 1, hex.EncodeToString(digest[:]), nil
 }
