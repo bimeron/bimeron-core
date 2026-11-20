@@ -120,13 +120,9 @@ func run(args []string) error {
 		if len(args) < 3 || len(args) > 4 {
 			return fmt.Errorf("usage: bimeron route <policy-file> <destination-IP> [domain]")
 		}
-		b, err := os.ReadFile(args[1])
-		if err != nil {
-			return fmt.Errorf("could not read policy")
-		}
 		var c routing.Config
-		if err = json.Unmarshal(b, &c); err != nil {
-			return fmt.Errorf("invalid policy JSON")
+		if err := readPolicy(args[1], "policy", &c); err != nil {
+			return err
 		}
 		p, err := routing.Compile(c)
 		if err != nil {

@@ -69,6 +69,9 @@ type SessionConfig struct {
 	// adapterAlias marks Name as a generated Windows adapter alias, which may
 	// hold Unicode and spaces unlike [Interface] Name.
 	adapterAlias bool
+	// SSHNoAgent never consults an SSH agent. The control daemon and the
+	// service set it for every session they start.
+	SSHNoAgent bool
 
 	// stats is injected by Engine.Start and shared by every handler generation.
 	stats *telemetry.Counters

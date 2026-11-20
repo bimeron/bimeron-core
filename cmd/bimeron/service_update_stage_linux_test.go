@@ -89,6 +89,24 @@ func TestLinuxUpdateSourceRejectsLinksAndNonFiles(t *testing.T) {
 	}
 }
 
+// TestLinuxUpdateSourceLoopIsNotReportedAsLink resolves a path through a
+// directory symlink loop, which fails with ELOOP although the final
+// component is not a link.
+func TestLinuxUpdateSourceLoopIsNotReportedAsLink(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatal(err)
+	}
+	err := copyLinuxUpdateSource(filepath.Join(a, "bimeron"), filepath.Join(dir, "staged"))
+	if err == nil || errors.Is(err, errUpdateSourceLink) || !errors.Is(err, syscall.ELOOP) {
+		t.Fatalf("source through a symlink loop: %v", err)
+	}
+}
+
 // A FIFO without a writer would block a plain open; the source must be
 // rejected promptly instead.
 func TestLinuxUpdateSourceRejectsFIFOWithoutBlocking(t *testing.T) {

@@ -220,8 +220,8 @@ and Apple guides document host responsibilities and device validation requiremen
 
 ```sh
 go test ./...
-go run scripts/build-dist.go
-go run scripts/check-dist.go
+sh scripts/release-go.sh run scripts/build-dist.go
+sh scripts/release-go.sh run scripts/check-dist.go
 ```
 
 The distribution build produces six Windows, Linux, and macOS CLI packages. Android and Apple

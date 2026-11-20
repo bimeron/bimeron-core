@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// fixtureTimeout bounds one PowerShell fixture child. Cold hosted runners can
+// spend well over 15 seconds starting PowerShell, loading a module or exiting
+// after the last marker; the diagnostics still report the phase that stalled.
+const fixtureTimeout = 60 * time.Second
+
 // Only fixed, allowlisted records reach failure messages. Never print child
 // stdout, arbitrary stderr, configuration, environment, or command arguments.
 const fixtureEntry = `[Console]::Error.WriteLine('diag:entry');
@@ -33,7 +38,7 @@ $taskConfig = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('` + b
 }
 
 func TestFixtureDiagnosticsControlledCancellation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	// Cancellation readiness must not depend on JSON cmdlet/module initialization.
 	// The shadow cmdlet makes an accidental parsing dependency fail on Windows.
@@ -69,7 +74,7 @@ while($true) { [Threading.Thread]::Sleep(100) }
 }
 
 func TestFixtureDiagnosticsSanitizesFailure(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	// Sanitization must not depend on cold JSON cmdlet/module initialization.
 	// TestFixtureConfigJSONRoundTrip independently covers configuration parsing.
@@ -88,7 +93,7 @@ func TestFixtureDiagnosticsSanitizesFailure(t *testing.T) {
 
 func TestFixtureConfigJSONRoundTrip(t *testing.T) {
 	want := Config{Action: "setup", MTU: 1400, DNS: []string{"1.1.1.1", "2606:4700:4700::1111"}, Name: "quoted-'\"-`-$()-雪\nsecret", Tag: "BimeronCore:roundtrip", Index: 42}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
 	defer cancel()
 	cmd, err := PowerShellCommand(ctx, fixtureSource(want, `$taskConfig | ConvertTo-Json -Compress`))
 	if err != nil {

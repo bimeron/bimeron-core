@@ -3,7 +3,15 @@
 `.github/workflows/go.yml` runs `go test ./...` and builds distribution
 artifacts on pushes and pull requests. Go is selected from `go.mod`. The jobs
 are `lint`, `test` (Linux), `test-windows`, `test-apple-unsigned`,
-`test-fingerprint-dependencies`, `cli-dist`, and `android-dist`.
+`test-fingerprint-dependencies`, `cli-dist`, `android-dist`, and
+`release-provenance`.
+
+`release-provenance` packages the `cli-dist` and `android-dist` artifacts like
+a prepared release and runs the publisher's build provenance gate
+(`scripts/check-release-provenance.go`, see
+[RELEASE_UPDATES.md](RELEASE_UPDATES.md#publish-prepared-bytes)) against the
+tested commit. `android-dist` also checks that no native library in the AAR
+contains the workspace, home, Go, module cache or NDK path of the runner.
 
 The `lint` job checks `gofmt`, runs `go mod tidy -diff`, `go vet ./...`, and a
 pinned `staticcheck`. It then runs a pinned `govulncheck` for `linux/amd64`,
@@ -24,7 +32,10 @@ serialize package build/test work and expose individual test timing. The full
 suite includes Apple manifest fixtures that launch four nested Darwin builds;
 these can otherwise overlap deadline-bound native PowerShell children. No
 packages or tests are removed, and the focused uncached module checks, race
-checks, 386 execution, and 15-second fixture deadlines remain unchanged.
+checks and 386 execution remain unchanged. Each PowerShell fixture child has a
+60-second deadline (`fixtureTimeout` in `internal/windowsnet`): hosted runners
+have exceeded 15 seconds while starting PowerShell, loading a module, or exiting
+after the last marker.
 
 This is a scheduling control, not a proven PowerShell runtime fix. At
 `b8883d3`, one hosted run stalled in 64-bit system-module discovery while the
@@ -33,6 +44,23 @@ two 386 fixtures after its companion packages completed quickly. The latter
 is not explained by concurrent Apple builds. Verbose native CI timing must
 confirm behavior on both architectures; package serialization cannot exclude
 host-level contention or diagnose PowerShell initialization itself.
+
+The Linux job runs short fuzzing passes over parsers of untrusted input:
+profiles (`FuzzParseData`), every access-key URI parser (`FuzzParseURI`),
+SSConf bodies (`FuzzParseConfig`), Shadowsocks plugin options
+(`FuzzParseSSPlugin`), the configuration document (`FuzzConfigDocument`), the
+AnyTLS, VLESS, TUIC and SOCKS5 wire readers, MASQUE URIs, Shadowsocks 2022
+keys, and geodata. Each pass is bounded by an execution count
+(`-fuzztime=<N>x`), not wall time: with a time limit, the Go fuzzing
+coordinator can report its own deadline as a failure. Every `go test ./...`
+run, including Windows, also replays the seed corpora. Run a longer local
+campaign with, for example, the command below; if it ends with `context
+deadline exceeded` and no crasher, that is the same coordinator effect, not a
+finding:
+
+```sh
+go test ./internal/config -run '^$' -fuzz '^FuzzParseData$' -fuzztime=10m
+```
 
 The fingerprint dependency matrix also tests the two local Hysteria/QUIC
 modules explicitly on Linux and Windows, including decoded UDP Initials and
@@ -270,7 +298,7 @@ the Go build cache key.
 
 The normal test suite runs reference interoperability, the SOCKS5 backend and
 VPN flow-handler integration on both jobs. Linux additionally runs the MASQUE
-package under the race detector, a five-second `FuzzMASQUEURI` campaign and
+package under the race detector, a `FuzzMASQUEURI` pass of 100,000 executions and
 64/512/1200-byte UDP echo benchmarks. Windows includes MASQUE in its existing
 race step. Benchmarks report results without a performance threshold.
 

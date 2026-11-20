@@ -17,7 +17,7 @@ func TestNewRejectsSpecialFiles(t *testing.T) {
 	}
 	hosts := writeHosts(t, knownhosts.Line([]string{"example.com:22"}, hostSigner(t).PublicKey()))
 	for _, file := range []string{fifo, "/dev/zero"} {
-		checkFileRejected(t, Options{}, "", file, "SSH known_hosts unavailable")
+		checkFileRejected(t, Options{}, "", file, "SSH known_hosts unavailable: "+file)
 		checkFileRejected(t, Options{}, file, hosts, "SSH identity file unavailable")
 	}
 }

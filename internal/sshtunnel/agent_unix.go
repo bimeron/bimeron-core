@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-func dialAgent(ctx context.Context) (net.Conn, error) {
+func dialPlatformAgent(ctx context.Context) (net.Conn, error) {
 	path := os.Getenv("SSH_AUTH_SOCK")
 	if path == "" {
 		return nil, fmt.Errorf("SSH agent unavailable")

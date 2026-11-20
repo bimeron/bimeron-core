@@ -21,9 +21,13 @@ var (
 )
 
 // Read returns the contents of the data file at path if it has at most limit
-// bytes. The path is checked with Stat before it is opened, so devices, FIFOs
-// and named pipes are never opened; the opened file must be the same file and
-// pass the same check. A data file is a regular file; on Windows it may also
+// bytes. The path is checked with Stat before it is opened, so a device, FIFO
+// or named pipe found there is not opened for reading. (Stat itself may open a
+// symbolic link target to read its attributes.) A file swapped in after that
+// check
+// is opened (on Unix without blocking) and then rejected: the opened file must
+// be the same file and pass the same check before any data is read. A data
+// file is a regular file; on Windows it may also
 // carry a reparse point that is not a link, such as a OneDrive cloud file, and
 // the opened handle must be a local disk file. Other errors come from the file
 // system and name the path.
@@ -62,3 +66,12 @@ func Read(path string, limit int64) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// Local reports whether path names the local file system by its text alone:
+// on Windows it rejects network shares (including WebDAV paths such as
+// \\host@SSL\share), device-namespace paths, reserved device names and
+// alternate data streams, as Read does before opening a file. Other systems
+// accept every path. A path that passes can still reach a network file
+// system through a mapped drive or a link; Read checks the opened file for
+// that.
+func Local(path string) bool { return local(path) }

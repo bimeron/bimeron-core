@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -148,12 +150,7 @@ func TestResolveHTTPSOnVPNPathKeepsTLSName(t *testing.T) {
 
 func TestProxyEngineListenerLifecycle(t *testing.T) {
 	// Only loopback is used; no DNS, external network, or system VPN operations.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := l.Addr().String()
-	_ = l.Close()
+	address := freePortOutsideEphemeral(t)
 	c := DefaultConfig()
 	c.Mode = "proxy"
 	c.Listen = address
@@ -201,11 +198,30 @@ func TestProxyEngineListenerLifecycle(t *testing.T) {
 			t.Fatal("active client survived Stop")
 		}
 		_ = conn.Close()
-		if c, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
-			c.Close()
-			t.Fatal("listener survived Stop")
+		// Binding proves the listener was released. The port lies outside the
+		// ephemeral ranges, so no other test's listener or connection takes it.
+		released, err := net.Listen("tcp", address)
+		if err != nil {
+			t.Fatal("listener survived Stop:", err)
+		}
+		_ = released.Close()
+	}
+}
+
+// freePortOutsideEphemeral returns a free loopback address with a port below
+// the ephemeral ranges of Linux (32768+) and Windows (49152+). Ports chosen with
+// ":0" by parallel tests, and local ports of outgoing connections, never use it.
+func freePortOutsideEphemeral(t *testing.T) string {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(20000+rand.IntN(10000)))
+		if l, err := net.Listen("tcp", address); err == nil {
+			_ = l.Close()
+			return address
 		}
 	}
+	t.Fatal("no free loopback port between 20000 and 29999")
+	return ""
 }
 
 func TestResolverErrorRedacted(t *testing.T) {
@@ -325,5 +341,17 @@ func TestHysteria2FailureRetryability(t *testing.T) {
 		if !errors.As(err, &staged) || err.Error() != tc.code || staged.stage != tc.stage || retryable(err) != tc.retry {
 			t.Fatalf("%s: %v", tc.code, err)
 		}
+	}
+}
+
+// Session SSH settings reach the tunnel options unchanged.
+func TestSSHOptionsMapsSessionSettings(t *testing.T) {
+	keys := &sshtunnel.HostKeys{}
+	c := SessionConfig{SSHDefaultKeys: true, SSHHostKeys: keys, SSHProfileOnly: true, SSHNoAgent: true}
+	if got := sshOptions(c); !got.DefaultKeys || got.HostKeys != keys || !got.ProfileOnly || !got.NoAgent {
+		t.Fatalf("sshOptions = %+v", got)
+	}
+	if got := sshOptions(SessionConfig{}); got.DefaultKeys || got.HostKeys != nil || got.ProfileOnly || got.NoAgent {
+		t.Fatalf("zero sshOptions = %+v", got)
 	}
 }

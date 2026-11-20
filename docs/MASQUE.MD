@@ -24,7 +24,11 @@ needs an ordinary CONNECT handler for complete Bimeron sessions.
 
 Bimeron verifies both the certificate chain and the TLS server name. System
 roots are used by default. A private CA can be added through `CAFile`; this
-supplements system roots and does not disable verification. The original
+supplements system roots and does not disable verification. On Windows the CA
+path, from `CAFile` or a URI `ca=` option, must be local; network and device
+paths are rejected with `file_path_not_local`. A GUI lists the CA file to the
+user for confirmation when it imports a profile; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files). The original
 proxy host remains the HTTP authority when its physical endpoint is resolved
 to an IP or a different TLS `ServerName` is configured.
 
@@ -111,7 +115,7 @@ automatically. The Go toolchain and module dependencies must be available:
 go test ./internal/masque -run '^TestReferenceServer$' -count=1 -v
 go test ./core -run 'Test(MASQUE|ResolveMASQUE)' -count=1 -v
 go test -race ./internal/masque ./internal/proxy ./core
-go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=5s
+go test ./internal/accesskey -run '^$' -fuzz '^FuzzMASQUEURI$' -fuzztime=100000x
 go test ./internal/masque -run '^$' -bench '^BenchmarkUDPEcho$' -benchtime=200ms -count=1
 ```
 

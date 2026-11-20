@@ -140,8 +140,12 @@ Verify the server before writing the first byte, as described in
 - The process ID binding does not identify the server of an individual pipe
   instance. Only the server principal may create instances: the user has
   `0x0012019B` (read and write without `FILE_CREATE_PIPE_INSTANCE`) on the
-  service, console daemon and IKEv2 foreground pipes. Open them with
+  service, console daemon and IKEv2 foreground pipes, and so do Administrators
+  on the readiness pipe and the caller on the repair pipe (see the DACL table in
+  [CONTROL.MD](CONTROL.MD#server-identity)). Open them with
   `GENERIC_READ | GENERIC_WRITE` as before.
+- Do not try to keep a handle to the service process: a standard user cannot
+  open a LocalSystem process, and the check above does not need one.
 - IKEv2 foreground and repair pipes: follow the checks in the same section.
 - Unix sockets: the peer credentials (`SO_PEERCRED`, `getpeereid` or
   `LOCAL_PEERCRED`) must report UID 0. Check the runtime directory with `lstat`
@@ -519,11 +523,28 @@ The GUI can import `ssh://user@host:22` as `SSH = ...` or write explicit
 `Type = ssh`, `Server`, `Port`, and `Username` fields. Provide file pickers for
 the identity and `known_hosts`; save absolute paths as `IdentityFile` and
 `KnownHostsFile`. The service account may have a different home directory, so do
-not rely on its `~/.ssh` defaults. Save the `.conf` atomically before `start`.
+not rely on its `~/.ssh` defaults. Sessions started through the service or the
+daemon never use an SSH agent, so offer an identity file (with its key
+passphrase prompt), a password or keyboard-interactive sign-in, and do not
+offer agent sign-in. Save the `.conf` atomically before `start`.
+An imported `ssh://` URI or `.conf` file can name its own identity and
+`known_hosts` files, and a `masque://` URI or MASQUE profile its own CA file.
+Before saving an import, run `bimeron validate --json` and confirm every
+`trust_files` entry with the user, and confirm again when the set changes; see
+[Trust files](DESKTOP_DOCUMENT_API.MD#trust-files).
 
 While connecting, poll the protected local control socket with
 `{"version":1,"command":"auth_pending"}`. If the reply contains `auth`, show
 each `prompts` entry with masking controlled by its matching `echo` value.
+Keyboard-interactive prompts come from the SSH server. Render them as plain
+text, never as markup, each in its own bidirectionally isolated block (for
+example `dir="auto"` or FSI/PDI), and keep them visually separate from
+GUI-owned text so that a server cannot imitate it. Current cores clean them
+(see [SSH.MD](SSH.MD#gui-and-local-control-ipc)): a prompt contains no C0
+control other than LF (a line break) and TAB, no DEL, no C1 control and no
+bidirectional formatting character, and replaced characters appear as U+FFFD.
+Older cores pass the server's text through, so the GUI must apply the same
+filter itself instead of relying on the core version.
 Send `{"version":1,"command":"auth_reply","challenge_id":"...","answers":["..."]}`.
 The supported challenge kinds are `key_passphrase`, `password`, and
 `keyboard_interactive`. An answer is used once and is never stored in the

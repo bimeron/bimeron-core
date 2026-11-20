@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
-    go run scripts/build-dist.go "windows-$Architecture"
+    ./scripts/release-go.ps1 run scripts/build-dist.go "windows-$Architecture"
     if ($LASTEXITCODE -ne 0) { throw "Wintun package build failed for $Architecture." }
 } finally {
     Pop-Location

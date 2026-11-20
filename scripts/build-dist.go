@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Run with: go run scripts/build-dist.go
+// Run with: sh scripts/release-go.sh run scripts/build-dist.go
 package main
 
 import (
@@ -40,6 +40,16 @@ func run() error {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		return fmt.Errorf("run from the repository root: %w", err)
 	}
+	// The release gate (scripts/check-release-provenance.go) refuses binaries
+	// with extra build settings, and some GOFLAGS are not recorded at all. Check
+	// the effective values, which include go env -w settings.
+	effective, err := exec.Command("go", "env", "-u=false", "-w=false", "-json=false", "-changed=false", "-n=false", "-x=false", "GOFLAGS", "GOEXPERIMENT").Output()
+	if err != nil {
+		return fmt.Errorf("go env: %w", err)
+	}
+	if strings.TrimSpace(string(effective)) != "" {
+		return fmt.Errorf("GOFLAGS and GOEXPERIMENT must be empty for distribution builds, also in go env -w")
+	}
 	version := os.Getenv("BIMERON_VERSION")
 	if version == "" {
 		if tag, err := exec.Command("git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*").Output(); err == nil {
@@ -55,7 +65,7 @@ func run() error {
 		mode = os.Args[1]
 	}
 	if len(os.Args) > 2 || (mode != "all" && mode != "windows" && mode != "windows-amd64" && mode != "windows-arm64" && mode != "linux" && mode != "macos") {
-		return fmt.Errorf("usage: go run scripts/build-dist.go [all|windows|windows-amd64|windows-arm64|linux|macos]")
+		return fmt.Errorf("usage: sh scripts/release-go.sh run scripts/build-dist.go [all|windows|windows-amd64|windows-arm64|linux|macos]")
 	}
 	coreVersion := strings.TrimPrefix(version, "v")
 	if err := removeResources(root); err != nil {
@@ -79,7 +89,9 @@ func run() error {
 		}
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "./cmd/bimeron")
 		cmd.Dir = root
-		cmd.Env = append(filteredEnv(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
+		// Default architecture levels, so packages run on every CPU of the
+		// target even if go env -w changed them.
+		cmd.Env = append(filteredEnv(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch, "GOAMD64=v1", "GOARM64=v8.0")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		fmt.Printf("Building %s/%s\n", target.os, target.arch)
 		if err := buildWithResources(root, target.os, target.arch, coreVersion, cmd); err != nil {
@@ -190,7 +202,7 @@ func filteredEnv() []string {
 	var env []string
 	for _, entry := range os.Environ() {
 		key := strings.ToUpper(strings.SplitN(entry, "=", 2)[0])
-		if key != "GOOS" && key != "GOARCH" && key != "CGO_ENABLED" {
+		if key != "GOOS" && key != "GOARCH" && key != "CGO_ENABLED" && key != "GOAMD64" && key != "GOARM64" {
 			env = append(env, entry)
 		}
 	}

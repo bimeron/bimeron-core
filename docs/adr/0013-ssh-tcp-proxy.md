@@ -1,6 +1,8 @@
 # ADR 0013: Built-in SSH TCP upstream
 
-Status: accepted, October 27, 2026. Tracks issue #26.
+Status: accepted, October 27, 2026. Tracks issue #26. Amended November 19,
+2026 (#199): sessions started through the control daemon or the service never
+use an SSH agent, and agent requests are bounded in time.
 
 ## Context
 
@@ -14,8 +16,10 @@ directory from the GUI user.
 Implement SSH direct TCP forwarding as an upstream for proxy mode only. Accept
 explicit profile fields and an `ssh://` URI. Verify server keys using a
 `known_hosts` file. Try an explicit identity, an available agent, then standard
-identity filenames. Do not scan other files in `.ssh`. Allow password,
-encrypted-key passphrase, and keyboard-interactive challenges through an
+identity filenames; sessions started through the daemon or the service skip
+the agent and the standard filenames. Do not scan other files in `.ssh`.
+Allow password, encrypted-key passphrase, and keyboard-interactive challenges
+through an
 ephemeral local control request. Do not persist those secrets. Require explicit
 paths when the service account cannot resolve the user's home directory.
 

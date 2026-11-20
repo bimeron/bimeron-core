@@ -52,6 +52,11 @@ func TestCheckKind(t *testing.T) {
 		{"symbolic link", disk, reparse, windows.IO_REPARSE_TAG_SYMLINK, false},
 		{"mount point", disk, reparse | dir, windows.IO_REPARSE_TAG_MOUNT_POINT, false},
 		{"socket", disk, reparse, reparseTagAFUnix, false},
+		{"WSL symbolic link", disk, reparse, 0xa000001d, false},
+		{"WSL FIFO", disk, reparse, reparseTagLXFIFO, false},
+		{"WSL character device", disk, reparse, reparseTagLXChr, false},
+		{"WSL block device", disk, reparse, reparseTagLXBlk, false},
+		{"tag without reparse attribute", disk, windows.FILE_ATTRIBUTE_ARCHIVE, reparseTagLXFIFO, true},
 		{"pipe", windows.FILE_TYPE_PIPE, 0, 0, false},
 		{"device", windows.FILE_TYPE_CHAR, 0, 0, false},
 		{"unknown", windows.FILE_TYPE_UNKNOWN, 0, 0, false},
@@ -60,6 +65,59 @@ func TestCheckKind(t *testing.T) {
 		if tc.ok && err != nil || !tc.ok && !errors.Is(err, ErrNotRegular) {
 			t.Errorf("%s: checkKind() = %v", tc.name, err)
 		}
+	}
+}
+
+// stubHandleQueries replaces the handle queries for one test.
+func stubHandleQueries(t *testing.T, attributes uint32, tagErr error) *int {
+	t.Helper()
+	oldInfo, oldTag := getFileInformation, getAttributeTag
+	t.Cleanup(func() { getFileInformation, getAttributeTag = oldInfo, oldTag })
+	tagQueries := 0
+	getFileInformation = func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+		info.FileAttributes = attributes
+		return nil
+	}
+	getAttributeTag = func(_ windows.Handle, info *fileAttributeTagInfo) error {
+		tagQueries++
+		if tagErr != nil {
+			return tagErr
+		}
+		info.FileAttributes, info.ReparseTag = attributes, reparseTagCloud
+		return nil
+	}
+	return &tagQueries
+}
+
+func TestAttributeTagQueriesTagOnlyForReparsePoints(t *testing.T) {
+	queries := stubHandleQueries(t, windows.FILE_ATTRIBUTE_ARCHIVE, windows.ERROR_INVALID_PARAMETER)
+	if attributes, tag, _, err := attributeTag(0); err != nil || attributes != windows.FILE_ATTRIBUTE_ARCHIVE || tag != 0 || *queries != 0 {
+		t.Fatalf("plain file: attributes %#x, tag %#x, %v after %d tag queries", attributes, tag, err, *queries)
+	}
+
+	queries = stubHandleQueries(t, windows.FILE_ATTRIBUTE_REPARSE_POINT, nil)
+	if _, tag, _, err := attributeTag(0); err != nil || tag != reparseTagCloud || *queries != 1 {
+		t.Fatalf("reparse point: tag %#x, %v after %d tag queries", tag, err, *queries)
+	}
+
+	stubHandleQueries(t, windows.FILE_ATTRIBUTE_REPARSE_POINT, windows.ERROR_INVALID_PARAMETER)
+	if _, _, op, err := attributeTag(0); !errors.Is(err, windows.ERROR_INVALID_PARAMETER) || op != "GetFileInformationByHandleEx" {
+		t.Fatalf("failed tag query: %s, %v", op, err)
+	}
+}
+
+// TestCheckOpenedWithoutTagQuery reads a local file on a file system that
+// does not implement FileAttributeTagInfo.
+func TestCheckOpenedWithoutTagQuery(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := getAttributeTag
+	t.Cleanup(func() { getAttributeTag = old })
+	getAttributeTag = func(windows.Handle, *fileAttributeTagInfo) error { return windows.ERROR_INVALID_PARAMETER }
+	if b, err := Read(file, 16); err != nil || string(b) != "data" {
+		t.Fatalf("Read() = %q, %v", b, err)
 	}
 }
 

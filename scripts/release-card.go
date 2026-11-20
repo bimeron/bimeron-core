@@ -4,12 +4,12 @@
 //
 // Usage:
 //
-//	go run scripts/release-card.go list
-//	go run scripts/release-card.go info     -serial N
-//	go run scripts/release-card.go probe    -serial N
-//	go run scripts/release-card.go generate -serial N -touch fixed
-//	go run scripts/release-card.go pubkey   -serial N
-//	go run scripts/release-card.go selftest -serial N -pubkey BASE64 -out DIR
+//	./scripts/release-go.ps1 run scripts/release-card.go list
+//	./scripts/release-go.ps1 run scripts/release-card.go info     -serial N
+//	./scripts/release-go.ps1 run scripts/release-card.go probe    -serial N
+//	./scripts/release-go.ps1 run scripts/release-card.go generate -serial N -touch fixed
+//	./scripts/release-go.ps1 run scripts/release-card.go pubkey   -serial N
+//	./scripts/release-go.ps1 run scripts/release-card.go selftest -serial N -pubkey BASE64 -out DIR
 //
 // PINs are read from the console without echo and never printed. Only public
 // data is written.

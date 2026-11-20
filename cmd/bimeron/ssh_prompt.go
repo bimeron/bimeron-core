@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"bimeron/internal/displaytext"
 	"bimeron/internal/sshtunnel"
 	"golang.org/x/term"
 )
@@ -39,7 +40,7 @@ func readSSHAnswers(ctx context.Context, c sshtunnel.Challenge, out io.Writer, r
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		fmt.Fprint(out, strings.TrimSpace(question), ": ")
+		fmt.Fprint(out, displaytext.Text(strings.TrimSpace(question)), ": ")
 		read := readSecret
 		if c.Echo[i] {
 			read = readLine

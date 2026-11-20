@@ -121,14 +121,24 @@ From an elevated CMD, run the trusted core bundled in the installed GUI package:
 
 The command checks the installed path and owner. The source must be a regular
 file of at most 256 MiB, given as a plain drive-letter path on a fixed local
-drive. Removable and RAM drives, mapped network drives, UNC paths, device paths
-and `\\?\` paths are refused; a path longer than 260 characters works without
-the `\\?\` prefix. The updater opens the file without following a symbolic
-link or junction at the final path component and refuses it if the opened file
-resolves to a network share or another drive type, for example through a linked
-directory. Other reparse points, such as OneDrive placeholders, are read as
-data; keep the file fully available locally, because its digest is checked only
-after staging.
+drive. Removable drives, mapped network drives, UNC paths, device paths and
+`\\?\` paths are refused; a path longer than 260 characters works without the
+`\\?\` prefix. The drive type is the one the volume reports: a RAM disk that
+reports `DRIVE_RAMDISK` is refused, but one that reports a fixed drive, as
+common RAM disk drivers do, is accepted. The updater opens the file without
+following a symbolic link or junction at the final path component and refuses
+it if the opened file resolves to a network share or to a volume that is not a
+fixed drive, for example through a linked directory or a removable volume
+mounted in a folder. The volume is taken from the opened file; a volume
+without a volume GUID path is refused. AF_UNIX sockets and WSL FIFOs and
+device files are refused as non-regular files. Other reparse points, such as
+OneDrive placeholders, are read as data; keep the file fully available
+locally, because its digest is checked only after staging.
+
+The opened file is checked after opening. If a directory in the source path
+links to a network share, opening the source already contacts that server,
+with the elevated updater's credentials, before the updater refuses the file.
+Extract the update to a local directory whose path contains no links.
 
 The updater first copies the downloaded EXE into the protected directory with
 an ACL limited to SYSTEM and Administrators, replacing a staged copy left by an

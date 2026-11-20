@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bimeron/internal/problem"
+	"bimeron/internal/safefile"
 	"bimeron/internal/wgconf"
 )
 
@@ -128,6 +129,13 @@ func ParseAnyTLS(raw string) (Profile, error) {
 	return Profile{Type: "anytls", Name: u.Fragment, TCP: e, UDP: e, AnyTLS: a}, nil
 }
 
+// FilePathNotLocal reports a file option whose path names a network share, a
+// device or another location outside the local file system (see
+// safefile.Local).
+func FilePathNotLocal(field string) *problem.Error {
+	return problem.New("file_path_not_local", "file path is not local").At(field)
+}
+
 // SSH describes a TCP-only SSH upstream. Paths never contain key material.
 type SSH struct {
 	User, IdentityFile, KnownHostsFile string
@@ -167,12 +175,15 @@ func ParseSSH(raw string) (Profile, error) {
 		if (key != "identity" && key != "known_hosts") || len(values) != 1 {
 			return Profile{}, problem.New("uri_option_unsupported", message)
 		}
+		field := "IdentityFile"
+		if key == "known_hosts" {
+			field = "KnownHostsFile"
+		}
 		if values[0] == "" {
-			field := "IdentityFile"
-			if key == "known_hosts" {
-				field = "KnownHostsFile"
-			}
 			return Profile{}, problem.New("value_required", message).On(field, "")
+		}
+		if !safefile.Local(values[0]) {
+			return Profile{}, FilePathNotLocal(field)
 		}
 	}
 	return Profile{Type: "ssh", Name: u.Fragment, TCP: Endpoint{Host: u.Hostname(), Port: port}, SSH: SSH{User: u.User.Username(), IdentityFile: q.Get("identity"), KnownHostsFile: q.Get("known_hosts")}}, nil

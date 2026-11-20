@@ -10,7 +10,26 @@ import (
 	"net"
 )
 
+// repairClientRights is FILE_GENERIC_READ|FILE_GENERIC_WRITE without
+// FILE_CREATE_PIPE_INSTANCE, WRITE_DAC or WRITE_OWNER: the caller can connect,
+// read and write, but cannot serve the pipe or change its security.
+const repairClientRights = "0x12019b"
+
+// repairPipeSDDL gives SYSTEM and Administrators, which the elevated broker
+// holds, full control and the calling user client rights only. The explicit
+// owner keeps the caller from gaining owner rights when the default owner of
+// the broker's token is the user.
+func repairPipeSDDL(objectOwner, callerSID string) string {
+	return "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;" + repairClientRights + ";;;" + callerSID + ")"
+}
+
 func listenRepairSession(nonce string, pid uint32) (net.Listener, repairPeerCheck, func(), error) {
+	return listenRepairPipe(nonce, pid, func(caller string) string { return repairPipeSDDL("BA", caller) })
+}
+
+// listenRepairPipe takes the pipe security descriptor for the caller's SID, so
+// tests that run without elevation can serve the pipe.
+func listenRepairPipe(nonce string, pid uint32, sddl func(callerSID string) string) (net.Listener, repairPeerCheck, func(), error) {
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, pid)
 	if err != nil {
 		return nil, nil, nil, err
@@ -32,7 +51,7 @@ func listenRepairSession(nonce string, pid uint32) (net.Listener, repairPeerChec
 		release()
 		return nil, nil, nil, err
 	}
-	listener, err := winio.ListenPipe(`\\.\pipe\Bimeron.Repair.`+nonce, &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;" + user.User.Sid.String() + ")", InputBufferSize: 1024, OutputBufferSize: 4096})
+	listener, err := winio.ListenPipe(`\\.\pipe\Bimeron.Repair.`+nonce, &winio.PipeConfig{SecurityDescriptor: sddl(user.User.Sid.String()), InputBufferSize: 1024, OutputBufferSize: 4096})
 	if err != nil {
 		release()
 		return nil, nil, nil, err

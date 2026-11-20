@@ -145,7 +145,10 @@ func DialService(ctx context.Context) (net.Conn, error) {
 }
 
 // Standard users cannot open a LocalSystem token, so the service is identified
-// by the pipe owner and the SCM-reported service process ID.
+// by the pipe owner and the SCM-reported service process ID. Unlike the console
+// daemon client, no process handle is kept: a LocalSystem process grants
+// standard users no access, and none is needed because only SYSTEM can create
+// instances of this pipe, so every instance is served by a SYSTEM process.
 func dialServicePipe(ctx context.Context, path string, want pipeTrust) (net.Conn, error) {
 	conn, err := winio.DialPipeContext(ctx, path)
 	if err != nil {
@@ -261,10 +264,16 @@ func processUser(h windows.Handle) (string, bool, error) {
 const ServiceReadinessPipe = `\\.\pipe\Bimeron.Core.Readiness`
 
 func ListenServiceReadiness() (net.Listener, error) {
-	return listenServiceReadinessPipe(ServiceReadinessPipe, "SY")
+	return listenServiceReadinessPipe(ServiceReadinessPipe, readinessPipeSDDL("SY"))
 }
-func listenServiceReadinessPipe(path, objectOwner string) (net.Listener, error) {
-	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;GA;;;BA)", InputBufferSize: 1024, OutputBufferSize: 4096})
+
+// readinessPipeSDDL lets only SYSTEM create pipe instances. Administrators can
+// connect but cannot serve the pipe or change its security.
+func readinessPipeSDDL(objectOwner string) string {
+	return "O:" + objectOwner + "D:P(A;;GA;;;SY)(A;;" + pipeClientRights + ";;;BA)"
+}
+func listenServiceReadinessPipe(path, sddl string) (net.Listener, error) {
+	return winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: sddl, InputBufferSize: 1024, OutputBufferSize: 4096})
 }
 
 // CallServiceReadiness binds the responding process to the SCM-observed service.

@@ -107,6 +107,13 @@ free text. English and Russian texts come from the catalog described in
 [ERRORS.MD](ERRORS.MD). `ErrorStage` and progress event codes are not catalog
 codes.
 
+Display response strings as plain text. A client cannot tell a genuine daemon
+from an impostor by its text, so the CLI replaces control and bidirectional
+formatting characters in every daemon string it prints as text, including
+error codes, and escapes them as `\u` sequences in its JSON output
+(`stats`, `version -daemon`, `doctor`).
+SSH prompts follow [SSH.MD](SSH.MD#gui-and-local-control-ipc).
+
 Changes to required fields or existing command semantics require a new version.
 
 ## Server identity
@@ -126,7 +133,7 @@ Object owners set by Core:
 | `\\.\pipe\Bimeron.Core.Readiness` | BimeronCore service (LocalSystem) | `S-1-5-18` (SYSTEM) |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | Elevated console daemon of the user | `S-1-5-32-544` (Administrators) |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | Elevated foreground owner of the user | `S-1-5-32-544` (Administrators) |
-| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | No explicit owner (the elevated token default, normally Administrators) |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | Elevated repair broker | `S-1-5-32-544` (Administrators) |
 | `/run/bimeron/control.sock` (Linux), `/var/run/bimeron/control.sock` (macOS) | Root daemon or service | Socket file owned by the control owner UID or root; listener credentials are root |
 | `/run/bimeron-repair/<nonce>.sock` | Root repair broker | Socket file owned by the caller UID; listener credentials are root |
 
@@ -147,14 +154,18 @@ FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`, and without
 | Endpoint | DACL (protected) |
 |---|---|
 | `\\.\pipe\Bimeron.Core.Service` | SYSTEM: full; control owner: `0x0012019B` |
-| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: full |
+| `\\.\pipe\Bimeron.Core.Readiness` | SYSTEM: full; Administrators: `0x0012019B` |
 | `\\.\pipe\Bimeron.Core.<user-hash>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4` |
 | `\\.\pipe\Bimeron.Core.IKEv2.<user-hash>.<session>` | SYSTEM: full; user: `0x0012019B`; Administrators: `0x4`; medium no-write-up label |
+| `\\.\pipe\Bimeron.Repair.<nonce>` | SYSTEM: full; Administrators: full; caller: `0x0012019B` |
 
 The console daemon and the IKEv2 foreground owner run elevated as the user, so
 the user and Administrators entries together give them the rights to serve
 further instances. Non-elevated processes of the user hold Administrators only
-as a deny-only group and cannot serve the pipe.
+as a deny-only group and cannot serve the pipe. Only SYSTEM serves the
+readiness pipe; administrators can connect to it but cannot add instances.
+The repair broker runs elevated and serves its pipe through the
+Administrators entry; the caller that launched it can only connect.
 
 ### Windows service pipe
 
@@ -175,6 +186,13 @@ as a deny-only group and cannot serve the pipe.
 
 Do not open the server process token. Standard users cannot open a LocalSystem
 token, so a check that requires it fails for a normal GUI.
+
+Unlike the console daemon and IKEv2 foreground clients, a service pipe client
+keeps no handle to the server process. A LocalSystem process grants standard
+users no access, so `OpenProcess` fails for a normal GUI, and the check does
+not need a handle: only SYSTEM can create instances of the service pipe, so
+every instance a client connects to is served by a SYSTEM process, and the
+SCM process ID binds the pipe to the BimeronCore service.
 
 A service built before explicit owners leaves the pipe owned by Administrators
 (`S-1-5-32-544`). Clients with this check reject it until the service is

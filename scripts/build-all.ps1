@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
-    go run scripts/build-dist.go
+    ./scripts/release-go.ps1 run scripts/build-dist.go
     if ($LASTEXITCODE -ne 0) { throw 'Distribution build failed.' }
 } finally {
     Pop-Location

@@ -72,8 +72,8 @@ func TestNewRequiresRegularBoundedFiles(t *testing.T) {
 		dir: "SSH known_hosts unavailable",
 		large("known_hosts", maxKnownHostsFile+1): "SSH known_hosts file exceeds the 1 MiB size limit",
 	} {
-		checkFileRejected(t, Options{}, "", file, want)
-		checkFileRejected(t, Options{HostKeys: mustKeys(t, "")}, "", file, want)
+		checkFileRejected(t, Options{}, "", file, want+": "+file)
+		checkFileRejected(t, Options{HostKeys: mustKeys(t, "")}, "", file, want+": "+file)
 	}
 	for file, want := range map[string]string{
 		dir:                                    "SSH identity file unavailable",

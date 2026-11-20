@@ -7,9 +7,14 @@ distribution build also uses `curl` to download the verified Wintun archive.
 
 ```sh
 go test ./...
-go run scripts/build-dist.go
-go run scripts/check-dist.go
+sh scripts/release-go.sh run scripts/build-dist.go
+sh scripts/release-go.sh run scripts/check-dist.go
 ```
+
+On Windows, use `./scripts/release-go.ps1 run scripts/build-dist.go` and
+`./scripts/release-go.ps1 run scripts/check-dist.go`. Both launchers read effective
+`GOFLAGS` and `GOEXPERIMENT` before invoking Go. A failed lookup or a nonempty
+setting stops the command, including when `GOFLAGS=-n` would skip execution.
 
 `build-dist.go` works on Windows, Linux, and macOS and builds six CLI distributions. Pass
 `windows`, `windows-amd64`, `windows-arm64`, `linux`, or `macos` to build selected targets;
@@ -50,7 +55,15 @@ The CLI build does not build Android artifacts. Install the Android SDK, NDK, JD
 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1`.
 
 The output in `dist/android/` is an AAR and sources JAR, with `LICENSE` and
-`THIRD_PARTY_NOTICES.txt`, not an installable Android app. See
+`THIRD_PARTY_NOTICES.txt`, not an installable Android app. The scripts build with `-trimpath`
+and map the NDK path. gomobile records the absolute directory of the module in each library, so
+`build-android.sh` builds through a link at the fixed path `/tmp/bimeron-core-android/src`, and
+`build-android.ps1` from the root of a temporary drive letter created with `subst`. An exclusive file handle on `dist/.android-build.lock` covers the AAR, sources JAR and notices.
+A concurrent Windows build of the same checkout fails to acquire it. The lock file can remain
+after the handle closes. The native
+libraries therefore name no directory of the build machine; CI and the release gate check this.
+`GOFLAGS` and `GOEXPERIMENT` must be empty, also in `go env -w`. If `build-android.sh` reports
+that `/tmp/bimeron-core-android` exists while no other Android build runs, remove that directory. See
 [Android packet core](ANDROID_VPN_SERVICE.MD) for the host application contract and validation
 requirements.
 

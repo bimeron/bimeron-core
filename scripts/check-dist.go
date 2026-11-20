@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Run with: go run scripts/check-dist.go
+// Run with: sh scripts/release-go.sh run scripts/check-dist.go
 package main
 
 import (

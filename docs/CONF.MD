@@ -679,7 +679,7 @@ This section is optional; missing options receive defaults.
 | `Name` | `Bimeron` | Interface name in `vpn` mode. 1–32 ASCII characters on Windows, up to 15 on Linux: letters, digits, `_`, `-`; the first character must be a letter. An occupied name is rejected. On macOS, this is a logical label; the OS assigns utunN. |
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
-| `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
+| `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853), LLMNR (5355) and NetBIOS names (UDP 137) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
 | `DNS` | `1.1.1.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
 
@@ -815,9 +815,14 @@ format, limits, and host APIs.
 The `.conf` file and every file it names must be data files on the local
 file system. This covers `File`, `CAFile` and the `ca` URI option,
 `IdentityFile`, `KnownHostsFile`, the `identity` and `known_hosts` URI options,
-`GeoIPFile`, and `GeoSiteFile`. Bimeron rejects directories, devices, FIFOs,
-sockets, and named pipes before opening them, then checks the opened file
-again. Symbolic links are followed; the target must pass the same checks.
+`GeoIPFile`, and `GeoSiteFile`, and also the JSON policy files that
+`bimeron route` and the `-policy` flag read. Bimeron checks the path and rejects
+directories, devices, FIFOs, sockets, and named pipes without opening them
+for reading.
+If the file is replaced after that check, Bimeron may open the replacement
+(on Unix without blocking), but it checks the opened file again and rejects it
+before reading any data. Symbolic links are followed; the target must pass the
+same checks. On Windows, WSL FIFOs and device files are rejected as well.
 On Unix, a data file is a regular file. On Windows, it may also be a cloud
 file, such as a OneDrive file in a synchronized Desktop or Documents folder;
 reading a cloud file that is not stored locally downloads it first.
@@ -826,6 +831,8 @@ On Windows, Bimeron also rejects these paths before opening them:
 
 - network shares (`\\server\share`, `//server/share`);
 - device-namespace paths (`\\?\`, `\\.\`, `\??\`);
+- drive-relative paths such as `C:file.key`, which depend on the current
+  directory of that drive;
 - reserved device names such as `NUL`, `CON`, or `COM1.txt` in any path element;
 - alternate data streams (`file.txt:stream`).
 
@@ -852,12 +859,23 @@ Copy such a file to a local folder and reference the copy.
 | `KnownHostsFile`, `known_hosts` | 1 MiB |
 | `CAFile`, `ca` | 1 MiB |
 | `GeoIPFile`, `GeoSiteFile` | 64 MiB each |
+| JSON policy file (`-policy`, `bimeron route`) | 4 MiB |
 
 A `.conf` or `File` problem has one of these codes: `file_path_not_local`,
 `file_not_regular`, `file_too_large`, or `file_unreadable`. A dataset problem
 has the code `geodata_unreadable` or `geodata_limit`. SSH and MASQUE files are
 read when a connection starts. A failure there is reported as an unavailable
 identity, `known_hosts`, or CA file, or as a file that exceeds its size limit.
+On Windows, a network or device path in `IdentityFile`, `KnownHostsFile`,
+`CAFile` or the `identity`, `known_hosts` and `ca` URI options is already
+refused when the profile is loaded or validated, with `file_path_not_local`
+and the option as the problem field.
+
+Identity, `known_hosts` and CA files decide which servers Bimeron trusts and
+which key it uses, so a profile from someone else can choose them.
+`bimeron validate --json` lists them as `trust_files`; a GUI shows them and
+asks the user to confirm before it saves an imported profile (see
+[DESKTOP_DOCUMENT_API.MD](DESKTOP_DOCUMENT_API.MD#trust-files)).
 
 ## Commands
 

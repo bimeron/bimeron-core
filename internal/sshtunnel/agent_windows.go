@@ -8,7 +8,7 @@ import (
 	"net"
 )
 
-func dialAgent(ctx context.Context) (net.Conn, error) {
+func dialPlatformAgent(ctx context.Context) (net.Conn, error) {
 	const pipe = `\\.\pipe\openssh-ssh-agent`
 	trace("agent", pipe)
 	return winio.DialPipeContext(ctx, pipe)

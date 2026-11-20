@@ -12,8 +12,16 @@ const (
 	// reparseTagNameSurrogate marks reparse points that name another file,
 	// such as symbolic links and mount points.
 	reparseTagNameSurrogate = 0x20000000
-	reparseTagAFUnix        = 0x80000023
 	volumeNameDOS           = 0x0
+)
+
+// Reparse tags of special files that are not name surrogates: AF_UNIX
+// sockets and the FIFOs and character and block devices that WSL creates.
+const (
+	reparseTagAFUnix = 0x80000023
+	reparseTagLXFIFO = 0x80000024
+	reparseTagLXChr  = 0x80000025
+	reparseTagLXBlk  = 0x80000026
 )
 
 // regular accepts regular files and data files carrying a reparse point that
@@ -26,7 +34,8 @@ func regular(m os.FileMode) bool {
 }
 
 // checkOpened checks the opened handle: it must be a disk file that is not a
-// directory, link or socket and is not on a remote file system.
+// directory, link, socket or WSL special file and is not on a remote file
+// system.
 func checkOpened(f *os.File) error {
 	c, err := f.SyscallConn()
 	if err != nil {
@@ -44,13 +53,14 @@ func checkHandle(name string, h windows.Handle) error {
 	if err != nil {
 		return &os.PathError{Op: "GetFileType", Path: name, Err: err}
 	}
-	var info fileAttributeTagInfo
+	var attributes, tag uint32
 	if fileType == windows.FILE_TYPE_DISK {
-		if err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-			return &os.PathError{Op: "GetFileInformationByHandleEx", Path: name, Err: err}
+		var op string
+		if attributes, tag, op, err = attributeTag(h); err != nil {
+			return &os.PathError{Op: op, Path: name, Err: err}
 		}
 	}
-	if err := checkKind(fileType, info.FileAttributes, info.ReparseTag); err != nil {
+	if err := checkKind(fileType, attributes, tag); err != nil {
 		return err
 	}
 	if remote(h) {
@@ -64,17 +74,52 @@ type fileAttributeTagInfo struct {
 	ReparseTag     uint32
 }
 
+// Handle queries, replaced in tests.
+var (
+	getFileInformation = windows.GetFileInformationByHandle
+	getAttributeTag    = func(h windows.Handle, info *fileAttributeTagInfo) error {
+		return windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(info)), uint32(unsafe.Sizeof(*info)))
+	}
+)
+
+// attributeTag returns the file attributes and, for a reparse point, its tag.
+// FileAttributeTagInfo is queried only for reparse points, as os.Stat does,
+// because some file system drivers do not implement it. op names the query
+// that failed.
+func attributeTag(h windows.Handle) (attributes, tag uint32, op string, err error) {
+	var file windows.ByHandleFileInformation
+	if err = getFileInformation(h, &file); err != nil {
+		return 0, 0, "GetFileInformationByHandle", err
+	}
+	if file.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return file.FileAttributes, 0, "", nil
+	}
+	var info fileAttributeTagInfo
+	if err = getAttributeTag(h, &info); err != nil {
+		return 0, 0, "GetFileInformationByHandleEx", err
+	}
+	return info.FileAttributes, info.ReparseTag, "", nil
+}
+
 // checkKind decides from the handle's file type, attributes and reparse tag.
 // Name surrogates are already resolved when the file is opened, so one on the
-// opened handle is rejected.
+// opened handle is rejected, as are sockets and WSL special files.
 func checkKind(fileType, attributes, tag uint32) error {
 	if fileType != windows.FILE_TYPE_DISK || attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		return ErrNotRegular
 	}
-	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 && (tag&reparseTagNameSurrogate != 0 || tag == reparseTagAFUnix) {
+	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 && (tag&reparseTagNameSurrogate != 0 || specialFileTag(tag)) {
 		return ErrNotRegular
 	}
 	return nil
+}
+
+func specialFileTag(tag uint32) bool {
+	switch tag {
+	case reparseTagAFUnix, reparseTagLXFIFO, reparseTagLXChr, reparseTagLXBlk:
+		return true
+	}
+	return false
 }
 
 // fileRemoteProtocolInfo is FILE_REMOTE_PROTOCOL_INFO.

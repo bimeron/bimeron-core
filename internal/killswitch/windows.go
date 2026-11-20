@@ -209,8 +209,19 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 		// inside a direct CIDR. Only the core, loopback and the tunnel, whose
 		// permits weigh more, reach DNS ports; direct CIDR permits weigh less.
 		if installErr == nil && (layer == wf.LayerALEAuthConnectV4 || layer == wf.LayerALEAuthConnectV6) {
-			for _, dns := range DNSPorts {
+			for _, dns := range NamePorts() {
 				if err = add(layer, ^uint64(0)-5, false, match(wf.FieldIPProtocol, dns.Protocol), match(wf.FieldIPRemotePort, dns.Port)); err != nil {
+					installErr = err
+					break
+				}
+			}
+		}
+		// LLMNR and NetBIOS names are also refused inbound: an accepted
+		// datagram from a direct peer would otherwise authorize a flow on which
+		// later name queries to that peer never reach the connect block.
+		if installErr == nil && (layer == wf.LayerALEAuthRecvAcceptV4 || layer == wf.LayerALEAuthRecvAcceptV6) {
+			for _, name := range LinkLocalNamePorts {
+				if err = add(layer, ^uint64(0)-5, false, match(wf.FieldIPProtocol, name.Protocol), match(wf.FieldIPLocalPort, name.Port)); err != nil {
 					installErr = err
 					break
 				}

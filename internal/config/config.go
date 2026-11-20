@@ -619,6 +619,7 @@ func loadBytes(b []byte, path string, geoIP, geoSite []byte) (*File, error) {
 	if err := c.validateAllowedIPsMode(); err != nil {
 		return nil, c.locate(err)
 	}
+	c.normalizeTrustPaths()
 	if c.ShadowTLS != nil {
 		if err := c.ShadowTLS.Validate(); err != nil {
 			return nil, c.locate(shadowTLSProblem(err))
@@ -828,6 +829,11 @@ func loadBaseBytes(c *File, path string, geoIP, geoSite []byte) (*File, error) {
 	if c.Access.IdentityFile != "" || c.Access.KnownHostsFile != "" {
 		if c.Access.Type != "ssh" && c.Access.SSH == "" && c.Access.KeyFile == "" && !strings.HasPrefix(c.Access.Key, "ssh://") {
 			return nil, problem.New("option_requires_type", "[AccessKey] SSH file options require an SSH profile").In("AccessKey").At(c.present("IdentityFile", "KnownHostsFile")).Arg("type", "SSH")
+		}
+	}
+	for _, f := range []struct{ field, value string }{{"IdentityFile", c.Access.IdentityFile}, {"KnownHostsFile", c.Access.KnownHostsFile}, {"CAFile", c.Access.CAFile}} {
+		if f.value != "" && !safefile.Local(f.value) {
+			return nil, accesskey.FilePathNotLocal(f.field).In("AccessKey")
 		}
 	}
 	if c.Access.Type == "wireguard" {

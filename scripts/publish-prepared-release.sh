@@ -8,6 +8,8 @@ if [[ -n "${BIMERON_RELEASE_TEST_UNPINNED_KEY:-}" ]]; then
   exit 2
 fi
 
+sh "$(dirname "$0")/release-go.sh"
+
 if [[ $# -lt 2 || $# -gt 3 || ( $# -eq 3 && "$3" != "--publish" ) ]]; then
   echo 'usage: scripts/publish-prepared-release.sh <tag> <release-dir> [--publish]' >&2
   exit 2
@@ -57,17 +59,9 @@ go run scripts/release-manifest.go -tag "$tag" -dir "$dir" -verify -require-revi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for target in "${targets[@]}"; do
-  archive="$dir/bimeron-${tag}-${target}.zip"
-  unzip -tq "$archive" >/dev/null
-  if [[ "$target" == android ]]; then continue; fi
-  binary=bimeron
-  if [[ "$target" == windows-* ]]; then binary=bimeron.exe; fi
-  unzip -p "$archive" "$target/$binary" > "$tmp/$binary"
-  if ! go version -m "$tmp/$binary" | grep -Fq "vcs.revision=$commit"; then
-    echo "$archive does not contain core built from $commit" >&2
-    exit 1
-  fi
+  unzip -tq "$dir/bimeron-${tag}-${target}.zip" >/dev/null
 done
+go run scripts/check-release-provenance.go -tag "$tag" -dir "$dir" -commit "$commit"
 
 if [[ "$mode" != --publish ]]; then
   echo "$tag: prepared assets verified against commit $commit (dry-run)"

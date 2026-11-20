@@ -30,7 +30,7 @@ distributed under the repository [LICENSE](../../LICENSE).
 4. Refresh `bimeron.png` with
    `go test ./internal/winres -run TestReadmePNGMatchesIcon -update-png`;
    `go test ./internal/winres` fails until it matches the 64 px icon image.
-5. Run `go run scripts/build-dist.go` and `go run scripts/check-dist.go`, and
+5. Run `sh scripts/release-go.sh run scripts/build-dist.go` and `sh scripts/release-go.sh run scripts/check-dist.go`, and
    build the Apple bundles on a Mac.
 
 Released binaries pick up a new icon only with a new Core release.

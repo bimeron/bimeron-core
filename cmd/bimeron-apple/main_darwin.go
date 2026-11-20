@@ -57,6 +57,7 @@ func create(c core.SessionConfig, err error) C.ulonglong {
 	if err != nil || core.ValidateEmbeddedHost(c) != nil {
 		return 0
 	}
+	c.SSHDefaultKeys, c.SSHNoAgent = false, true
 	i := &instance{config: c}
 	e, p, err := core.NewPacketEngine(core.Options{}, core.PacketOptions{MTU: c.MTU, Outbound: func(ctx context.Context) (core.PacketNetwork, error) {
 		if err := ctx.Err(); err != nil {
