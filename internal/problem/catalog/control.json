@@ -285,6 +285,11 @@
       "en": "The VPN core does not support this action. Update the application.",
       "ru": "Ядро VPN не поддерживает это действие. Обновите приложение."
     },
+    "update_resume_conflict": {
+      "kind": "control",
+      "en": "The held VPN profile or its protection changed. Check the current connection status before trying to recover.",
+      "ru": "The held VPN profile or its protection changed. Check the current connection status before trying to recover."
+    },
     "unsupported_protocol": {
       "kind": "control",
       "en": "The application and its VPN core are different versions. Update or reinstall the application.",
