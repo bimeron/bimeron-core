@@ -441,7 +441,18 @@ proxy, and IPv4 TCP/UDP traffic. Traffic and DNS recovered automatically
 after each peer-only UDP interruption of about five seconds. Stopping Core
 restored the baseline adapters, routes, DNS, NRPT and service state.
 Windows daemon operation and recovery after a prolonged outage remain
-unverified. External peer checks remain pending for all six rows.
+unverified.
+
+An external AWG 3.1 peer passed a scoped Windows amd64 userspace engine check
+at Core source `67a7ad97` with server tools `v3.1.20260812`. Profile inspection
+reported AWG 3.1, and the initial handshake and IPv4 TCP/UDP payload checks
+passed. After a client-only UDP interruption of about three seconds, traffic
+resumed in 91 ms without a restart. An explicit client rekey confirmed a
+fresh handshake 5.192 seconds after restoration. The temporary runtime peer
+was removed, and the server peer inventory and persisted configuration
+matched their baselines. External native VPN and daemon checks and checks
+against the other external peer profiles remain pending.
+[External AWG 3.1 test evidence](https://github.com/bimeron/bimeron-core/issues/207#issuecomment-7067850019)
 
 Platforms: Windows and Linux will be checked live. Android (AAR) and Apple
 builds compile and their unit tests pass, but they have **not been
