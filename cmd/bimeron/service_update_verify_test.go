@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"bimeron/core"
@@ -57,5 +58,32 @@ func TestUpdatedHelloMustMatchVersionAndProtocol(t *testing.T) {
 	a.Core = nil
 	if err := validateUpdatedHello(a, "0.2.0"); err == nil {
 		t.Fatal("missing core version accepted")
+	}
+}
+
+func TestKeptUpdateReadiness(t *testing.T) {
+	held := core.Status{State: core.Failed, KillSwitch: core.KillSwitchResidual, ResidualReason: core.ResidualUpdate, ResidualProfile: strings.Repeat("af", 32), LastError: "cleanup_failed_run_recover"}
+	for _, tc := range []struct {
+		name        string
+		kept, ready bool
+		change      func(*control.Response)
+	}{
+		{"kept", true, true, nil},
+		{"not kept", false, false, nil},
+		{"invalid profile", true, false, func(a *control.Response) { a.Status.ResidualProfile = strings.ToUpper(held.ResidualProfile) }},
+		{"other failure", true, false, func(a *control.Response) { a.Status.LastError = "other" }},
+		{"missing reason", true, false, func(a *control.Response) { a.Status.ResidualReason = "" }},
+		{"missing residual", true, false, func(a *control.Response) { a.Status.KillSwitch = "" }},
+		{"foreign instance", true, false, func(a *control.Response) { a.Instance = "other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := control.Response{Version: control.Version, Instance: "service", Status: held}
+			if tc.change != nil {
+				tc.change(&a)
+			}
+			if err := validateServiceStatus(a, "service", tc.kept); (err == nil) != tc.ready {
+				t.Fatalf("readiness error = %v, want ready = %v", err, tc.ready)
+			}
+		})
 	}
 }

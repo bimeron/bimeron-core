@@ -56,14 +56,21 @@ type Status struct {
 	NextAttemptAt time.Time `json:",omitzero"`
 	// KillSwitch is KillSwitchActive or KillSwitchHolding while the run owns
 	// kill switch protection; omitted otherwise.
-	KillSwitch string        `json:",omitempty"`
-	Native     *NativeStatus `json:"native,omitempty"`
-	Session    *SessionInfo  `json:"Session,omitempty"`
-	State      State
-	Attempt    int
-	Since      time.Time
-	LastError  string
-	ErrorStage string `json:",omitempty"`
+	KillSwitch string `json:",omitempty"`
+	// ResidualReason is ResidualUpdate when residual protection was kept on
+	// purpose across a service update (ADR 0041); omitted otherwise.
+	ResidualReason string `json:",omitempty"`
+	// ResidualGeneration identifies the verified WFP rules held across the update.
+	ResidualGeneration string `json:",omitempty"`
+	// ResidualProfile is the profile_id of the session held across the update.
+	ResidualProfile string        `json:",omitempty"`
+	Native          *NativeStatus `json:"native,omitempty"`
+	Session         *SessionInfo  `json:"Session,omitempty"`
+	State           State
+	Attempt         int
+	Since           time.Time
+	LastError       string
+	ErrorStage      string `json:",omitempty"`
 	// LastErrorPermanent marks a LastError that retrying alone does not fix,
 	// for example a rejected access key. It ends an initial connection at
 	// once; after loss of an established session Core still retries it.
@@ -84,9 +91,13 @@ type StatsSnapshot struct {
 //
 // ResidualProtection makes an idle engine report kill switch protection that
 // no run owns (Status.KillSwitch "residual"); daemons and services enable it.
+// UpdateHold, when set, is the record of protection kept across a service
+// update: residual protection then also reports the held profile, and a run
+// that starts consumes the record (ADR 0041).
 type Options struct {
 	RetryMin, RetryMax, CycleRetryMax, CyclePause time.Duration
 	ResidualProtection                            bool
+	UpdateHold                                    *UpdateHold
 }
 
 type session interface {
@@ -163,9 +174,16 @@ type Engine struct {
 	observe   func(tunnel string) string
 	network   func() string
 	// residual caches idle kill switch protection found by residualProbe.
-	residual        bool
-	residualChecked time.Time
-	residualProbe   func() (bool, error)
+	residual bool
+	// residualProfile is the profile whose protection was kept across a
+	// service update, while that protection is residual.
+	residualProfile    string
+	residualGeneration string
+	residualChecked    time.Time
+	residualProbe      func() (bool, error)
+	// installedProbe reports whether any Bimeron protection is installed,
+	// owned or not; the update record is kept until it is gone.
+	installedProbe func() (bool, error)
 	// repanic rethrows a run panic after protection is retained; tests stub it.
 	repanic     func(any)
 	maintenance *maintenanceCoordinator
@@ -194,7 +212,9 @@ func (e *Engine) Stats() telemetry.Snapshot {
 }
 
 type runResult struct {
-	done chan struct{}
+	protectionAcquired bool
+	writeUpdateHold    func() error // set under mu before teardown commits to retention
+	done               chan struct{}
 	// acquired is closed once Acquire has returned or the run ended earlier.
 	acquired chan struct{}
 	err      error
@@ -220,7 +240,7 @@ func New(options Options) *Engine {
 	if options.CyclePause <= 0 {
 		options.CyclePause = time.Minute
 	}
-	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, repanic: func(p any) { panic(p) }}
+	return &Engine{opts: options, status: Status{State: Disconnected, Since: time.Now()}, events: make(chan Event, 128), factory: newBackend, lastReport: map[string]time.Time{}, pollEvery: 5 * time.Second, observe: interfaceIdentity, residualProbe: residualProtection, installedProbe: protectionInstalled, repanic: func(p any) { panic(p) }}
 }
 
 // StatsSnapshot returns detached session metadata and counters under one lock.
@@ -372,6 +392,9 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		return err
 	}
 	keepsProtection := cfg.KillSwitch && cfg.Mode == "vpn" && cfg.IKEv2 == nil
+	if cfg.updateResume != nil && e.active {
+		return ErrUpdateResumeConflict
+	}
 	if e.active && e.holding && !keepsProtection {
 		return ErrKillSwitchHeld
 	}
@@ -430,6 +453,8 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 	e.active = true
 	e.holding, e.handover, e.protected, e.abandon, e.stopRequested = false, false, false, false, false
 	e.residual = false // the run owns or replaces any earlier protection
+	e.residualProfile = ""
+	e.residualGeneration = ""
 	e.recovery = recovery{cycles: cfg.IKEv2 == nil}
 	e.wake = make(chan struct{}, 1)
 	observe, tunnel := e.observe, cfg.Name
@@ -453,6 +478,12 @@ func (e *Engine) Start(ctx context.Context, cfg SessionConfig) error {
 		e.mu.Unlock()
 		<-r.acquired
 		e.mu.Lock()
+		if cfg.updateResume != nil && !r.protectionAcquired {
+			e.mu.Unlock()
+			<-r.done
+			e.mu.Lock()
+			return ErrUpdateResumeConflict
+		}
 	}
 	return nil
 }
@@ -473,13 +504,54 @@ func (e *Engine) Abandon(ctx context.Context) error {
 func (e *Engine) MarkAbandon() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.markAbandonLocked()
+}
+
+// MarkUpdateAbandon waits for any acquiring or switching run, then records the
+// owner when its adapter has closed, before releasing the session lock.
+func (e *Engine) MarkUpdateAbandon(record func(string) error) error {
+	return e.MarkPreparedUpdate(record, func() bool { return true }, nil)
+}
+
+func (e *Engine) MarkPreparedUpdate(record func(string) error, valid func() bool, renew func() error) error {
+	e.lifecycle.Lock()
+	defer e.lifecycle.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !valid() {
+		return errors.New("update preparation expired")
+	}
+	if !e.protected && renew != nil {
+		if err := renew(); err != nil {
+			return err
+		}
+	}
+	e.markAbandonLocked()
+	if e.abandon && e.protected && !e.stopRequested {
+		profile := e.status.Session.ProfileID
+		e.runResult.writeUpdateHold = func() error {
+			var err error
+			if record == nil {
+				err = errors.New("update hold record unavailable")
+			} else {
+				err = record(profile)
+			}
+			if err != nil && e.opts.UpdateHold != nil {
+				err = errors.Join(err, e.opts.UpdateHold.Clear())
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) markAbandonLocked() {
 	e.exiting = true
 	userStop := e.stopRequested && !e.handover
 	if e.active && !userStop {
 		e.abandon = true
 	}
 }
-func (e *Engine) abandoned() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.abandon }
 
 // Stop is idempotent. A caller timeout ends only its wait: cleanup continues in
 // the background, and another Start remains forbidden until it has finished.
@@ -610,12 +682,21 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		defer finished()
 		e.mu.Lock()
 		handover := e.handover
+		abandon := e.abandon
+		writeHold := r.writeUpdateHold
+		e.protected = false // teardown has committed to its retention decision
 		e.mu.Unlock()
 		// Protection outlives the run only for a handover or a failed cleanup,
 		// which needs explicit recovery; every other exit is an explicit stop.
-		retained := owner != nil && (handover || e.abandoned() || cleanupFailed(result))
+		retained := owner != nil && (handover || abandon || cleanupFailed(result))
 		if retained {
 			owner.RetainProtection()
+		}
+		if retained && writeHold != nil && !cleanupFailed(result) {
+			if err := writeHold(); err != nil {
+				result = errors.Join(result, err)
+				r.settled = false // SCM must observe the marker failure through Stop.
+			}
 		}
 		release() // includes OS-thread-owned session lock; runs on this goroutine.
 		if owner != nil && !retained && owner.ReleaseError() != nil && result == nil {
@@ -660,11 +741,16 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 	release = releaseRun
 	if o, ok := b.(protectionOwner); ok && o.Protected() {
 		owner = o
+		// This run's protection replaced any kept across an update.
+		if hold := e.opts.UpdateHold; hold != nil {
+			_ = hold.Clear()
+		}
 		e.mu.Lock()
 		e.protected = true
 		e.emitLocked("kill_switch_holding", "Kill switch active; traffic outside the tunnel is blocked until connection or stop")
 		e.mu.Unlock()
 	}
+	r.protectionAcquired = owner != nil
 	acquired()
 	for {
 		err, settled := e.connect(ctx, cfg, b)

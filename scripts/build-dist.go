@@ -84,6 +84,9 @@ func run() error {
 			return err
 		}
 		ldflags := "-s -w"
+		if target.os == "windows" {
+			ldflags += " -X main.windowsUpdateArtifactContract=1"
+		}
 		if version != "" {
 			ldflags += " -X bimeron/core.Version=" + coreVersion
 		}

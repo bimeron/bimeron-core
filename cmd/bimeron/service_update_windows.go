@@ -3,10 +3,13 @@
 package main
 
 import (
+	"bimeron/core"
 	"bimeron/internal/control"
 	"context"
+	"crypto/rand"
 	"debug/buildinfo"
 	"debug/pe"
+	"errors"
 	"fmt"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -44,7 +47,7 @@ func waitServiceStateContext(ctx context.Context, s *mgr.Service, want svc.State
 	}
 	return fmt.Errorf("service state change timed out")
 }
-func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
+func stopUpdateServiceContext(ctx context.Context, s *mgr.Service, cmd svc.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -53,7 +56,7 @@ func stopUpdateServiceContext(ctx context.Context, s *mgr.Service) error {
 		return err
 	}
 	if status.State != svc.Stopped && status.State != svc.StopPending {
-		if _, err = s.Control(svc.Stop); err != nil {
+		if _, err = s.Control(cmd); err != nil {
 			return err
 		}
 	}
@@ -179,14 +182,44 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	}
 	wasRunning := status.State == svc.Running
 	if !wasRunning {
+		if expect.keepKillSwitch {
+			fmt.Println("warning: the service is stopped; no running session can keep kill switch protection during the update")
+		}
 		if err := windowsUpdateCleanupProven(status); err != nil {
 			return err
 		}
 	}
 	rollbackContext, releaseRollback := updateRollbackContext(ctx)
 	defer releaseRollback()
+	kept := false
+	var transaction, profile string
+	marker := core.UpdateHold{Path: filepath.Join(dir, updateHoldFile)}
+	if wasRunning && expect.keepKillSwitch && !forceActivate {
+		var message string
+		answer, prepareErr := requestUpdateHold(ctx, s)
+		kept, message, err = updateHoldMessage(answer, prepareErr)
+		transaction = answer.UpdateTransaction
+		if err != nil {
+			return err
+		}
+		if message != "" {
+			fmt.Println(message)
+		}
+	}
 	err = runServiceUpdate(wasRunning, func() error {
-		return stopUpdateServiceContext(ctx, s)
+		if transaction == "" {
+			return stopUpdateServiceContext(ctx, s, svc.Stop)
+		}
+		if err := commitUpdateStop(ctx, s, transaction); err != nil {
+			return err
+		}
+		var err error
+		profile, err = marker.StopOutcome(transaction)
+		if err == nil && kept && profile == "" {
+			return fmt.Errorf("prepared protection missing at update stop")
+		}
+		kept = profile != ""
+		return err
 	}, func() error {
 		return replaceServiceExecutable(target, staged, backup, func() error {
 			if err := ctx.Err(); err != nil {
@@ -197,7 +230,7 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 					return err
 				}
 				if forceActivate {
-					return waitUpdatedServiceWithCall(ctx, expect.version, func(ctx context.Context, r control.Request) (control.Response, error) {
+					return waitUpdatedServiceWithCall(ctx, expect.version, false, func(ctx context.Context, r control.Request) (control.Response, error) {
 						state, err := s.Query()
 						if err != nil {
 							return control.Response{}, err
@@ -208,9 +241,39 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 						return control.CallServiceReadiness(ctx, state.ProcessId, r)
 					})
 				}
-				return waitUpdatedServiceContext(ctx, expect.version)
+				return waitUpdatedServiceWithCall(ctx, expect.version, kept, func(ctx context.Context, r control.Request) (control.Response, error) {
+					a, err := control.CallService(ctx, r)
+					if err == nil && kept && r.Command == "status" {
+						err = verifyRetainedUpdate(a.Status, profile, marker.TransactionProfile(transaction))
+					}
+					return a, err
+				})
 			})
-		}, func() error { return stopUpdateServiceContext(rollbackContext(), s) })
+		}, func() error {
+			// A client may already have restarted the held profile on the
+			// new service; keep that protection across the rollback stop.
+			return stopForRollback(expect.keepKillSwitch && !forceActivate, func() (svc.Status, error) {
+				state, err := s.Query()
+				if err == nil && state.State == svc.Stopped && kept && marker.TransactionProfile(transaction) != profile {
+					return state, fmt.Errorf("rollback protection unconfirmed after service exit")
+				}
+				return state, err
+			}, func() (control.Response, error) {
+				return requestUpdateHold(rollbackContext(), s)
+			}, func(id string, required bool) error {
+				if id == "" {
+					return stopUpdateServiceContext(rollbackContext(), s, svc.Stop)
+				}
+				if err := commitUpdateStop(rollbackContext(), s, id); err != nil {
+					return err
+				}
+				profile, err := marker.StopOutcome(id)
+				if required && err == nil && profile == "" {
+					return fmt.Errorf("rollback protection unconfirmed")
+				}
+				return err
+			})
+		})
 	}, func() error {
 		if err := rollbackContext().Err(); err != nil {
 			return err
@@ -236,6 +299,148 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 	if err != nil {
 		return err
 	}
+	if kept {
+		fmt.Println("Service updated; owner and startup settings preserved. Kill switch protection was kept; start the profile again to reconnect.")
+		return nil
+	}
 	fmt.Println("Service updated; owner and startup settings preserved. VPN remains disconnected.")
 	return nil
+}
+
+func stopForRollback(keep bool, query func() (svc.Status, error), request func() (control.Response, error), stop func(string, bool) error) error {
+	var transaction string
+	var required bool
+	if keep {
+		state, err := query()
+		if err != nil {
+			return err
+		}
+		if state.State == svc.Stopped {
+			return windowsUpdateCleanupProven(state)
+		}
+		if state.State != svc.Running {
+			return fmt.Errorf("rollback service state is unstable")
+		}
+		a, err := request()
+		if err != nil || a.UpdateTransaction == "" {
+			return fmt.Errorf("rollback hold unconfirmed: %v", err)
+		}
+		required = updateProtectionRequired(a.Status)
+		transaction = a.UpdateTransaction
+	}
+	return stop(transaction, required)
+}
+
+// requestUpdateHold asks the running service, over the administrator-only
+// readiness pipe bound to the SCM-reported process, to keep kill switch
+// protection on the next stop (ADR 0041).
+func requestUpdateHold(ctx context.Context, s *mgr.Service) (control.Response, error) {
+	status, err := s.Query()
+	if err != nil {
+		return control.Response{}, err
+	}
+	if status.State != svc.Running {
+		return control.Response{}, fmt.Errorf("service not running")
+	}
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return negotiateUpdateHold(func(r control.Request) (control.Response, error) {
+		return control.CallServiceReadiness(probe, status.ProcessId, r)
+	}, func() (control.Response, error) {
+		return control.CallService(probe, control.Request{Command: "capabilities"})
+	})
+}
+
+func negotiateUpdateHold(call func(control.Request) (control.Response, error), capabilities func() (control.Response, error)) (control.Response, error) {
+	hello, err := call(control.Request{Command: "hello"})
+	if err != nil || validateRepairHello(hello) != nil {
+		return control.Response{}, fmt.Errorf("could not verify readiness hello")
+	}
+	if !hello.UpdateCommitSupported {
+		// Earlier prepare-capable builds arm an ordinary SCM stop. Detect
+		// them before issuing a prepare that this updater cannot consume.
+		caps, err := capabilities()
+		if err != nil || caps.Version != control.Version || caps.Instance != hello.Instance || caps.Capabilities == nil || caps.Capabilities.KillSwitchUpdateHold {
+			return control.Response{}, fmt.Errorf("installed service lacks transactional update stop")
+		}
+	}
+	r := control.Request{Command: "prepare_update"}
+	if hello.UpdateCommitSupported {
+		r.ID = rand.Text()
+	}
+	answer, err := call(r)
+	if answer.Instance != hello.Instance || answer.Version != control.Version {
+		return control.Response{}, fmt.Errorf("update preparation identity changed")
+	}
+	if hello.UpdateCommitSupported {
+		if err != nil || answer.ID != r.ID || answer.UpdateTransaction != r.ID {
+			return control.Response{}, fmt.Errorf("transactional update preparation unconfirmed")
+		}
+	} else if err == nil || answer.Error != "invalid_request" || answer.UpdateTransaction != "" {
+		return control.Response{}, fmt.Errorf("legacy service preparation unconfirmed")
+	}
+	return answer, err
+}
+
+func commitUpdateStop(ctx context.Context, s *mgr.Service, id string) error {
+	state, err := s.Query()
+	if err != nil {
+		return err
+	}
+	if state.State != svc.Running {
+		return fmt.Errorf("prepared service is no longer running")
+	}
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	a, err := control.CallServiceReadiness(probe, state.ProcessId, control.Request{Command: "commit_update", ID: id})
+	cancel()
+	if a.Version == control.Version && a.Instance != "" && a.ID == id && a.Error != "" {
+		return fmt.Errorf("update commit rejected: %s", a.Error)
+	}
+	// A lost acknowledgement can follow an accepted commit. Observe SCM and
+	// let the caller require the exact durable stop receipt before replacing.
+	if waitErr := waitServiceStateContext(ctx, s, svc.Stopped); waitErr != nil {
+		return errors.Join(fmt.Errorf("update commit outcome unconfirmed"), err, waitErr)
+	}
+	state, err = s.Query()
+	if err != nil {
+		return err
+	}
+	return windowsUpdateCleanupProven(state)
+}
+
+func verifyRetainedUpdate(status core.Status, expected, verified string) error {
+	if expected != "" && (status.KillSwitch == core.KillSwitchActive || status.KillSwitch == core.KillSwitchHolding) &&
+		status.Session != nil && status.Session.ProfileID == expected {
+		return nil
+	}
+	if expected != "" && status.HasUpdateHold() && status.ResidualProfile == expected && verified == expected {
+		return nil
+	}
+	return fmt.Errorf("updated service protection unconfirmed")
+}
+
+func updateProtectionRequired(status core.Status) bool {
+	return status.KillSwitch == core.KillSwitchActive || status.KillSwitch == core.KillSwitchHolding ||
+		status.KillSwitch == core.KillSwitchResidual && status.ResidualReason == core.ResidualUpdate
+}
+
+// updateHoldMessage reports whether the installed service keeps kill switch
+// protection across the update and what to tell the caller. An installed
+// service without the capability rejects the request; the update then
+// continues with protection released, as before.
+func updateHoldMessage(a control.Response, err error) (bool, string, error) {
+	const released = "the kill switch protection is released while the service restarts"
+	if err != nil {
+		if a.Version == control.Version && a.Instance != "" && a.Error == "invalid_request" {
+			return false, "warning: the installed service cannot keep kill switch protection during an update; " + released, nil
+		}
+		return false, "", fmt.Errorf("could not confirm the kill switch update hold; service stop was not requested: %w", err)
+	}
+	if updateProtectionRequired(a.Status) {
+		return true, "Kill switch protection requested for the update.", nil
+	}
+	if a.Status.KillSwitch == core.KillSwitchResidual {
+		return false, "Residual kill switch protection stays installed during the update.", nil
+	}
+	return false, "", nil
 }

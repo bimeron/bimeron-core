@@ -65,3 +65,16 @@ func TestCopyLinuxServiceFileIsExecutable(t *testing.T) {
 		t.Fatal("installed core permissions", info, err)
 	}
 }
+
+// Linux updates do not support keeping kill switch protection; the flag is
+// refused before any service change.
+func TestLinuxUpdateRefusesKeepKillSwitch(t *testing.T) {
+	source, err := filepath.Abs("bimeron-update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = serviceCommand([]string{"update", "-keep-kill-switch", "-source", source, "-version", "0.4.0", "-sha256", strings.Repeat("a", 64)})
+	if err == nil || !strings.Contains(err.Error(), "only on Windows") {
+		t.Fatal(err)
+	}
+}

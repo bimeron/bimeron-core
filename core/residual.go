@@ -18,11 +18,15 @@ func (e *Engine) refreshResidual() {
 	}
 	// The probe may take the session lock for an instant; never race a Start.
 	if !e.lifecycle.TryLock() {
+		e.mu.Lock()
+		e.residualProfile = ""
+		e.residualGeneration = ""
+		e.mu.Unlock()
 		return
 	}
 	defer e.lifecycle.Unlock()
 	e.mu.Lock()
-	if e.active || time.Since(e.residualChecked) < residualInterval {
+	if e.active || (e.residualProfile == "" && time.Since(e.residualChecked) < residualInterval) {
 		e.mu.Unlock()
 		return
 	}
@@ -30,8 +34,24 @@ func (e *Engine) refreshResidual() {
 	probe := e.residualProbe
 	e.mu.Unlock()
 	found, err := probe()
+	// The update record outlives only the protection it describes. Residual
+	// protection can also be reported as not found while another process
+	// owns the session, so the record is removed only when no Bimeron
+	// protection is installed at all.
+	var held updateHoldRecord
+	if hold := e.opts.UpdateHold; hold != nil {
+		if found {
+			held = hold.readRecord()
+		} else if err == nil {
+			if installed, inspectErr := e.installedProbe(); inspectErr == nil && !installed {
+				_ = hold.Clear()
+			}
+		}
+	}
 	e.mu.Lock()
 	e.residual = found || err != nil && e.residual
+	e.residualProfile = held.ProfileID
+	e.residualGeneration = held.Generation
 	e.mu.Unlock()
 }
 
@@ -64,6 +84,11 @@ func (e *Engine) residualStatusLocked(status *Status) {
 		return
 	}
 	status.KillSwitch = KillSwitchResidual
+	if e.residualProfile != "" {
+		status.ResidualReason = ResidualUpdate
+		status.ResidualProfile = e.residualProfile
+		status.ResidualGeneration = e.residualGeneration
+	}
 	if status.State == Failed && status.LastError != "" {
 		return
 	}

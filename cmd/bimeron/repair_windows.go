@@ -331,7 +331,7 @@ func (b *windowsRepairBackend) Start(ctx context.Context) error {
 	return b.service.Start()
 }
 func (b *windowsRepairBackend) readyOnce(ctx context.Context) error {
-	return verifyServiceReadiness(ctx, b.callReadiness, validateRepairHello)
+	return verifyServiceReadiness(ctx, b.callReadiness, validateRepairHello, false)
 }
 func (b *windowsRepairBackend) Rollback(ctx context.Context) error {
 	if b.service == nil {

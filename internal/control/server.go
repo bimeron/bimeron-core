@@ -28,18 +28,20 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
-	Installation   string   `json:"installation,omitempty"`
-	AcceptRevision string   `json:"accept_revision,omitempty"`
-	PlanToken      string   `json:"plan_token,omitempty"`
-	Instance       string   `json:"instance,omitempty"`
-	Session        string   `json:"session,omitempty"`
-	ID             string   `json:"id,omitempty"`
-	Version        int      `json:"version"`
-	Command        string   `json:"command"`
-	Config         string   `json:"config,omitempty"`
-	After          uint64   `json:"after,omitempty"`
-	ChallengeID    string   `json:"challenge_id,omitempty"`
-	Answers        []string `json:"answers,omitempty"`
+	ResidualProfile    string   `json:"residual_profile,omitempty"`
+	ResidualGeneration string   `json:"residual_generation,omitempty"`
+	Installation       string   `json:"installation,omitempty"`
+	AcceptRevision     string   `json:"accept_revision,omitempty"`
+	PlanToken          string   `json:"plan_token,omitempty"`
+	Instance           string   `json:"instance,omitempty"`
+	Session            string   `json:"session,omitempty"`
+	ID                 string   `json:"id,omitempty"`
+	Version            int      `json:"version"`
+	Command            string   `json:"command"`
+	Config             string   `json:"config,omitempty"`
+	After              uint64   `json:"after,omitempty"`
+	ChallengeID        string   `json:"challenge_id,omitempty"`
+	Answers            []string `json:"answers,omitempty"`
 }
 type AuthChallenge struct {
 	ID string `json:"id"`
@@ -50,7 +52,9 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	closeAccepted bool // internal admission result; never serialized
+	UpdateTransaction     string `json:"update_transaction,omitempty"`
+	UpdateCommitSupported bool   `json:"update_commit_supported,omitempty"`
+	closeAccepted         bool   // internal admission result; never serialized
 
 	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
@@ -124,8 +128,18 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
-	authMu                sync.Mutex
-	pending               *pendingAuth
+	UpdateCommitted       func(string)
+	WriteUpdateHold       func(string, string) error
+	RenewUpdateHold       func(string) func(string) error
+	// command protects the prepare_update hold for the next service stop.
+	hold *updateHold
+	// PeerProcess, when set, watches the process at the other end of a
+	// readiness connection; a hold then lasts only while that process lives.
+	PeerProcess func(net.Conn) ProcessWatch
+	// clock replaces time.Now in tests of the update hold window.
+	clock   func() time.Time
+	authMu  sync.Mutex
+	pending *pendingAuth
 }
 type pendingAuth struct {
 	challenge AuthChallenge
@@ -275,7 +289,7 @@ func (s *Server) record(e core.Event) {
 }
 func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	answer := Response{Version: Version, ID: r.ID, Instance: s.instance}
-	if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
+	if r.Command == "start" || r.Command == "resume_update" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 		s.command.Lock()
 		defer s.command.Unlock()
 	}
@@ -289,17 +303,25 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 		answer.Error = "unsupported_protocol"
 	} else if !s.foreground && (r.Installation != "" || r.PlanToken != "" || r.AcceptRevision != "") {
 		answer.Error = "invalid_request"
+	} else if r.Command != "resume_update" && (r.ResidualProfile != "" || r.ResidualGeneration != "") {
+		answer.Error = "invalid_request"
+	} else if r.Command == "resume_update" && (s.foreground || r.Instance == "" || r.ResidualProfile == "" || r.ResidualGeneration == "") {
+		answer.Error = "invalid_request"
 	} else if !s.foreground && !validDaemonGuardRequest(r) {
 		answer.Error = "invalid_request"
 	} else if r.Command != "auth_reply" && (r.ChallengeID != "" || len(r.Answers) != 0) {
 		answer.Error = "invalid_request"
 	} else {
-		if r.Command == "start" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
+		if r.Command == "start" || r.Command == "resume_update" || r.Command == "stop" || r.Command == "shutdown" || r.Command == "reconnect_now" {
 			// Guard validation and mutation share admission with legacy commands.
 			if !s.foreground && r.Instance != "" {
 				answer.Status = s.engine.Status()
 				if r.Instance != s.instance {
 					answer.Error = "stale_instance"
+				} else if r.Command == "resume_update" {
+					if !answer.Status.HasUpdateHold() || answer.Status.ResidualProfile != r.ResidualProfile || answer.Status.ResidualGeneration != r.ResidualGeneration {
+						answer.Error = "update_resume_conflict"
+					}
 				} else if r.Command == "start" {
 					// A session that owns kill switch protection may be handed
 					// over; the engine decides whether the new profile keeps it.
@@ -324,6 +346,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			answer.DaemonSessionGuards = !s.foreground
 			c := core.PlatformCapabilities()
+			c.KillSwitchUpdateResume = s.supportsUpdateResume()
 			answer.Capabilities = &c
 			build := s.build()
 			answer.Core = &build
@@ -359,6 +382,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			}
 			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			c := core.PlatformCapabilities()
+			c.KillSwitchUpdateResume = s.supportsUpdateResume()
 			answer.Capabilities = &c
 		case "events":
 			if r.Config != "" {
@@ -413,7 +437,7 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				}
 			}
 			s.authMu.Unlock()
-		case "start":
+		case "start", "resume_update":
 			if !filepath.IsAbs(r.Config) || r.After != 0 {
 				answer.Error = "absolute_config_path_required"
 				break
@@ -434,9 +458,20 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				cfg.SSHPrompt = s.prompt
 				// The daemon's home and SSH agent are not reliably the GUI user's.
 				cfg.SSHDefaultKeys, cfg.SSHNoAgent = false, true
-				if err = s.engine.Start(ctx, cfg); err != nil {
+				if r.Command == "resume_update" {
+					if !s.supportsUpdateResume() {
+						answer.Error = "update_resume_conflict"
+						break
+					}
+					err = s.engine.(updateResumeEngine).ResumeUpdate(ctx, cfg, r.ResidualProfile, r.ResidualGeneration)
+				} else {
+					err = s.engine.Start(ctx, cfg)
+				}
+				if err != nil {
 					answer.Error = "session_start_failed"
-					if errors.Is(err, core.ErrSessionRunning) {
+					if errors.Is(err, core.ErrUpdateResumeConflict) {
+						answer.Error = "update_resume_conflict"
+					} else if errors.Is(err, core.ErrSessionRunning) {
 						answer.Error = "session_already_running"
 					} else if errors.Is(err, core.ErrKillSwitchHeld) {
 						answer.Error = "kill_switch_held"
@@ -450,6 +485,8 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 				answer.Error = "invalid_request"
 				break
 			}
+			// A user's stop wins over an update hold that has not applied yet.
+			s.cancelUpdateHold()
 			if err := s.engine.Stop(ctx); err != nil {
 				answer.Error = "session_stop_failed"
 			} else if r.Command == "shutdown" {
@@ -472,6 +509,13 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 	}
 	answer.Status = s.engine.Status()
 	return answer
+}
+
+func (s *Server) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 // AbandonOnExit makes the current session keep kill switch protection when
@@ -538,4 +582,14 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	if ((r.Command == "shutdown" && answer.Error == "") || closeAccepted) && s.shutdown != nil {
 		s.shutdown()
 	}
+}
+
+type updateResumeEngine interface {
+	SupportsUpdateResume() bool
+	ResumeUpdate(context.Context, core.SessionConfig, string, string) error
+}
+
+func (s *Server) supportsUpdateResume() bool {
+	engine, ok := s.engine.(updateResumeEngine)
+	return !s.foreground && ok && engine.SupportsUpdateResume()
 }
