@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	"bimeron/internal/accesskey"
@@ -39,6 +40,7 @@ type IKEv2Config = systemvpn.Config
 // SessionConfig is copied by Start. Resolve must honor cancellation and must not
 // modify shared state. It is called again after every reconnect (refreshing ssconf).
 type SessionConfig struct {
+	doh                    []dnsconfig.DoHEndpoint
 	retainNativeProtection func() bool
 	commitNativeStop       func() bool
 	nativeUpdate           func(func(*NativeStatus))
@@ -217,8 +219,12 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
+	doh := slices.Clone(copy.DoHEndpoints)
+	for i := range doh {
+		doh[i].IPs = slices.Clone(doh[i].IPs)
+	}
 	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, ListenUsername: copy.Tunnel.ListenUsername, ListenPassword: copy.Tunnel.ListenPassword, MTU: mtu, adapterAlias: alias,
-		DNS: dns, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
+		DNS: dns, doh: doh, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 
 // maxKeyFile matches the profile key-file limit.

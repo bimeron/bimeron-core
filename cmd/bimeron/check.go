@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"bimeron/core"
 	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
 	"bimeron/internal/config"
@@ -44,6 +45,17 @@ func checkWithResolver(ctx context.Context, args []string, resolver *accesskey.R
 	if cfg != nil {
 		if cfg.IKEv2 != nil {
 			return fmt.Errorf("check requires an upstream dialer; use run for a system IKEv2 profile")
+		}
+		if len(cfg.DoHEndpoints) != 0 {
+			session, err := core.FromConfig(cfg)
+			if err != nil {
+				return err
+			}
+			if err := core.CheckProfileDoH(ctx, session, terminalSSHPrompt); err != nil {
+				return err
+			}
+			fmt.Println("DoH check passed.")
+			return nil
 		}
 		*dns = cfg.Tunnel.DNS
 	}
@@ -143,6 +155,7 @@ func checkWithResolver(ctx context.Context, args []string, resolver *accesskey.R
 			}
 		}
 	}
+
 	if p.Type == "ssh" || p.Type == "naive" || (cfg != nil && cfg.Tunnel.Mode == "proxy" && (p.Type == "socks5" || p.Type == "http")) {
 		address, err := vpn.CheckTCP(ctx, tcp)
 		if err != nil {

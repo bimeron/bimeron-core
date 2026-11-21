@@ -680,7 +680,7 @@ This section is optional; missing options receive defaults.
 | `MTU` | `1420` | Maximum tunnel IP-packet size in bytes. Integers `1280..1500` are allowed. Unused in `proxy` mode. |
 | `IPv6` | `enable` | `enable`: route IPv6 according to the rules. `disable`: block IPv6 connections and return empty successful responses to system AAAA DNS queries so applications choose IPv4. Available only with `Mode = vpn`. |
 | `KillSwitch` | `false` | `true`: enable Windows WFP or Linux nftables filters that block application traffic outside the tunnel according to IP split rules. Filters are installed as the first step of a connection, before key resolution, DNS and the transport check, and stay installed through reconnect attempts, recovery waits and `failed` until the session is stopped (`stop`, `shutdown`, Ctrl+C of a foreground session, or a service stop); see [CONTROL.MD](CONTROL.MD#kill-switch-hold). `false`: install no protection; traffic can leave outside the tunnel while connecting, reconnecting or after a failure. Only for `Mode = vpn`. Rules survive core crashes until explicit `recover`. Linux protection does not survive an OS reboot. On macOS, true is rejected before network setup because a kill switch is not implemented; see [MACOS.MD](MACOS.MD). See [KILLSWITCH.MD](KILLSWITCH.MD) and [LINUX.MD](LINUX.MD). DNS ports (53, 853), LLMNR (5355) and NetBIOS names (UDP 137) outside the tunnel are blocked for applications even to `direct` destinations, so a `direct` LAN DNS server is not used while the kill switch is enabled. |
-| `DNS` | `1.1.1.1, 1.0.0.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. In `vpn` mode, system DNS goes through the selected upstream transport to these servers. Also used by preconnection checks and `check`. |
+| `DNS` | `1.1.1.1, 1.0.0.1` | 1–4 distinct unicast IPv4 addresses, comma-separated in priority order. With plain DNS, system queries and VPN DNS probes use these servers through the upstream. Explicit DoH has its own endpoint settings. |
 | `Listen` | `127.0.0.1:1080` | SOCKS5 address in `proxy` mode: a loopback IP and port `1..65535`, such as `127.0.0.1:11080` or `[::1]:1080`. Unused in `vpn` mode. |
 | `ListenUsername` | empty | Optional username for the local SOCKS5 listener (RFC 1929). Set together with `ListenPassword`. 1–255 bytes, no control characters. Unused in `vpn` mode. |
 | `ListenPassword` | empty | Password for `ListenUsername`. Same limits. When both are empty, the listener requires no authentication. |
@@ -740,6 +740,50 @@ Applications with their own DNS/DoH may receive IPv6 addresses, but their IPv6
 connections in the tunnel are blocked. Existing more specific routes may still
 bypass the tunnel. With `IPv6 = enable`, IPv6 destination availability depends
 on the upstream server.
+
+### Explicit DNS over HTTPS
+
+Set both options in a Core packet VPN profile to encrypt captured DNS:
+
+```ini
+[Interface]
+Mode = vpn
+DNS = 1.1.1.1, 1.0.0.1
+DoH = https://one.example/dns-query, https://two.example/dns-query
+DoHBootstrap = 192.0.2.10|2001:db8::10, 192.0.2.20
+```
+
+The addresses and names above are documentation placeholders. Each ordered
+HTTPS URL has one bootstrap group at the same comma-separated position.
+Within each group, separate numeric IPv4 or IPv6 addresses with pipes. The
+limits are four URLs and four addresses per URL, independent of the ordinary
+`DNS` limit. Surrounding delimiter whitespace is ignored. URLs require a DNS
+hostname and a path and may specify a port. User information, query strings,
+fragments, literal pipes, and duplicate URLs are rejected. Use unicast addresses
+without brackets, ports, zone identifiers, or IPv4-mapped IPv6 notation.
+An IP can appear in multiple groups. `IPv6 = disable` skips IPv6 bootstrap
+addresses without removing them from the profile, and every group must still
+have a usable address.
+
+Core dials the explicit IP through the VPN upstream and verifies TLS against
+the original URL hostname. Windows and Apple use native system trust,
+including enterprise trust settings, with verification-time network fetch
+disabled. Linux and Android retain Go verification with local roots. If
+the server and local trust stores cannot supply a trusted chain, the
+attempt fails. Configure the HTTPS resolver to present its intermediates. It tries addresses within an endpoint before moving
+to the next resolver. A valid NXDOMAIN terminates the query. The query budget
+is eight seconds, shared among remaining addresses, with up to two seconds per
+attempt. Exhaustion returns SERVFAIL. Core does not use system name resolution,
+plaintext DNS, or a direct connection for DoH. The existing physical path
+bootstrap for upstream endpoint and SSConf lookups is separate; legacy `DNS`
+can coexist with the DoH pair. Remove both DoH options to restore plain DNS
+behavior for captured queries. Older Core versions reject profiles with the
+new options. Proxy mode and native IKEv2 reject DoH.
+
+WireGuard and AmneziaWG use this setting via the Bimeron profile wrapper, with
+every active bootstrap address covered by the peer's AllowedIPs. Core uses the
+tunnel for those resolver connections, including internal hostname lookups.
+Native wg-quick text retains its existing DNS format.
 
 ## [Routing]
 

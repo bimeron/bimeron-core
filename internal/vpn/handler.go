@@ -33,6 +33,7 @@ type Handler struct {
 	Report func(string, string)
 	Stats  *telemetry.Counters
 	DNS    []string
+	DoH    *DoHResolver
 	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.Mutex
@@ -74,7 +75,14 @@ func (h *Handler) start(c net.Conn, run func(closeLocal func())) {
 		run(closeLocal)
 	}()
 }
-func (h *Handler) Close() { h.mu.Lock(); h.closed = true; h.cancel(); h.mu.Unlock(); h.wg.Wait() }
+func (h *Handler) Close() {
+	h.mu.Lock()
+	h.closed = true
+	h.cancel()
+	h.mu.Unlock()
+	h.wg.Wait()
+	h.DoH.Close()
+}
 func (h *Handler) report(code, message string) {
 	if h.Report != nil && h.ctx.Err() == nil {
 		h.Report(code, message)

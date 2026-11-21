@@ -61,3 +61,4 @@ number.
 | 0041 | [Keep kill switch protection across a client-requested service update](0041-kill-switch-across-service-updates.md) |
 | 0042 | [Always-on VPN at boot](0042-always-on-vpn-at-boot.md) |
 | 0043 | [WireGuard and AmneziaWG client upstream](0043-wireguard-amneziawg-client.md) |
+| 0044 | [Explicit DNS over HTTPS for captured VPN DNS](0044-explicit-https-dns.md) |

@@ -23,8 +23,12 @@ int main(void) {
     unsigned long long geo_handle = RLCreateWithGeoData(config, (int)strlen(config), NULL, 0, NULL, 0);
     assert(geo_handle != 0);
     assert(RLStop(geo_handle) == 0);
+    char doh_config[] = "[Profile]\nVersion = 1\n[AccessKey]\nSS = ss://YWVzLTI1Ni1nY206c2VjcmV0@127.0.0.1:8388\n[Interface]\nDoH = https://resolver.example/dns-query\nDoHBootstrap = 192.0.2.1|2001:db8::1\n";
+    unsigned long long doh_handle = RLCreate(doh_config, (int)strlen(doh_config));
+    assert(doh_handle != 0);
+    assert(RLStop(doh_handle) == 0);
     char *caps = RLCapabilities();
-    assert(caps && strstr(caps, "\"geoip_split\":true") && strstr(caps, "\"geosite_split\":true") && strstr(caps, "geodata_schema")); RLFree(caps);
+    assert(caps && strstr(caps, "\"doh\":true") && strstr(caps, "\"geoip_split\":true") && strstr(caps, "\"geosite_split\":true") && strstr(caps, "geodata_schema")); RLFree(caps);
     char ip_kind[] = "geoip";
     unsigned char dataset[] = {10, 6, 10, 4, 'T', 'E', 'S', 'T'};
     char *good_groups = RLGeoDataGroups(ip_kind, dataset, sizeof(dataset));

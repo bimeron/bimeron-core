@@ -517,3 +517,31 @@ func TestFieldsAfterDisabledRule(t *testing.T) {
 		t.Fatal("ambiguous edit must fail unchanged")
 	}
 }
+
+func TestDoHDocumentRoundTrip(t *testing.T) {
+	source := "\ufeff[Profile]\r\nVersion = 1\r\n[Interface]\r\nDNS = 1.1.1.1\r\n# Keep this comment\r\n[Routing]\r\nDefault = proxy"
+	doc := ParseConfigDocument([]byte(source))
+	urls := "https://One.example/dns-query, https://two.example/dns-query"
+	ips := "192.0.2.1|2001:0db8::1, 192.0.2.2"
+	if err := doc.SetDoH(&urls, &ips); err != nil {
+		t.Fatal(err)
+	}
+	fields, err := doc.FieldsJSON()
+	if err != nil || !strings.Contains(fields, urls) || !strings.Contains(fields, ips) {
+		t.Fatalf("fields: %s (%v)", fields, err)
+	}
+	encrypted := string(doc.Bytes())
+	want := strings.Replace(source, "[Routing]", "DoH=\""+urls+"\"\r\nDoHBootstrap=\""+ips+"\"\r\n[Routing]", 1)
+	if encrypted != want {
+		t.Fatalf("encrypted profile = %q, want %q", encrypted, want)
+	}
+	if err := doc.SetDoH(&urls, nil); err == nil || string(doc.Bytes()) != encrypted {
+		t.Fatal("incomplete patch mutated the profile")
+	}
+	if err := doc.SetDoH(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(doc.Bytes()); got != source {
+		t.Fatalf("plain profile = %q", got)
+	}
+}

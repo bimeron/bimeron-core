@@ -3,6 +3,14 @@ Third-Party Notices for Bimeron
 This file contains licensing terms for third-party software included in Bimeron binaries. It does not license Bimeron itself.
 
 ================================================================================
+github.com/ebitengine/purego v0.11.0
+================================================================================
+
+Licensed under the Apache License, Version 2.0. The full license terms are
+reproduced in the Apache License sections below. Source and copyright notices
+are available at https://github.com/ebitengine/purego/tree/v0.11.0.
+
+================================================================================
 github.com/quic-go/quic-go v0.64.1
 ================================================================================
 

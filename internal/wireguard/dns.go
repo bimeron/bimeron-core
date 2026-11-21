@@ -29,7 +29,13 @@ var errNoSuchName = errors.New("WireGuard name does not exist")
 // NXDOMAIN ends it.
 func (c *Client) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
 	name, err := dnsmessage.NewName(strings.TrimSuffix(host, ".") + ".")
-	if err != nil || len(c.dns) == 0 {
+	if err != nil {
+		return nil, errResolve
+	}
+	if c.DoH != nil {
+		return c.lookupDoH(ctx, name)
+	}
+	if len(c.dns) == 0 {
 		return nil, errResolve
 	}
 	for _, server := range c.dns {
@@ -47,6 +53,36 @@ func (c *Client) lookup(ctx context.Context, host string) ([]netip.Addr, error) 
 		}
 	}
 	return nil, errResolve
+}
+
+func (c *Client) lookupDoH(ctx context.Context, name dnsmessage.Name) ([]netip.Addr, error) {
+	var ips []netip.Addr
+	for _, kind := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
+		id, err := newID(nil)
+		if err != nil {
+			return nil, err
+		}
+		packet, err := query(id, name, kind)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := c.DoH.Exchange(ctx, packet)
+		if err != nil {
+			continue
+		}
+		var answer dnsmessage.Message
+		if answer.Unpack(raw) != nil {
+			continue
+		}
+		if answer.RCode == dnsmessage.RCodeNameError {
+			return nil, errResolve
+		}
+		ips = append(ips, addresses(answer.Answers, name, kind)...)
+	}
+	if len(ips) == 0 {
+		return nil, errResolve
+	}
+	return ips, nil
 }
 
 // reply is the outcome of one question.

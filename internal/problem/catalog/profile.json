@@ -1,5 +1,60 @@
 {
   "codes": {
+    "doh_bootstrap_required": {
+      "kind": "config",
+      "en": "DoH requires DoHBootstrap",
+      "ru": "DoH requires DoHBootstrap"
+    },
+    "doh_unsupported_mode": {
+      "kind": "config",
+      "en": "DoH requires VPN mode",
+      "ru": "DoH requires VPN mode"
+    },
+    "doh_too_many_endpoints": {
+      "kind": "config",
+      "en": "DoH supports up to four endpoints",
+      "ru": "DoH supports up to four endpoints"
+    },
+    "doh_bootstrap_count_mismatch": {
+      "kind": "config",
+      "en": "DoH requires one bootstrap group per endpoint",
+      "ru": "DoH requires one bootstrap group per endpoint"
+    },
+    "doh_invalid_endpoint": {
+      "kind": "config",
+      "en": "DoH requires a valid HTTPS URL with a DNS hostname and path",
+      "ru": "DoH requires a valid HTTPS URL with a DNS hostname and path"
+    },
+    "doh_duplicate_endpoint": {
+      "kind": "config",
+      "en": "DoH endpoints must be distinct",
+      "ru": "DoH endpoints must be distinct"
+    },
+    "doh_too_many_bootstrap_ips": {
+      "kind": "config",
+      "en": "DoH supports up to four IPs per endpoint",
+      "ru": "DoH supports up to four IPs per endpoint"
+    },
+    "doh_invalid_bootstrap_ip": {
+      "kind": "config",
+      "en": "DoH bootstrap requires numeric unicast IPs",
+      "ru": "DoH bootstrap requires numeric unicast IPs"
+    },
+    "doh_duplicate_bootstrap_ip": {
+      "kind": "config",
+      "en": "DoH bootstrap IPs must be distinct within each group",
+      "ru": "DoH bootstrap IPs must be distinct within each group"
+    },
+    "doh_no_usable_bootstrap_ip": {
+      "kind": "config",
+      "en": "Each DoH endpoint needs a usable IP address",
+      "ru": "Each DoH endpoint needs a usable IP address"
+    },
+    "doh_bootstrap_outside_allowed_ips": {
+      "kind": "config",
+      "en": "DoH bootstrap IP is outside WireGuard AllowedIPs",
+      "ru": "DoH bootstrap IP is outside WireGuard AllowedIPs"
+    },
     "file_unreadable": {
       "kind": "config",
       "en": "The profile or key file cannot be read. Check that it exists and that you have access to it.",

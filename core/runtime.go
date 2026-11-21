@@ -25,6 +25,7 @@ import (
 	"bimeron/internal/vless"
 	"bimeron/internal/vmess"
 	"bimeron/internal/vpn"
+	"bimeron/internal/wireguard"
 	"golang.getoutline.org/sdk/transport"
 )
 
@@ -164,6 +165,25 @@ func directHandler(ctx context.Context, c SessionConfig, path networkPath, repor
 	h.Report = report
 	return h
 }
+
+// CheckProfileDoH probes the configured VPN transport without changing system network settings.
+func CheckProfileDoH(ctx context.Context, c SessionConfig, prompt sshtunnel.Prompt) error {
+	if len(c.doh) == 0 {
+		return fmt.Errorf("profile has no DoH endpoints")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 75*time.Second)
+	defer cancel()
+	path := networkPath{dialer: net.Dialer{Timeout: 15 * time.Second}, sshPrompt: prompt}
+	h, _, _, closeTransport, err := prepareVPN(ctx, ctx, c, path, func(string, string) {}, vpn.NewDNSMetadata())
+	if closeTransport != nil {
+		defer closeTransport()
+	}
+	if h != nil {
+		h.Close()
+	}
+	return err
+}
+
 func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, func() error, error) {
 	report("key_resolve", "Resolving access key through outbound interface")
 	p, outbound, endpoints, err := resolveOnPath(ctx, c, path)
@@ -260,8 +280,17 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 			}
 		}
 	}
+	var doh *vpn.DoHResolver
+	if wg, ok := tcp.(*wireguard.Client); ok {
+		doh = wg.DoH
+	} else {
+		doh = vpn.NewDoHResolver(tcp, c.doh, c.DisableIPv6)
+	}
 	check := func() error { _, err := vpn.Check(ctx, tcp, udp, c.DNS); return err }
 	switch {
+	case doh != nil:
+		report("transport_check", "Checking DoH through the VPN upstream")
+		check = func() error { return doh.Check(ctx) }
 	case p.Type == "wireguard":
 		// The handshake already proved the peer. A public HTTPS target may be
 		// outside AllowedIPs and blocked by AllowedIPsMode, so only DNS,
@@ -274,8 +303,12 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 		report("transport_check", "Checking TCP/TLS and UDP/DNS")
 	}
 	if err := check(); err != nil {
+		doh.Close()
 		if closeTransport != nil {
 			_ = closeTransport()
+		}
+		if doh != nil {
+			return nil, nil, nil, nil, fault("doh_check_failed", true)
 		}
 		return nil, nil, nil, nil, fault("transport_check_failed", true)
 	}
@@ -285,6 +318,7 @@ func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath
 	h := directHandler(lifetime, c, path, report, metadata)
 	h.TCP = tcp
 	h.UDP = udp
+	h.DoH = doh
 	return h, tcp, udp, closeTransport, nil
 }
 
@@ -371,6 +405,15 @@ func (s *vpnSession) Wait(ctx context.Context) error {
 			return p.identity, err
 		},
 		probe: func(ctx context.Context) error {
+			s.router.mu.RLock()
+			h := s.router.current
+			s.router.mu.RUnlock()
+			if h != nil && h.DoH != nil {
+				if err := h.DoH.Check(ctx); err != nil {
+					return fault("doh_check_failed", true)
+				}
+				return nil
+			}
 			if p, ok := s.tcp.(interface{ Probe(context.Context) error }); ok {
 				return p.Probe(ctx)
 			}
