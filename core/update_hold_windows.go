@@ -47,3 +47,8 @@ func writeHoldFile(path string, b []byte) error {
 }
 
 func installedFilterGeneration() (string, error) { return killswitch.FilterGeneration() }
+
+func (r *updateResume) matches() bool {
+	record := r.hold.readRecord()
+	return record.ProfileID == r.profile && record.Generation == r.generation
+}

@@ -186,8 +186,3 @@ func (e *Engine) ResumeUpdate(ctx context.Context, cfg SessionConfig, profile, g
 	cfg.updateResume = &updateResume{hold: *e.opts.UpdateHold, profile: profile, generation: generation}
 	return e.Start(ctx, cfg)
 }
-
-func (r *updateResume) matches() bool {
-	record := r.hold.readRecord()
-	return record.ProfileID == r.profile && record.Generation == r.generation
-}
