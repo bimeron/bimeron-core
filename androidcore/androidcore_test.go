@@ -248,6 +248,9 @@ func TestEmbeddedGeoDataRestrictions(t *testing.T) {
 }
 
 func TestAndroidDoHProfile(t *testing.T) {
+	if !strings.Contains(Capabilities(), `"doh":true`) {
+		t.Fatal("missing embedded DoH capability")
+	}
 	profile := []byte(testProfile + "[Interface]\nIPv6 = disable\nDoH = https://resolver.example/dns-query\nDoHBootstrap = 192.0.2.1|2001:db8::1\n")
 	session, err := NewSession(profile, &testProtector{allow: true})
 	if err != nil {
