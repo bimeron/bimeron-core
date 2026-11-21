@@ -110,14 +110,42 @@ status after the updater exits, including after a rollback or error.
 
 ### Installers
 
-The MSI custom action runs before the installer's final dialog, so it cannot
-see a choice made there. It passes `-keep-kill-switch` only when starting
-Desktop afterwards is already certain when the action runs. Either the
-installer always starts Desktop after an upgrade that passed the flag, or an
-administrator sets an installer property for an unattended deployment whose
-own process starts Desktop. Otherwise the action omits the flag. Protection is
-then released as today, and a machine is never left blocked without the
-Desktop UI.
+Compare trusted installed and bundled executable SHA-256 values and
+architecture first. Identical bytes leave Core and its VPN session running.
+Desktop preserves the originating user's window or tray state and leaves a
+previously closed GUI closed.
+
+For interactive replacement with an active protected VPN, obtain consent and
+secure a compatible relaunch in the owning session before opting in. Run Core
+replacement after verified MSI completion. After the updater exits, the
+relaunched GUI reads fresh service status and uses guarded `resume_update`.
+An incompatible hold path requires a clear interruption warning and an
+explicit user decision. Failed or unconfirmed resume follows ordinary recovery.
+
+For silent replacement while the VPN is active, install the GUI only when it
+is known compatible with the retained Core. If automatic Core activation is
+unavailable, report `core_deferred_admin_required`. An incompatible or unknown
+pairing defers the entire upgrade before mutation (`upgrade_deferred`).
+Immediate hold is reserved for an explicit managed deployment with a verified
+compatible relaunch in the owning session.
+
+Standalone automatic idle activation remains disabled. In the native spike,
+a failure after InstallFinalize returned 1603 despite a commit marker, exact
+installed package and component identity, and no observed pending replacement
+or rollback marker. Pending and commit-observed records remain inert. Managed
+idle activation requires independently verified terminal MSI success, exact
+machine/package/payload identity, no pending replacement, and exclusion against
+competing product changes. Exit 3010 requires a reboot and revalidation.
+External or multi-package transactions with an unproven terminal outcome,
+disabled rollback, missing evidence, or unavailable worker fail closed.
+
+The proposed managed worker runs headless as SYSTEM after those gates pass.
+It uses Core's separate idle admission contract to reserve a clean disconnected
+installation and commits a same-process stop. The worker must observe the
+original service stopped and validate the matching durable receipt before image
+mutation. Reboot or a lost reply requires reconciliation of the receipt,
+journal and actual images. A committed stop is never replayed. This proposal
+does not change the in-app update or resume protocol.
 
 ### Relation to ADR 0040
 

@@ -828,15 +828,7 @@ that implements this:
    extracted executable against its signed `sha256` and `executable_sha256`.
    An absent or unknown revision does not support opting in.
    Tell the user beforehand that the VPN is interrupted.
-2. Passes the flag from every path that replaces the service: the in-app
-   update and the installer's update action. The installer action runs before
-   the installer's final dialog, so it passes the flag only when starting the
-   GUI afterwards is already certain at that point. Either the installer always
-   starts the GUI after an upgrade that passed the flag, or an
-   administrator-set installer property is used for an unattended deployment
-   that starts the GUI itself. A machine is never left blocked without the
-   GUI.
-3. After the update command has finished, or whenever it observes it without
+2. After the update command has finished, or whenever it observes it without
    running an update (after an installer upgrade or its own restart), checks
    `Status`. `KillSwitch: "residual"` with `ResidualReason: "update"` means
    protection was kept on purpose for the profile whose `profile_id` equals
@@ -845,12 +837,30 @@ that implements this:
    the fresh service instance and residual profile/generation. Wait for the
    elevated updater to exit before attempting this. Deduplicate by the
    residual profile and generation, including across service restarts.
-   This is the only case in which `start` may follow
-   `cleanup_failed_run_recover` without a user decision.
-4. Shows the usual residual recovery prompt when `ResidualProfile` is absent,
+   Automatic recovery after `cleanup_failed_run_recover` uses only
+   this guarded request.
+3. Shows the usual residual recovery prompt when `ResidualProfile` is absent,
    no profile matches it, the profile no longer enables the kill switch, or
    the start fails. A failed start keeps the record, so status keeps reporting
    the held profile; do not retry in a loop.
+
+### Ordinary Windows MSI upgrades
+
+Identical trusted Windows Core executable bytes skip Core mutation and
+preserve the VPN session. Restore the previous window or tray state for the
+owning Desktop session, and leave a closed Desktop closed. For an interactive
+held replacement, require a compatible session relaunch and verified MSI
+completion before replacement, then use the guarded post-updater flow above.
+
+A standalone MSI cannot automatically activate a deferred Core replacement:
+the native spike found that a failed MSI can leave both a commit marker and
+matching installed identity. For silent active-VPN upgrades, a compatible
+retained Core permits a GUI upgrade with `core_deferred_admin_required`.
+An incompatible or unknown pairing yields `upgrade_deferred` before mutation.
+Managed activation requires independent terminal success and verified identity
+and exclusion. Wait for reboot and revalidate after exit 3010. Immediate
+hold requires explicit managed authorization and compatible relaunch.
+See [ADR 0041](adr/0041-kill-switch-across-service-updates.md).
 
 Until the GUI restarts the profile, traffic stays blocked, also across a
 reboot (the filters are persistent). A user `stop` or `shutdown` before the
