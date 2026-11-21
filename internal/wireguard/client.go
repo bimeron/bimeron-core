@@ -1,6 +1,7 @@
 package wireguard
 
 import (
+	"bimeron/internal/vpn"
 	"context"
 	"errors"
 	"io"
@@ -52,6 +53,7 @@ type Options struct {
 // Close ends every socket and stream the generation opened, including
 // direct ones outside the tunnel.
 type Client struct {
+	DoH       *vpn.DoHResolver
 	tunnel    tunnel
 	bind      *Bind
 	outbound  net.Dialer
@@ -280,6 +282,7 @@ func (c *Client) disown(r io.Closer) {
 
 // Close stops the device and closes every socket and stream it opened.
 func (c *Client) Close() error {
+	c.DoH.Close()
 	c.once.Do(func() {
 		c.mu.Lock()
 		close(c.closed)
@@ -345,6 +348,23 @@ func (c *Client) DialStream(ctx context.Context, address string) (transport.Stre
 	}
 	return nil, last
 }
+
+type tunnelDNSDialer struct{ client *Client }
+
+func (d tunnelDNSDialer) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {
+	to, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return nil, ErrBlocked
+	}
+	for _, prefix := range d.client.allowed {
+		if prefix.Contains(to.Addr()) {
+			return d.client.dialOne(ctx, to)
+		}
+	}
+	return nil, ErrBlocked
+}
+
+func (c *Client) DNSDialer() transport.StreamDialer { return tunnelDNSDialer{client: c} }
 
 func (c *Client) dialOne(ctx context.Context, to netip.AddrPort) (transport.StreamConn, error) {
 	switch c.scope(to.Addr()) {

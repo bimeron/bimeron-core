@@ -54,6 +54,14 @@ func Check(ctx context.Context, tcp transport.StreamDialer, udp transport.Packet
 }
 
 func checkDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.PacketListener, dns []string) error {
+	return checkResolver(ctx, DNSResolver{Servers: dns, TCP: tcp, UDP: udp})
+}
+
+func (r *DoHResolver) Check(ctx context.Context) error {
+	return checkResolver(ctx, DNSResolver{DoH: r})
+}
+
+func checkResolver(ctx context.Context, resolver DNSResolver) error {
 	var random [2]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return err
@@ -65,20 +73,22 @@ func checkDNS(ctx context.Context, tcp transport.StreamDialer, udp transport.Pac
 	if err != nil {
 		return err
 	}
-	resolver := DNSResolver{Servers: dns, TCP: tcp, UDP: udp}
 	var answer []byte
-	if udp != nil {
+	if resolver.UDP != nil {
 		answer, err = resolver.Exchange(ctx, packet, false)
 	} else {
 		answer, err = resolver.Exchange(ctx, packet, true)
 	}
-	if err != nil && udp != nil {
+	if err != nil && resolver.UDP != nil {
 		answer, err = resolver.Exchange(ctx, packet, true)
 		if err != nil {
 			return fmt.Errorf("DNS check failed over UDP and TCP")
 		}
 	}
 	if err != nil {
+		if resolver.DoH != nil {
+			return fmt.Errorf("DoH check failed: %w", err)
+		}
 		return fmt.Errorf("DNS check failed over TCP")
 	}
 	var response dnsmessage.Message

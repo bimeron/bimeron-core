@@ -44,6 +44,7 @@ Each operation has `op` plus these fields:
 | add | index (0 through row count), matcher, value, action, enabled |
 | delete | index |
 | set_field | section, key, value (strings; empty value allowed) |
+| set_doh | value and bootstrap (strings), or neither to remove both keys |
 | access_to_fields | none; any other member is rejected |
 | access_to_uri | none; any other member is rejected |
 
@@ -67,6 +68,18 @@ key/section, and quote edited values using Go string quoting. Existing key
 spacing and line endings survive replacement. Adding text may add a separator
 and final newline. Section/key identifiers are case-sensitive. No implicit delete
 or runtime interpretation is performed by set_field.
+
+
+### DNS mode editing
+
+`doh: true` in Core capabilities indicates support. Inspect returns
+`Interface.DoH` and `Interface.DoHBootstrap` in `fields` when present.
+Use `{"op":"set_doh","value":"https://one.example/dns-query","bootstrap":"192.0.2.10|2001:db8::10"}`
+to set both keys, or `{"op":"set_doh"}` to remove both. Both values must be
+present or both absent. The operation preserves `DNS` and applies atomically.
+Use normal Core validation before saving or starting. Preserve URL spelling and
+the endpoint and address order in editors and import/export. Shared parser
+vectors live in `internal/dnsconfig/testdata/doh-v1.json`.
 
 ### Access source conversion
 

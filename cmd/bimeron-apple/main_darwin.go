@@ -281,7 +281,7 @@ func RLValidateConfigWithGeoData(data unsafe.Pointer, size C.int, geoIP unsafe.P
 //export RLCapabilities
 func RLCapabilities() *C.char {
 	c := core.PlatformCapabilities()
-	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema, ExplicitAccess: c.ExplicitAccess, WireGuard: embeddedWireGuard(c.WireGuard)}
+	c = core.Capabilities{Platform: "darwin", VPN: true, IPv4: true, IPv6: true, IPSplit: true, DomainSplit: true, GeoIPSplit: true, GeoSiteSplit: true, GeoDataSchema: c.GeoDataSchema, DoH: c.DoH, ExplicitAccess: c.ExplicitAccess, WireGuard: embeddedWireGuard(c.WireGuard)}
 	b, _ := json.Marshal(c)
 	return C.CString(string(b))
 }

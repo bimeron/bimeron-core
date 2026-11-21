@@ -7,6 +7,7 @@ require (
 	github.com/apernet/hysteria/core/v2 v2.13.0
 	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
 	github.com/dunglas/httpsfv v1.1.0
+	github.com/ebitengine/purego v0.11.0
 	github.com/quic-go/quic-go v0.64.1
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6

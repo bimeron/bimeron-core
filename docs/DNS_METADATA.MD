@@ -155,3 +155,12 @@ After a fresh DNS response, a connection to the returned IP used Outline, while
 a domain without a rule retained direct routing. This also confirmed the guarantee
 boundary: an address in the system DNS cache from before session startup uses
 `Default` until Bimeron sees a new DNS response.
+
+## Core-managed DNS over HTTPS
+
+An explicit DoH profile still uses the synthetic tunnel DNS address. Both TCP
+and UDP DNS from the client are forwarded as DNS wire messages over HTTPS
+through the VPN upstream. Only valid responses enter the metadata table.
+SERVFAIL generated on exhaustion never adds associations. Core does not add
+a physical-link HTTPS exception to the kill switch. Port-based DNS protection
+cannot identify DNS carried as HTTPS by unrelated applications.

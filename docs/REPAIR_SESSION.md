@@ -101,8 +101,8 @@ this trust root. A publisher must deliver the updated protected package; no
 caller-supplied hash or writable downloaded executable substitutes for it.
 
 No disposable guest or secure guest credential reference is assigned to this
-repair validation. Existing running Windows 10 STD and unrelated lab guests must
-not be restored or modified. Acceptance requires an explicitly assigned disposable
+repair validation. The existing running Windows test VM and unrelated lab guests
+must not be restored or modified. Acceptance requires an explicitly assigned disposable
 clone, an isolated network plan and secure guest access before lifecycle tests.
 Historical VM update evidence is not repair-session acceptance.
 
@@ -414,7 +414,7 @@ rebuilt Desktop embedded broker/CLI bytes require focused release VM acceptance.
 Local verification for #140: native Windows `go test ./...` passed; focused
 `go vet ./cmd/bimeron ./internal/control` passed. Windows/Linux amd64/arm64
 CGO-disabled builds passed. WSL executed the Linux Repair/Update/lifecycle and
-Readiness/Unix test selections successfully. On Hyper-V Windows 10 STD,
+Readiness/Unix test selections successfully. On the Windows test VM (Hyper-V),
 PowerShell Direct ran the new native readiness tests successfully, including
 elevated pipe access, PID mismatch rejection and command denial. An attempted
 end-to-end broker check could not start its authenticated caller because no

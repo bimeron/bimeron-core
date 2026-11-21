@@ -18,15 +18,16 @@ const documentProfileLimit = 65536
 const bridgeOutputLimit = 32 << 20
 
 type documentOperation struct {
-	Op      string  `json:"op"`
-	Index   *int    `json:"index,omitempty"`
-	To      *int    `json:"to,omitempty"`
-	Enabled *bool   `json:"enabled,omitempty"`
-	Matcher string  `json:"matcher,omitempty"`
-	Value   *string `json:"value,omitempty"`
-	Action  string  `json:"action,omitempty"`
-	Section string  `json:"section,omitempty"`
-	Key     string  `json:"key,omitempty"`
+	Bootstrap *string `json:"bootstrap"`
+	Op        string  `json:"op"`
+	Index     *int    `json:"index,omitempty"`
+	To        *int    `json:"to,omitempty"`
+	Enabled   *bool   `json:"enabled,omitempty"`
+	Matcher   string  `json:"matcher,omitempty"`
+	Value     *string `json:"value,omitempty"`
+	Action    string  `json:"action,omitempty"`
+	Section   string  `json:"section,omitempty"`
+	Key       string  `json:"key,omitempty"`
 }
 type documentRequest struct {
 	Version    int                  `json:"version"`
@@ -92,7 +93,11 @@ func documentBridge(in io.Reader, out io.Writer) error {
 	doc := core.ParseConfigDocument(original.Bytes())
 	for _, op := range *req.Operations {
 		access := op.Op == "access_to_fields" || op.Op == "access_to_uri"
-		if op.Op != "set_field" && !access && op.Index == nil {
+		if op.Op != "set_doh" && op.Bootstrap != nil {
+			err = fmt.Errorf("unexpected bootstrap field")
+			break
+		}
+		if op.Op != "set_field" && op.Op != "set_doh" && !access && op.Index == nil {
 			err = fmt.Errorf("missing index")
 			break
 		}
@@ -123,6 +128,12 @@ func documentBridge(in io.Reader, out io.Writer) error {
 			}
 		case "delete":
 			err = doc.DeleteRule(*op.Index)
+		case "set_doh":
+			if op.Index != nil || op.To != nil || op.Enabled != nil || op.Matcher != "" || op.Action != "" || op.Section != "" || op.Key != "" {
+				err = fmt.Errorf("unexpected operation fields")
+			} else {
+				err = doc.SetDoH(op.Value, op.Bootstrap)
+			}
 		case "set_field":
 			err = doc.SetSectionField(op.Section, op.Key, *op.Value)
 		case "access_to_fields", "access_to_uri":

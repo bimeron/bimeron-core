@@ -7,6 +7,9 @@ import (
 	"net/netip"
 	"time"
 
+	"bimeron/internal/dnsconfig"
+	"bimeron/internal/problem"
+	"bimeron/internal/vpn"
 	"bimeron/internal/wireguard"
 )
 
@@ -20,6 +23,9 @@ const wireguardHandshakeTimeout = 20 * time.Second
 func startWireGuard(ctx context.Context, c SessionConfig, p Profile, outbound net.Dialer, report func(string, string)) (*wireguard.Client, error) {
 	if p.WireGuard == nil {
 		return nil, fault("invalid_wireguard_transport", false)
+	}
+	if err := dnsconfig.ValidateDoHScope(c.doh, p.WireGuard.Peer.AllowedIPs, c.DisableIPv6); err != nil {
+		return nil, fault(problem.Of(err).Code, false)
 	}
 	ip, err := netip.ParseAddr(p.UDP.Host)
 	if err != nil {
@@ -65,5 +71,6 @@ func startWireGuard(ctx context.Context, c SessionConfig, p Profile, outbound ne
 		}
 		return nil, fault("wireguard_handshake_timeout", true)
 	}
+	client.DoH = vpn.NewDoHResolver(client.DNSDialer(), c.doh, c.DisableIPv6)
 	return client, nil
 }

@@ -280,3 +280,14 @@ func TestDirectSocketHookPanicLeavesPacketClosable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDoHWireGuardDialerRejectsUncoveredAddresses(t *testing.T) {
+	for _, mode := range []string{ModeDirect, ModeBlock, ModeIgnore, ModeOnly} {
+		client := &Client{mode: mode, allowed: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}
+		for _, address := range []string{"198.51.100.1:443", "resolver.example:443", "[2001:db8::1]:443"} {
+			if _, err := client.DNSDialer().DialStream(context.Background(), address); err != ErrBlocked {
+				t.Fatalf("%s / %s: %v", mode, address, err)
+			}
+		}
+	}
+}
