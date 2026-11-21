@@ -420,6 +420,29 @@ Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
 | `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | yes | pending |
 | mismatched AWG options or keys | — | yes: handshake fails | yes: a plain client and a wrong header protection key fail | — |
 
+At Core source `67a7ad97`, the CLI imported `wg://`, `wireguard://`, and
+`vpn://` profiles for all six positive rows on Windows 10 and Ubuntu 22.04.
+A synthetic test harness exercised the Core engine against reference peers
+on guest loopback without a native system VPN session. Encrypted TCP and UDP
+traffic resumed after a peer-only UDP interruption of about 2.5 seconds,
+before the next natural handshake.
+
+At the same revision, Ubuntu 22.04 native VPN passed with plain WireGuard,
+AWG 2.0 and AWG 3.1 via `bimeron run`, and with plain WireGuard via the
+daemon. The isolated test checked TUN routing, OS DNS, and TCP/UDP traffic
+before and after a peer-only interruption. Foreground WireGuard recovered
+after an interruption longer than 170 seconds. Stopping Core restored the
+baseline routes, policy rules and resolver and removed the TUN adapter.
+The first Windows 10 native WireGuard pilot connected and stopped. Management
+errors interrupted its data-plane and rollback checks. A follow-up using
+`bimeron run` passed plain WireGuard, AWG 2.0 and AWG 3.1 against synthetic
+peers on Ubuntu. It verified Wintun IPv4 split routes, NRPT and the Core DNS
+proxy, and IPv4 TCP/UDP traffic. Traffic and DNS recovered automatically
+after each peer-only UDP interruption of about five seconds. Stopping Core
+restored the baseline adapters, routes, DNS, NRPT and service state.
+Windows daemon operation and recovery after a prolonged outage remain
+unverified. External peer checks remain pending for all six rows.
+
 Platforms: Windows and Linux will be checked live. Android (AAR) and Apple
 builds compile and their unit tests pass, but they have **not been
 validated live**.
