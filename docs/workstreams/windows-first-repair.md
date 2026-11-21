@@ -29,7 +29,7 @@ the existing file-not-found/bad-image exceptions and replacement flow.
 - One session runs recover, confirm-cleanup, start and readiness in that order.
 - Windows native focused tests, Go tests/vet, race where supported and Windows
   cross-builds pass; report unavailable checks honestly.
-- Disposable Windows 10 STD evidence records binary hashes and state. Real GUI
+- Disposable Windows test VM evidence records binary hashes and state. Real GUI
   first-click/UAC acceptance is separate from elevated CLI or backend tests.
 
 ## Scope
@@ -40,7 +40,7 @@ Re-freeze Core and rebuild/re-pin all Desktop packages before release acceptance
 
 ## Local implementation and evidence (2026-11-15)
 
-Root cause reproduced in the assigned Windows 10 STD VM: after killing only the
+Root cause reproduced in the assigned Windows test VM: after killing only the
 SCM-owned, exact protected Core process, the original adapter returned
 `previous service cleanup unconfirmed` from its first Inspect (0.52 s). With
 unchanged stopped state, the corrected adapter selected CleanupRequired and
