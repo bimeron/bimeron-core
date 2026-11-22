@@ -17,23 +17,29 @@ import (
 	"bimeron/internal/control"
 )
 
-type updateExpectation struct{ source, version, sha256 string }
+type updateExpectation struct {
+	source, version, sha256 string
+	// keepKillSwitch asks the installed service to keep kill switch
+	// protection across the update (ADR 0041, Windows only).
+	keepKillSwitch bool
+}
 
 func parseUpdateExpectation(args []string) (updateExpectation, error) {
 	f := flag.NewFlagSet("service update", flag.ContinueOnError)
 	version := f.String("version", "", "expected core version")
 	digest := f.String("sha256", "", "expected executable SHA-256")
 	source := f.String("source", "", "downloaded executable path")
+	keep := f.Bool("keep-kill-switch", false, "keep kill switch protection installed while the service is replaced (Windows)")
 	if err := f.Parse(args); err != nil {
 		return updateExpectation{}, err
 	}
 	if f.NArg() != 0 || *version == "" || len(*digest) != 64 || !filepath.IsAbs(*source) {
-		return updateExpectation{}, fmt.Errorf("usage: service update -source <absolute-path> -version <version> -sha256 <executable-sha256>")
+		return updateExpectation{}, fmt.Errorf("usage: service update -source <absolute-path> -version <version> -sha256 <executable-sha256> [-keep-kill-switch]")
 	}
 	if _, err := hex.DecodeString(*digest); err != nil {
 		return updateExpectation{}, fmt.Errorf("invalid SHA-256: %w", err)
 	}
-	return updateExpectation{*source, *version, strings.ToLower(*digest)}, nil
+	return updateExpectation{source: *source, version: *version, sha256: strings.ToLower(*digest), keepKillSwitch: *keep}, nil
 }
 
 var errNotRegularFile = errors.New("not a regular file")
@@ -114,9 +120,9 @@ func stageVerifiedUpdate(source, staged, wantSHA256 string, copyFile func(string
 }
 
 func waitUpdatedServiceContext(parent context.Context, wantVersion string) error {
-	return waitUpdatedServiceWithCall(parent, wantVersion, control.CallService)
+	return waitUpdatedServiceWithCall(parent, wantVersion, false, control.CallService)
 }
-func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, call func(context.Context, control.Request) (control.Response, error)) error {
+func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, kept bool, call func(context.Context, control.Request) (control.Response, error)) error {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	var last error
@@ -124,7 +130,7 @@ func waitUpdatedServiceWithCall(parent context.Context, wantVersion string, call
 		probe, probeCancel := context.WithTimeout(ctx, 2*time.Second)
 		err := verifyServiceReadiness(probe, call, func(hello control.Response) error {
 			return validateUpdatedHello(hello, wantVersion)
-		})
+		}, kept)
 		probeCancel()
 		if err == nil {
 			return nil

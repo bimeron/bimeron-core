@@ -65,7 +65,9 @@ For automatic startup when Windows boots, install using
 `dist\windows-amd64\bimeron.exe service install -automatic`. Startup is manual by default.
 Installation does not start the service. Starting the service does not connect
 the VPN. Keys and profiles are not copied to Program Files or retained by the
-service.
+service. The only session data the service keeps is the `profile_id` (a hash of
+the profile path) of a session whose kill switch protection was kept across an
+update, in a file readable only by SYSTEM and Administrators (see Updating).
 
 After startup, in a regular CMD under the same user:
 
@@ -147,6 +149,18 @@ architecture. Only then does the staged file take the directory's inherited
 ACL; the command stops the service, waits for cleanup, and replaces the EXE. If
 the service was running, it restarts, but the VPN remains disconnected;
 explicitly call start <config>. If it was stopped, it stays stopped.
+
+With `-keep-kill-switch`, the command asks the running service, just before
+stopping it, to keep kill switch protection on that stop
+([ADR 0041](adr/0041-kill-switch-across-service-updates.md)). The service then
+consumes the transaction on the privileged readiness pipe and stops itself. After closing the adapter it records the transaction ID, held session's `profile_id`, and digest of all final WFP rule IDs in
+`kill-switch-update-hold.json` in its installation directory, and exits
+cleanly. A protected session started after preparation is included. The updater verifies a matching stop receipt before replacing the executable. The updated service reports the protection as residual with
+`ResidualReason: "update"`. The command prints whether protection was kept.
+Use the guarded `resume_update` request to resume the held profile; until then, traffic stays
+blocked, also across a reboot. If an older service supports only preparation for an ordinary SCM stop, the updater aborts before preparation. If a service without hold support explicitly rejects the request, the command warns that protection is released and continues. If the running service cannot confirm the request, the update ends before requesting a stop. An already stopped service stays stopped and the command warns that no running session can keep protection. If the updated service fails its
+check, the command asks the running replacement for a fresh hold before the rollback stop, even if the original service had no protection. If preparation fails, rollback stops before sending the stop request and retains the backup. A verified update hold also survives a second opt-in update. Linux
+rejects the flag. Uninstall removes the record.
 The owner, automatic-start setting, and recovery settings are preserved.
 Wintun DLL and its license are not replaced: this updates the core, not the driver.
 

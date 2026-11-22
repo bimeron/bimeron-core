@@ -17,3 +17,6 @@ func residualProtection() (bool, error) {
 		return func() {}, held, err
 	})
 }
+
+// protectionInstalled reports Bimeron packet kill switch filters, owned or not.
+func protectionInstalled() (bool, error) { return killswitch.Pending() }

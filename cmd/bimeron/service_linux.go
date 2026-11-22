@@ -472,6 +472,19 @@ func serviceCommand(args []string) error {
 		fmt.Print(string(data))
 		return nil
 	}
+	if args[0] == "update" {
+		expect, err := parseUpdateExpectation(args[1:])
+		if err != nil {
+			return err
+		}
+		if expect.keepKillSwitch {
+			return fmt.Errorf("-keep-kill-switch is supported only on Windows")
+		}
+		if err := requireLinuxRoot(); err != nil {
+			return err
+		}
+		return updateLinuxService(expect)
+	}
 	if err := requireLinuxRoot(); err != nil {
 		return err
 	}
@@ -490,13 +503,6 @@ func serviceCommand(args []string) error {
 			return err
 		}
 		return installLinuxService(owner, *automatic)
-	}
-	if args[0] == "update" {
-		expect, err := parseUpdateExpectation(args[1:])
-		if err != nil {
-			return err
-		}
-		return updateLinuxService(expect)
 	}
 	if len(args) != 1 {
 		return fmt.Errorf("unexpected service arguments")

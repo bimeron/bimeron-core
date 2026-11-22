@@ -88,6 +88,13 @@ func printControlResult(out io.Writer, command string, a control.Response) {
 	if a.Status.KillSwitch == core.KillSwitchHolding {
 		fmt.Fprintln(out, "Kill switch holding: traffic outside the tunnel stays blocked until connection or stop.")
 	}
+	if a.Status.KillSwitch == core.KillSwitchResidual {
+		if a.Status.ResidualReason == core.ResidualUpdate {
+			fmt.Printf("Kill switch protection was kept across a service update for profile ID %s; start that profile again to reconnect.\n", a.Status.ResidualProfile)
+		} else {
+			fmt.Println("Kill switch protection remains installed without a session; start a kill switch profile or run bimeron recover.")
+		}
+	}
 	if a.Status.State == core.Reconnecting && !a.Status.NextAttemptAt.IsZero() {
 		fmt.Fprintln(out, "Next attempt:", a.Status.NextAttemptAt.Local().Format(time.TimeOnly))
 	}

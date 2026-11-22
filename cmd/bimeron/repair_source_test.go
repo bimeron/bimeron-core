@@ -29,25 +29,25 @@ func TestRepairHelloPreservesCompatibleRelease(t *testing.T) {
 
 func TestRepairStatusRequiresAuthoritativeState(t *testing.T) {
 	a := control.Response{Version: control.Version, Instance: "instance"}
-	if validateRepairStatus(a, "instance") == nil {
+	if validateServiceStatus(a, "instance", false) == nil {
 		t.Fatal("missing status accepted")
 	}
 	for _, state := range []core.State{core.Disconnected, core.Connected, core.Connecting, core.Reconnecting} {
 		a.Status.State = state
-		if err := validateRepairStatus(a, "instance"); err != nil {
+		if err := validateServiceStatus(a, "instance", false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	a.Status.State = core.Failed
-	if validateRepairStatus(a, "instance") == nil {
+	if validateServiceStatus(a, "instance", false) == nil {
 		t.Fatal("failed status accepted")
 	}
 	a.Status.State = core.Disconnected
-	if validateRepairStatus(a, "another-instance") == nil {
+	if validateServiceStatus(a, "another-instance", false) == nil {
 		t.Fatal("changed service instance accepted")
 	}
 	a.Instance = ""
-	if validateRepairStatus(a, "") == nil {
+	if validateServiceStatus(a, "", false) == nil {
 		t.Fatal("absent service instance accepted")
 	}
 }
@@ -100,12 +100,12 @@ func TestServiceReadinessUsesStandardIPC(t *testing.T) {
 	if _, err := call(ctx, control.Request{Command: "status", Instance: "foreground-only"}); err == nil {
 		t.Fatal("standard server accepted foreground request field")
 	}
-	if err := verifyServiceReadiness(ctx, call, validateRepairHello); err != nil {
+	if err := verifyServiceReadiness(ctx, call, validateRepairHello, false); err != nil {
 		t.Fatal("repair readiness rejected actual standard service:", err)
 	}
 	if err := verifyServiceReadiness(ctx, call, func(hello control.Response) error {
 		return validateUpdatedHello(hello, core.GetBuildInfo().Version)
-	}); err != nil {
+	}, false); err != nil {
 		t.Fatal("update readiness rejected actual standard service:", err)
 	}
 }

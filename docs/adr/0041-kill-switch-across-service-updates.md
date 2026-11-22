@@ -25,17 +25,21 @@ nobody starts it again: Desktop does not remember which profile was connected.
 1. **Opt-in flag.** `service update` accepts `-keep-kill-switch` (Windows only;
    Linux rejects the flag). Without it, an update behaves as before.
 2. **Request to the old service.** After staging and verifying the new
-   executable, and immediately before the SCM stop, the updater sends
+   executable, and immediately before the protected stop, the updater sends
    `prepare_update` to the running service over the readiness pipe.
    - Only administrators can open that pipe. The updater checks that the pipe's
      server process is the one SCM reports for the service.
-   - The service arms a one-shot hold for the next SCM stop within 60 seconds.
-     The hold is bound to the requesting process: it lapses if that process
-     has exited by the time of the stop.
+   - The service arms a one-shot transaction for 60 seconds. The same live
+     process sends its transaction ID in `commit_update` on the readiness
+     pipe. The service stops itself and publishes a receipt after cleanup.
+     Pipe access authorizes both requests, the process check binds the commit
+     to the preparer, and the receipt proves the stop outcome. Windows service
+     DACLs may grant standard users `SERVICE_USER_DEFINED_CONTROL`; the
+     service uses no SCM custom control to authorize or consume a hold.
    - An IPC `stop` or `shutdown` cancels the hold, and so does a newer
      request. An OS shutdown never uses it.
    - The reply carries the kill switch state (`Status.KillSwitch`).
-3. **A stop that keeps protection.** On that SCM stop, the service ends the
+3. **A stop that keeps protection.** On that committed stop, the service ends the
    session as an owner exit (`MarkAbandon`, ADR 0039). The tunnel, routes and
    tunnel DNS are removed. The filters stay in place, normally in their early
    form, which blocks everything except the core, loopback, DHCP, neighbor
@@ -49,6 +53,7 @@ nobody starts it again: Desktop does not remember which profile was connected.
    protection, as today: `failed`, `cleanup_failed_run_recover`, `KillSwitch:
    "residual"`. While the record exists, it adds:
    - `ResidualReason: "update"`;
+   - `ResidualGeneration`: the digest of the held WFP rule IDs;
    - `ResidualProfile`: the recorded `profile_id`, the lowercase hex SHA-256 of
      the normalized absolute profile path, as in `Session.profile_id`.
 
@@ -57,7 +62,9 @@ nobody starts it again: Desktop does not remember which profile was connected.
    start that installs no protection leaves the record in place. The record
    survives a reboot and further updates.
 5. **Restart by the client.** A client that sees `ResidualReason: "update"`
-   starts the profile whose `profile_id` matches `ResidualProfile`. It does so
+   requests `resume_update` with the current service instance, profile ID
+   and residual generation. Core loads the profile, checks its effective kill
+   switch, and verifies the held generation under the Windows session lock. It does so
    once its own update command has finished, or immediately if it ran no
    update, for example after an MSI upgrade or its own restart. This is an
    exception to the rule against starting automatically after
@@ -72,54 +79,73 @@ nobody starts it again: Desktop does not remember which profile was connected.
    - The updater reports on standard output whether protection was kept.
    - If the reply shows no protection (`KillSwitch` empty), there is nothing to
      keep. If it shows `residual`, the filters stay installed anyway.
-   - An installed service without the capability rejects `prepare_update`
-     with `invalid_request`. An unreachable pipe or a stopped service is
-     treated the same way: the update continues with today's behavior and a
-     warning that protection is released.
+   - A verified explicit legacy `invalid_request` permits a warned legacy
+     update. Ambiguous preparation fails before commit. After a lost commit
+     reply, replacement requires a clean stop and the matching durable
+     receipt. An already stopped service stays stopped.
    - If the new service fails its health check, the updater asks it for the
      same hold before the rollback stop. A profile the client already
      restarted on it stays protected that way.
    - Clients rely on the reported status after the update rather than on the
      output, because an elevated or installer-run command's output is often
      not visible to them.
-7. **Capability.** `hello` capabilities gain `kill_switch_update_hold`. A
-   client reads it from the installed service before the update.
+7. **Capability.** Ordinary service `hello` advertises
+   `kill_switch_update_hold` and `kill_switch_update_resume`. The bundled
+   Windows CLI exposes contract revision 1 via `service update-contract`.
+   A signed Windows archive record binds revision 1 and executable SHA-256
+   to the archive digest and architecture. Absent or unknown revision
+   provides no opt-in signal. Replacement health accepts a verified
+   residual profile/generation or an active/holding session with the exact
+   expected profile ID. Rollback preserves the actual owner and retains the
+   backup when a safe stop cannot be verified.
 
 ### Compatibility matrix
 
-Protection is kept across a service replacement only when all of the
-following are true:
-
-- the installed (old) service supports the request (`kill_switch_update_hold`):
-  the first Core release that ships this ADR, after v0.4.0-beta.2, or later;
-- the replacement is requested with `-keep-kill-switch`, by the in-app update
-  or the MSI custom action of a Desktop release that implements this contract
-  (Desktop 0.3.2 or later). The core bundled with that Desktop must accept the
-  flag; an older one rejects it and the update fails;
-- the replacement (new) service reports `ResidualReason`; every release with
-  this ADR does;
-- a kill switch run owns protection at the stop.
-
-| Installed service | Client | Result |
-| --- | --- | --- |
-| v0.4.0-beta.2 or older | any | protection released during the update (today's behavior) |
-| with this ADR | Desktop 0.3.1 or older | protection released during the update |
-| with this ADR | Desktop 0.3.2 or later | protection kept; profile restarted by Desktop |
-
-The one-time gap therefore occurs when moving from v0.4.0-beta.2 to the first
-release with this ADR, and whenever Desktop 0.3.1 or older performs the
-update.
+An in-app client opts in only when the installed service advertises both
+capabilities, the bundled updater supports revision 1, and the selected
+signed Windows replacement supports revision 1. A client omits the flag
+on a supported legacy update path. For a cleanly stopped service, there
+is no running owner to prepare. The client checks fresh authenticated
+status after the updater exits, including after a rollback or error.
 
 ### Installers
 
-The MSI custom action runs before the installer's final dialog, so it cannot
-see a choice made there. It passes `-keep-kill-switch` only when starting
-Desktop afterwards is already certain when the action runs. Either the
-installer always starts Desktop after an upgrade that passed the flag, or an
-administrator sets an installer property for an unattended deployment whose
-own process starts Desktop. Otherwise the action omits the flag. Protection is
-then released as today, and a machine is never left blocked without the
-Desktop UI.
+Compare trusted installed and bundled executable SHA-256 values and
+architecture first. Identical bytes leave Core and its VPN session running.
+Desktop preserves the originating user's window or tray state and leaves a
+previously closed GUI closed.
+
+For interactive replacement with an active protected VPN, obtain consent and
+secure a compatible relaunch in the owning session before opting in. Run Core
+replacement after verified MSI completion. After the updater exits, the
+relaunched GUI reads fresh service status and uses guarded `resume_update`.
+An incompatible hold path requires a clear interruption warning and an
+explicit user decision. Failed or unconfirmed resume follows ordinary recovery.
+
+For silent replacement while the VPN is active, install the GUI only when it
+is known compatible with the retained Core. If automatic Core activation is
+unavailable, report `core_deferred_admin_required`. An incompatible or unknown
+pairing defers the entire upgrade before mutation (`upgrade_deferred`).
+Immediate hold is reserved for an explicit managed deployment with a verified
+compatible relaunch in the owning session.
+
+Standalone automatic idle activation remains disabled. In the native spike,
+a failure after InstallFinalize returned 1603 despite a commit marker, exact
+installed package and component identity, and no observed pending replacement
+or rollback marker. Pending and commit-observed records remain inert. Managed
+idle activation requires independently verified terminal MSI success, exact
+machine/package/payload identity, no pending replacement, and exclusion against
+competing product changes. Exit 3010 requires a reboot and revalidation.
+External or multi-package transactions with an unproven terminal outcome,
+disabled rollback, missing evidence, or unavailable worker fail closed.
+
+The proposed managed worker runs headless as SYSTEM after those gates pass.
+It uses Core's separate idle admission contract to reserve a clean disconnected
+installation and commits a same-process stop. The worker must observe the
+original service stopped and validate the matching durable receipt before image
+mutation. Reboot or a lost reply requires reconciliation of the receipt,
+journal and actual images. A committed stop is never replayed. This proposal
+does not change the in-app update or resume protocol.
 
 ### Relation to ADR 0040
 

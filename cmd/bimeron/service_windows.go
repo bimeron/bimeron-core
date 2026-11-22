@@ -28,9 +28,25 @@ import (
 
 const serviceName = "BimeronCore"
 
+var windowsUpdateArtifactContract string
+
 type windowsService struct {
 	owner  string
 	listen func(string) (net.Listener, error)
+	// updateHold overrides the record of protection kept across an update;
+	// the installed service keeps it next to its executable.
+	updateHold *core.UpdateHold
+}
+
+func (h windowsService) holdRecord() *core.UpdateHold {
+	if h.updateHold != nil || h.listen != nil {
+		return h.updateHold
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	return &core.UpdateHold{Path: filepath.Join(filepath.Dir(exe), updateHoldFile)}
 }
 
 func serveServiceReadiness(ctx context.Context, server *control.Server, readiness net.Listener, cancel context.CancelFunc) {
@@ -61,7 +77,34 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	server := control.NewServer(core.New(core.Options{ResidualProtection: true}))
+	hold := h.holdRecord()
+	server := control.NewServer(core.New(core.Options{ResidualProtection: true, UpdateHold: hold}))
+	// An update hold lasts only while the updater that asked for it runs.
+	server.PeerProcess = control.PipePeerProcess
+	var transaction, protectedProfile string
+	if hold != nil {
+		server.RenewUpdateHold = func(profile string) func(string) error {
+			renew := hold.Renew(profile)
+			return func(id string) error {
+				if err := renew(id); err != nil {
+					return err
+				}
+				protectedProfile = profile
+				return nil
+			}
+		}
+	}
+	committed := make(chan string, 1)
+	server.UpdateCommitted = func(id string) { committed <- id }
+	if hold != nil {
+		server.WriteUpdateHold = func(profile, id string) error {
+			if err := hold.WriteTransaction(profile, id); err != nil {
+				return err
+			}
+			protectedProfile = profile
+			return nil
+		}
+	}
 	if h.listen == nil {
 		readiness, err := control.ListenServiceReadiness()
 		if err != nil {
@@ -76,21 +119,36 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	if log != nil {
 		log.Info(1, "Service ready; VPN disconnected")
 	}
+	var holdErr error
 	for {
 		select {
 		case err := <-done:
-			if err != nil {
+			if transaction == "" {
+				select {
+				case transaction = <-committed:
+				default:
+				}
+			}
+			if err == nil && transaction != "" && hold != nil {
+				holdErr = hold.Finish(transaction, protectedProfile)
+			}
+			if err != nil || holdErr != nil {
 				if log != nil {
 					log.Error(1, "service_cleanup_failed_run_recover")
 				}
 				return true, 2
 			}
 			return false, 0
+		case transaction = <-committed:
+			status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}
+			changes <- status
+			cancel()
 		case request := <-requests:
 			switch request.Cmd {
 			case svc.Interrogate:
 				changes <- status
 			case svc.Stop, svc.Shutdown:
+				server.CancelUpdatePreparation()
 				cancel()
 				status = svc.Status{State: svc.StopPending, WaitHint: 30000, CheckPoint: 1}
 				changes <- status
@@ -216,6 +274,14 @@ func serviceCommand(args []string) error { return serviceCommandForOwner(args, "
 func serviceCommandForOwner(args []string, authenticatedOwner string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: bimeron service install [-automatic] | update -source <absolute-path> -version <version> -sha256 <executable-sha256> | describe | start | stop | status | uninstall")
+	}
+	if args[0] == "update-contract" && len(args) == 1 {
+		contract := windowsUpdateArtifactContract
+		if contract == "" {
+			contract = "1"
+		}
+		fmt.Printf("{\"kill_switch_update_hold_contract\":%s}\n", contract)
+		return nil
 	}
 	if args[0] == "run" {
 		if len(args) != 2 {

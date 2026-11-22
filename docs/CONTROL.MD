@@ -206,7 +206,49 @@ version. Core does not show the version that an unverified endpoint claims.
 
 `CallServiceReadiness` requires `GetNamedPipeServerProcessId` to match the
 SCM-reported service process ID before writing. Only administrators can open
-this pipe.
+this pipe. It answers `hello`, `status`, `prepare_update` and `commit_update`.
+
+The Windows updater checks `hello.update_commit_supported` before preparing a
+hold. It sends `prepare_update` with a fresh random base32 request ID. The
+acknowledgement echoes both `id` and `update_transaction`. Its kill switch
+status describes the instant of preparation. A previous verified update
+residual is identified by reason `update`; its profile ID stays private.
+
+The same live updater sends `commit_update` with the prepared `id` within
+60 seconds. The service verifies the pipe client process and transaction,
+blocks new starts, and stops itself. Ordinary SCM stop and shutdown follow
+their usual cleanup paths. The service does not consume SCM custom controls
+for updates.
+IPC stop, IPC shutdown and a newer preparation cancel an unused hold.
+
+The service records the actual protected profile, transaction and digest of
+all installed WFP rule IDs after adapter close, under the session lock. A
+marker write failure keeps filters installed and reports failed cleanup to
+SCM. A successful stop publishes a transaction-specific receipt even for an
+idle session. The updater checks this receipt before replacing the executable
+and verifies retained protection again during readiness. See
+[ADR 0041](adr/0041-kill-switch-across-service-updates.md).
+
+### Resuming an update hold
+
+When ordinary service `hello` advertises
+`capabilities.kill_switch_update_resume: true`, an update residual also
+includes `status.ResidualGeneration`. This lowercase 64-character hex digest
+identifies the installed WFP rule generation. To claim the hold, send:
+
+```json
+{"version":1,"command":"resume_update","id":"request-id","instance":"service-instance","config":"C:/absolute/profile.conf","residual_profile":"profile-id","residual_generation":"generation"}
+```
+
+Use the current service instance and the two IDs from fresh ordinary status.
+The service loads the actual file and requires a matching protected VPN
+profile. It rechecks the held marker against the installed filter generation
+under the Windows session lock before arming. A changed residual or
+concurrent start yields `update_resume_conflict`. Invalid config may yield
+`invalid_configuration`; a changed service instance yields `stale_instance`.
+Success means protection was acquired and the connection attempt was
+admitted. Read fresh status for connection outcome. Use the normal recovery
+flow after a refusal or an unconfirmed attempt.
 
 ### Windows console daemon pipe
 
@@ -516,7 +558,11 @@ omitted.
   GUIs already route to network recovery (unless another failure is already
   shown), and `Session.active` is not `true`. Connecting a profile with the
   kill switch replaces the filters; `recover` removes them. Inspected at most
-  every 5 seconds while idle. Protection owned by another running session, such
+  every 5 seconds while idle. Protection kept on purpose across a service
+  update also reports `ResidualReason: "update"` and `ResidualProfile` (the
+  `profile_id` of the held session) until a run arms its own protection or no
+  Bimeron protection remains; clients start that profile again, see
+  [GUI_INTEGRATION.MD](GUI_INTEGRATION.MD#keeping-kill-switch-protection-across-an-update-windows). Protection owned by another running session, such
   as a foreground `bimeron connect` that holds the session lock or a live
   foreground owner that retains native protection, is not reported as
   residual, and protection removed by such a session while it stops is checked

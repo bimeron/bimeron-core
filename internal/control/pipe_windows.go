@@ -293,3 +293,35 @@ func callServiceReadinessPipe(ctx context.Context, path string, pid uint32, r Re
 	}
 	return exchange(ctx, c, r)
 }
+
+// PipePeerProcess watches the client process of a named pipe connection. It
+// returns nil when the client cannot be identified.
+func PipePeerProcess(c net.Conn) ProcessWatch {
+	fd, ok := c.(interface{ Fd() uintptr })
+	if !ok {
+		return nil
+	}
+	var pid uint32
+	if windows.GetNamedPipeClientProcessId(windows.Handle(fd.Fd()), &pid) != nil || pid == 0 {
+		return nil
+	}
+	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, pid)
+	if err != nil {
+		return nil
+	}
+	return processHandle{handle: h, pid: pid}
+}
+
+type processHandle struct {
+	handle windows.Handle
+	pid    uint32
+}
+
+func (h processHandle) ProcessID() uint32 { return h.pid }
+
+func (h processHandle) Alive() bool {
+	status, err := windows.WaitForSingleObject(h.handle, 0)
+	return err == nil && status == uint32(windows.WAIT_TIMEOUT)
+}
+
+func (h processHandle) Close() { windows.CloseHandle(h.handle) }
