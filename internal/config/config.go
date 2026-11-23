@@ -99,6 +99,7 @@ type Parameters struct {
 type Tunnel struct {
 	DoH, DoHBootstrap *string
 	KillSwitch        bool
+	ForwardedTraffic  string
 	IPv6              string
 	Mode              string
 	Name              string
@@ -242,6 +243,11 @@ func parse(b []byte) (*File, error) {
 					return nil, problem.New("boolean_invalid", "[Interface] KillSwitch must be true or false").In(section).At(key).AtLine(line)
 				}
 				c.Tunnel.KillSwitch = value == "true"
+			case "ForwardedTraffic":
+				if value != "vpn-only" && value != "off" {
+					return nil, problem.New("choice_invalid", "ForwardedTraffic must be vpn-only or off").In(section).At(key).AtLine(line).Arg("allowed", "vpn-only, off")
+				}
+				c.Tunnel.ForwardedTraffic = value
 			case "Mode":
 				c.Tunnel.Mode = value
 			case "Name":

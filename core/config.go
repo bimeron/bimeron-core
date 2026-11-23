@@ -56,6 +56,7 @@ type SessionConfig struct {
 	DNS                            []string
 	DisableIPv6                    bool
 	KillSwitch                     bool
+	ForwardedTraffic               string
 	Policy                         *Policy
 	Resolve                        func(context.Context) (Profile, error)
 	// ResolveOnNetwork is used by the VPN control plane while tunnel routes remain
@@ -226,7 +227,7 @@ func FromConfig(c *config.File) (SessionConfig, error) {
 		doh[i].IPs = slices.Clone(doh[i].IPs)
 	}
 	return SessionConfig{ProfileName: copy.Name, Mode: copy.Tunnel.Mode, Name: name, Listen: copy.Tunnel.Listen, ListenUsername: copy.Tunnel.ListenUsername, ListenPassword: copy.Tunnel.ListenPassword, MTU: mtu, adapterAlias: alias,
-		DNS: dns, doh: doh, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
+		DNS: dns, doh: doh, DisableIPv6: copy.Tunnel.IPv6 == "disable", KillSwitch: copy.Tunnel.KillSwitch, ForwardedTraffic: copy.Tunnel.ForwardedTraffic, Policy: p, Resolve: copy.Resolve, ResolveOnNetwork: copy.ResolveWithTransport, SSHDefaultKeys: true, AllowedIPsMode: copy.AllowedIPsMode}, nil
 }
 
 // maxKeyFile matches the profile key-file limit.
@@ -258,10 +259,13 @@ func (c SessionConfig) validate() error {
 			return err
 		}
 		policy := c.Policy.Config()
-		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || c.ListenUsername != "" || c.ListenPassword != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
+		if c.Mode != "vpn" || c.Resolve != nil || c.ResolveOnNetwork != nil || c.KillSwitch || c.ForwardedTraffic != "" || c.DisableIPv6 || c.MTU != 0 || len(c.DNS) != 0 || c.Name != "" || c.Listen != "" || c.ListenUsername != "" || c.ListenPassword != "" || policy.Default != routing.Proxy || len(policy.Rules) != 0 {
 			return problem.New("ikev2_exclusive", "ikev2_unsupported_session_options").In("IKEv2")
 		}
 		return nil
+	}
+	if c.ForwardedTraffic != "" && c.ForwardedTraffic != "vpn-only" && c.ForwardedTraffic != "off" {
+		return problem.New("choice_invalid", "ForwardedTraffic must be vpn-only or off").In("Interface").At("ForwardedTraffic").Arg("allowed", "vpn-only, off")
 	}
 	if c.KillSwitch {
 		for i, r := range c.Policy.Config().Rules {

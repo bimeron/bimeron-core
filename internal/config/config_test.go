@@ -53,6 +53,23 @@ func TestKillSwitchConfig(t *testing.T) {
 	}
 }
 
+func TestForwardedTrafficConfig(t *testing.T) {
+	profile := staticConfig + "[Interface]\nKillSwitch = true\n"
+	for _, mode := range []string{"", "vpn-only", "off"} {
+		contents := profile
+		if mode != "" {
+			contents += "ForwardedTraffic = " + mode + "\n"
+		}
+		cfg, err := loadText(t, contents)
+		if err != nil || cfg.Tunnel.ForwardedTraffic != mode {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+	}
+	if _, err := loadText(t, profile+"ForwardedTraffic = direct\n"); err == nil {
+		t.Fatal("invalid forwarded traffic mode accepted")
+	}
+}
+
 func TestRepeatedRulesAndFirstMatch(t *testing.T) {
 	c, err := loadText(t, staticConfig+`[Routing]
 Default = direct

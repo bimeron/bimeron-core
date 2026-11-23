@@ -75,9 +75,21 @@ and removal use atomic WFP transactions.
   so local discovery such as printers and casting needs `direct` rules for both
   the multicast address and the LAN range; mDNS can then disclose names of
   local services queried on that link.
-- Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
-  guests) does not pass the application layers these filters use and is not
-  covered by the kill switch.
+- With the packet kill switch enabled, `[Interface] ForwardedTraffic` defaults
+  to `vpn-only`. Core adds persistent IPv4 and IPv6 IPFORWARD filters to the
+  same transaction as the host rules. They permit forwarding toward and from
+  the tunnel adapter and block the remaining traffic seen at those layers.
+  During a hold without a tunnel, both forwarding layers have a default block.
+  `ForwardedTraffic = off` restores the previous forwarding behavior. Both modes
+  use the same host ALE and DNS rules. IPFORWARD has no transport-port conditions
+  and applies no host direct routing exceptions.
+- WSL2 NAT is the first topology targeted for live acceptance. Acceptance is
+  pending. Hyper-V NAT, Internet Connection Sharing and a forwarded direct mode
+  are follow-up work. WSL2 mirrored mode, external switches and native IKEv2 are
+  outside this feature's scope.
+  The packet engine applies host routing after Wintun receives a flow. Acceptance
+  must establish whether a forwarded flow can reach the engine's direct dialer
+  and leave on a Core-owned socket.
 - With `IPv6 = disable`, ordinary IPv6 destinations outside the tunnel are
   blocked even with `direct`; local ICMPv6 control traffic and loopback remain available.
 
@@ -207,6 +219,28 @@ routes, and restored direct internet access.
 
 Automated tests do not install real filters: they test policy compilation and
 management through a stub WFP API. The user runs real crash scenarios.
+
+### WSL2 NAT acceptance
+
+Use an isolated Windows amd64 VM with a WSL2 NAT guest and a controlled TCP/UDP
+and DNS receiver. Record the Core SHA, executable hash, Windows and WSL builds,
+DNS tunneling state, routes, interfaces and capture points. Repeat for each
+available IP family and record unavailable paths separately.
+
+1. Prove direct delivery with the kill switch disabled and with it enabled in
+   `off` mode. Record the receiver and physical-interface captures.
+2. In `vpn-only`, verify round trips and capture both directions at Wintun.
+   Watch the physical interface for direct packets. Repeat with a host direct
+   CIDR and `Default = direct` to check their interaction with tunnel traffic.
+3. Interrupt and restore the tunnel with existing and newly opened flows.
+   Check for direct packets during loss, reconnect and filter replacement.
+4. Send separate uncached queries directly from WSL and through the Windows
+   DNS path. Include `dnsTunneling` where active. Correlate receiver logs with
+   external captures and check host DNS in both forwarding modes.
+5. Check transaction rollback on install and replacement failure. Test forced
+   termination, update hold and reboot under ADR 0041, then explicit stop and
+   recovery. Capture traffic during each hold and verify direct delivery after
+   cleanup.
 
 The implementation uses [tailscale/wf](https://github.com/tailscale/wf), a pinned
 BSD-licensed copy with a small `Transaction` addition. Layers and conditions are

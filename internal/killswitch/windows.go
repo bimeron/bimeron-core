@@ -166,7 +166,7 @@ func interfaceLUID(index int) (uint64, error) {
 // the same transaction. Index 0 means the tunnel adapter does not exist yet:
 // the rule set is identical except that no tunnel interface is permitted, so a
 // run can be protected before its first adapter and re-armed once it exists.
-func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
+func Arm(index int, p *routing.Policy, disableIPv6, protectForwarded bool) (*Guard, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -190,7 +190,7 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 		return nil, err
 	}
 	var g *Guard
-	err = s.Transaction(func() error { var e error; g, e = arm(s, luid, app, plan); return e })
+	err = s.Transaction(func() error { var e error; g, e = arm(s, luid, app, plan, protectForwarded); return e })
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -200,7 +200,7 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 
 // arm builds the only rule set. A zero luid omits the tunnel interface permit;
 // no valid interface has LUID 0.
-func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
+func arm(s api, luid uint64, app string, plan []EgressRule, protectForwarded bool) (*Guard, error) {
 	core, err := coreConditions(app)
 	if err != nil {
 		return nil, err
@@ -326,6 +326,9 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 			}
 		}
 	}
+	if installErr == nil && protectForwarded {
+		installErr = installForwardingRules(luid, add)
+	}
 	if installErr != nil {
 		// Remove only this failed attempt, preserving previous persistent filters.
 		for _, id := range g.ids {
@@ -340,6 +343,22 @@ func arm(s api, luid uint64, app string, plan []EgressRule) (*Guard, error) {
 		}
 	}
 	return g, nil
+}
+
+func installForwardingRules(luid uint64, add func(wf.LayerID, uint64, bool, ...*wf.Match) error) error {
+	for _, layer := range []wf.LayerID{wf.LayerIPForwardV4, wf.LayerIPForwardV6} {
+		if luid != 0 {
+			for _, field := range []wf.FieldID{wf.FieldIPForwardInterface, wf.FieldIPPhysicalArrivalInterface} {
+				if err := add(layer, 1, true, &wf.Match{Field: field, Op: wf.MatchTypeEqual, Value: luid}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := add(layer, 0, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var errDetached = errors.New("kill switch guard is detached")
