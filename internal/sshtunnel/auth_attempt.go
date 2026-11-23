@@ -125,16 +125,21 @@ func (a *attempt) close() {
 type attemptConn struct {
 	net.Conn
 	cancel context.CancelFunc
+	prefix *[5]byte
+	read   int
 }
 
-func (c attemptConn) Read(b []byte) (int, error) {
+func (c *attemptConn) Read(b []byte) (int, error) {
 	n, e := c.Conn.Read(b)
+	if c.prefix != nil && c.read < len(c.prefix) {
+		c.read += copy(c.prefix[c.read:], b[:n])
+	}
 	if e != nil {
 		c.cancel()
 	}
 	return n, e
 }
-func (c attemptConn) Write(b []byte) (int, error) {
+func (c *attemptConn) Write(b []byte) (int, error) {
 	n, e := c.Conn.Write(b)
 	if e != nil {
 		c.cancel()

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 
+	"bimeron/internal/captiveportal"
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -16,6 +17,7 @@ func TLS(ctx context.Context, raw net.Conn, name string, protocols []string, fin
 	if fingerprint == "" {
 		conn := tls.Client(raw, &tls.Config{ServerName: name, NextProtos: protocols, MinVersion: tls.VersionTLS12, RootCAs: roots})
 		if err := conn.HandshakeContext(ctx); err != nil {
+			captiveportal.TLSFailed(ctx, raw, name, err)
 			return nil, err
 		}
 		return conn, nil
@@ -44,6 +46,7 @@ func TLS(ctx context.Context, raw net.Conn, name string, protocols []string, fin
 		}
 	}
 	if err := conn.HandshakeContext(ctx); err != nil {
+		captiveportal.TLSFailed(ctx, raw, name, err)
 		return nil, err
 	}
 	return conn, nil

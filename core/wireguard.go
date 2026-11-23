@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"time"
 
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/dnsconfig"
 	"bimeron/internal/problem"
 	"bimeron/internal/vpn"
@@ -65,6 +66,7 @@ func startWireGuard(ctx context.Context, c SessionConfig, p Profile, outbound ne
 	wait, cancel := context.WithTimeout(ctx, wireguardHandshakeTimeout)
 	defer cancel()
 	if err := client.WaitHandshake(wait); err != nil {
+		captiveportal.Failed(ctx, netip.AddrPortFrom(ip.Unmap(), uint16(p.UDP.Port)).String(), false)
 		_ = client.Close()
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, context.Canceled

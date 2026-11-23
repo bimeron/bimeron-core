@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/streamtransport"
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/crypto/hkdf"
@@ -117,6 +118,7 @@ func realityHandshake(ctx context.Context, raw net.Conn, settings accesskey.VLES
 	aead.Seal(hello.SessionId[:0], hello.Random[20:], hello.SessionId[:16], hello.Raw)
 	copy(hello.Raw[39:], hello.SessionId)
 	if err := secure.HandshakeContext(ctx); err != nil {
+		captiveportal.TLSFailed(ctx, raw, settings.ServerName, err)
 		return nil, fmt.Errorf("REALITY handshake failed: %w", err)
 	}
 	if !verified {

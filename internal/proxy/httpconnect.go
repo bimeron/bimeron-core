@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/streamtransport"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -73,6 +74,7 @@ func (p *HTTPConnect) DialStream(ctx context.Context, target string) (transport.
 	for header.Len() < 16*1024 {
 		line, readErr := reader.ReadSlice('\n')
 		if readErr != nil || header.Len()+len(line) > 16*1024 {
+			captiveportal.Failed(ctx, raw.RemoteAddr().String(), false)
 			return nil, fmt.Errorf("invalid or oversized HTTP CONNECT response")
 		}
 		header.Write(line)
@@ -81,13 +83,18 @@ func (p *HTTPConnect) DialStream(ctx context.Context, target string) (transport.
 		}
 	}
 	if !bytes.HasSuffix(header.Bytes(), []byte("\r\n\r\n")) {
+		captiveportal.Failed(ctx, raw.RemoteAddr().String(), false)
 		return nil, fmt.Errorf("invalid or oversized HTTP CONNECT response")
 	}
 	response, err := http.ReadResponse(bufio.NewReader(&header), &http.Request{Method: http.MethodConnect})
 	if err != nil {
+		captiveportal.Failed(ctx, raw.RemoteAddr().String(), false)
 		return nil, fmt.Errorf("invalid HTTP CONNECT response")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if captiveportal.RedirectStatus(response.StatusCode) {
+			captiveportal.Failed(ctx, raw.RemoteAddr().String(), true)
+		}
 		return nil, fmt.Errorf("HTTP CONNECT rejected (status %d)", response.StatusCode)
 	}
 	_ = c.SetDeadline(time.Time{})

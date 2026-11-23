@@ -224,7 +224,7 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		if path == "" {
 			path = "/"
 		}
-		conn, err = streamtransport.WebSocket(conn, "wss", host, path, nil)
+		conn, err = streamtransport.WebSocket(setup, conn, "wss", host, path, nil)
 		if err != nil {
 			return nil, fmt.Errorf("Trojan WebSocket setup failed: %w", err)
 		}

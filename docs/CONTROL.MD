@@ -593,6 +593,21 @@ Progress event codes (not catalog codes):
 | `kill_switch_holding` | Protection was installed at the start of a run |
 | `kill_switch_held` | The run failed and protection is held until stop |
 
+### Captive portal hint
+
+On Windows, a VPN session that holds kill switch protection may include
+`"NetworkHint":"captive_portal"` in `status` while a connection is failing.
+Core uses evidence from the existing upstream handshake. When bootstrap DNS
+returns a private, link-local, or shared-space address, Core also needs a
+failed handshake to that endpoint in the same connection attempt.
+Core emits `captive_portal_suspected`
+once for the current network and omits the field after reaching `connected`,
+on network change, or when stopping. Consumers can read `status` after the
+event and display the sign-in instructions from ADR 0042.
+
+The hint leaves kill switch protection in place. The user can disconnect,
+sign in through a browser, and reconnect. See [ADR 0042](adr/0042-always-on-vpn-at-boot.md).
+
 ### `reconnect_now` command
 
 ```json
