@@ -412,12 +412,12 @@ Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
 
 | Server | Client profile | Loopback CI test | Container CI test | Live check |
 |---|---|---|---|---|
-| upstream `wireguard-go` | plain WireGuard | yes: TCP, UDP, IPv6, fragmented UDP | yes: TCP, UDP, IPv6, fragmented UDP | pending |
+| upstream `wireguard-go` | plain WireGuard | yes: TCP, UDP, IPv6, fragmented UDP | yes: TCP, UDP, IPv6, fragmented UDP | IPv4: Windows userspace and Windows/Linux native daemon |
 | `amneziawg-go` without options | plain WireGuard | yes | yes | pending |
-| `amneziawg-go` 1.0 options | AWG 1.0 | yes | yes | pending |
-| `amneziawg-go` with client-side I1–I5 | AWG 1.5 | yes | yes | pending |
-| `amneziawg-go` 2.0 options (S3/S4, H ranges) | AWG 2.0 | yes | yes | pending |
-| `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | yes | pending |
+| `amneziawg-go` 1.0 options | AWG 1.0 | yes | yes | IPv4: Windows userspace and Windows/Linux native daemon |
+| `amneziawg-go` with client-side I1–I5 | AWG 1.5 | yes | yes | IPv4: Windows userspace and Windows/Linux native daemon |
+| `amneziawg-go` 2.0 options (S3/S4, H ranges) | AWG 2.0 | yes | yes | IPv4: Windows userspace and Windows/Linux native daemon |
+| `amneziawg-go` 3.1 options (header protection, random trailers, disabled cookies, timers, content padding) | AWG 3.x | yes | yes | IPv4: Windows userspace and Windows/Linux native daemon |
 | mismatched AWG options or keys | — | yes: handshake fails | yes: a plain client and a wrong header protection key fail | — |
 
 At Core source `67a7ad97`, the CLI imported `wg://`, `wireguard://`, and
@@ -433,6 +433,14 @@ daemon. The isolated test checked TUN routing, OS DNS, and TCP/UDP traffic
 before and after a peer-only interruption. Foreground WireGuard recovered
 after an interruption longer than 170 seconds. Stopping Core restored the
 baseline routes, policy rules and resolver and removed the TUN adapter.
+A follow-up on an isolated Ubuntu 22.04 amd64 clone used the same Core
+binary. Native foreground and daemon checks passed with plain WireGuard
+served by amneziawg-go and with AWG 1.0 and 1.5. Native daemon checks also
+passed with AWG 2.0 and 3.1. Each case verified TUN routing, system DNS
+and IPv4 TCP/UDP echo against a controlled reference peer, blocked traffic
+during a peer-only UDP interruption, and recovered traffic and DNS after
+restoration. Routes, policy rules and resolver state returned to baseline,
+and the TUN adapter was removed.
 The first Windows 10 native WireGuard pilot connected and stopped. Management
 errors interrupted its data-plane and rollback checks. A follow-up using
 `bimeron run` passed plain WireGuard, AWG 2.0 and AWG 3.1 against synthetic
@@ -440,8 +448,16 @@ peers on Ubuntu. It verified Wintun IPv4 split routes, NRPT and the Core DNS
 proxy, and IPv4 TCP/UDP traffic. Traffic and DNS recovered automatically
 after each peer-only UDP interruption of about five seconds. Stopping Core
 restored the baseline adapters, routes, DNS, NRPT and service state.
-Windows daemon operation and recovery after a prolonged outage remain
-unverified.
+A Windows 10 amd64 clone also passed native VPN with upstream WireGuard
+through the installed Windows service at the same Core revision. Wintun
+routing, NRPT, DNS and IPv4 TCP/UDP passed. A peer-only UDP interruption
+lasted about 176 seconds, with failed probes at the start, midpoint and end.
+TCP/UDP and DNS recovered after restoration without restarting the service
+or issuing a reconnect command. Adapters, routes, DNS and NRPT returned to
+baseline, and the temporary service was uninstalled. The service also
+passed the same routing, DNS, IPv4 TCP/UDP and rollback checks with plain
+WireGuard served by amneziawg-go and AWG 1.0, 1.5, 2.0 and 3.1 after
+peer-only UDP interruptions of about seven seconds.
 
 An external AWG 3.1 peer passed a scoped Windows amd64 userspace engine check
 at Core source `67a7ad97` with server tools `v3.1.20260812`. Profile inspection
@@ -450,11 +466,30 @@ passed. After a client-only UDP interruption of about three seconds, traffic
 resumed in 91 ms without a restart. An explicit client rekey confirmed a
 fresh handshake 5.192 seconds after restoration. The temporary runtime peer
 was removed, and the server peer inventory and persisted configuration
-matched their baselines. External native VPN and daemon checks and checks
-against the other external peer profiles remain pending.
+matched their baselines.
 [External AWG 3.1 test evidence](https://github.com/bimeron/bimeron-core/issues/207#issuecomment-7067850019)
 
-Platforms: Windows and Linux will be checked live. Android (AAR) and Apple
+The follow-up used Core source `67a7ad97c0740dd4b2903ba58abe491de81ef95c`.
+Upstream wireguard-go and the externally configured AWG 1.0, 1.5 and 2.0
+profiles passed Windows amd64 userspace handshake and IPv4 TCP/UDP echo.
+Traffic resumed 52–74 ms after a client-only UDP interruption of about three
+seconds. An explicit rekey then confirmed a fresh handshake.
+
+The same four profiles and AWG 3.1 passed native daemon checks on Windows 10
+amd64 (installed SCM service) and Ubuntu 22.04 amd64 (root Core daemon).
+Each exercised a native tunnel route, a tunnel DNS readiness query against
+the controlled peer, and IPv4 TCP/UDP echo. After a client-only interruption
+of about 3.4–3.7 seconds, both echo protocols recovered without a restart or
+a reconnect command. The client network state and the server peer inventory
+and persistent interface configuration matched their baselines after
+cleanup.
+
+Plain WireGuard served by amneziawg-go is pending because a matching
+external interface could not be confirmed. Linux userspace, external foreground
+VPN, prolonged external outages, endpoint address changes, external IPv6,
+and shipping-package verification remain open.
+
+The Windows and Linux live coverage is scoped above. Android (AAR) and Apple
 builds compile and their unit tests pass, but they have **not been
 validated live**.
 
