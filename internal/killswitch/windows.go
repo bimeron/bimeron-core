@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -64,6 +65,16 @@ type Guard struct {
 	ids []wf.RuleID
 }
 
+// processGeneration records only a successful transaction by this process.
+var processGeneration atomic.Pointer[string]
+
+func ProcessGeneration() string {
+	if generation := processGeneration.Load(); generation != nil {
+		return *generation
+	}
+	return ""
+}
+
 func Pending() (bool, error) {
 	s, err := open()
 	if err != nil {
@@ -97,12 +108,16 @@ func ruleGeneration(rules []*wf.Rule) (string, error) {
 	for _, rule := range rules {
 		ids = append(ids, windows.GUID(rule.ID).String())
 	}
+	return digestIDs(ids), nil
+}
+
+func digestIDs(ids []string) string {
 	sort.Strings(ids)
 	digest := sha256.New()
 	for _, id := range ids {
 		digest.Write([]byte(id))
 	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // CurrentImagePermitted reports whether the installed core permit matches
@@ -195,6 +210,12 @@ func Arm(index int, p *routing.Policy, disableIPv6 bool) (*Guard, error) {
 		s.Close()
 		return nil, err
 	}
+	ids := make([]string, 0, len(g.ids))
+	for _, id := range g.ids {
+		ids = append(ids, windows.GUID(id).String())
+	}
+	generation := digestIDs(ids)
+	processGeneration.Store(&generation)
 	return g, nil
 }
 

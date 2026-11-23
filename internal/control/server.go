@@ -28,22 +28,23 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
-	Operation          string   `json:"operation_id,omitempty"`
-	TargetSHA          string   `json:"target_sha256,omitempty"`
-	ResidualProfile    string   `json:"residual_profile,omitempty"`
-	ResidualGeneration string   `json:"residual_generation,omitempty"`
-	Installation       string   `json:"installation,omitempty"`
-	AcceptRevision     string   `json:"accept_revision,omitempty"`
-	PlanToken          string   `json:"plan_token,omitempty"`
-	Instance           string   `json:"instance,omitempty"`
-	Session            string   `json:"session,omitempty"`
-	ID                 string   `json:"id,omitempty"`
-	Version            int      `json:"version"`
-	Command            string   `json:"command"`
-	Config             string   `json:"config,omitempty"`
-	After              uint64   `json:"after,omitempty"`
-	ChallengeID        string   `json:"challenge_id,omitempty"`
-	Answers            []string `json:"answers,omitempty"`
+	RecoveryIdentity   *RecoveryIdentity `json:"recovery_identity,omitempty"`
+	Operation          string            `json:"operation_id,omitempty"`
+	TargetSHA          string            `json:"target_sha256,omitempty"`
+	ResidualProfile    string            `json:"residual_profile,omitempty"`
+	ResidualGeneration string            `json:"residual_generation,omitempty"`
+	Installation       string            `json:"installation,omitempty"`
+	AcceptRevision     string            `json:"accept_revision,omitempty"`
+	PlanToken          string            `json:"plan_token,omitempty"`
+	Instance           string            `json:"instance,omitempty"`
+	Session            string            `json:"session,omitempty"`
+	ID                 string            `json:"id,omitempty"`
+	Version            int               `json:"version"`
+	Command            string            `json:"command"`
+	Config             string            `json:"config,omitempty"`
+	After              uint64            `json:"after,omitempty"`
+	ChallengeID        string            `json:"challenge_id,omitempty"`
+	Answers            []string          `json:"answers,omitempty"`
 }
 type AuthChallenge struct {
 	ID string `json:"id"`
@@ -54,10 +55,12 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	Restore               *RestoreProof `json:"restore,omitempty"`
-	UpdateTransaction     string        `json:"update_transaction,omitempty"`
-	UpdateCommitSupported bool          `json:"update_commit_supported,omitempty"`
-	closeAccepted         bool          // internal admission result; never serialized
+	RecoveryIdentity      *RecoveryIdentity `json:"recovery_identity,omitempty"`
+	Disposition           string            `json:"disposition,omitempty"`
+	Restore               *RestoreProof     `json:"restore,omitempty"`
+	UpdateTransaction     string            `json:"update_transaction,omitempty"`
+	UpdateCommitSupported bool              `json:"update_commit_supported,omitempty"`
+	closeAccepted         bool              // internal admission result; never serialized
 
 	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
@@ -131,6 +134,7 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
+	ConditionalRecovery   func(context.Context, string) (string, string)
 	QueryRestore          func(net.Conn, Request) RestoreProof
 	FinalizeRestore       func(context.Context, Request, ProcessWatch) RestoreProof
 	UpdateCommitted       func(string)
@@ -352,12 +356,16 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			answer.DaemonSessionGuards = !s.foreground
 			c := core.PlatformCapabilities()
 			c.KillSwitchUpdateResume = s.supportsUpdateResume()
+			if s.ConditionalRecovery != nil {
+				c.ConditionalRecoveryContract = 1
+			}
 			if s.QueryRestore != nil {
 				c.GuardedRestoreContract = 1
 			}
 			answer.Capabilities = &c
 			build := s.build()
 			answer.Core = &build
+
 		case "status":
 			if r.Config != "" || r.After != 0 {
 				answer.Error = "invalid_request"
@@ -391,6 +399,9 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			c := core.PlatformCapabilities()
 			c.KillSwitchUpdateResume = s.supportsUpdateResume()
+			if s.ConditionalRecovery != nil {
+				c.ConditionalRecoveryContract = 1
+			}
 			if s.QueryRestore != nil {
 				c.GuardedRestoreContract = 1
 			}
@@ -519,6 +530,9 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 		}
 	}
 	answer.Status = s.engine.Status()
+	if r.Command == "hello" && answer.Error == "" && s.ConditionalRecovery != nil && answer.Status.KillSwitch == core.KillSwitchResidual && answer.Status.ResidualReason == "" {
+		answer.RecoveryIdentity = s.inspectRecovery(ctx)
+	}
 	return answer
 }
 
@@ -574,6 +588,9 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	var answer Response
+	if r.RecoveryIdentity != nil {
+		return
+	}
 	if r.Command == "query_restore" || r.Operation != "" || r.TargetSHA != "" {
 		answer = Response{Version: Version, Instance: s.instance, ID: r.ID, Error: "invalid_request"}
 		if r.Command == "query_restore" && s.QueryRestore != nil && !s.foreground && strictRestoreKeys(line, "version", "id", "command", "instance", "operation_id") && r.Version == Version && r.Instance == s.instance && len(r.ID) > 0 && len(r.ID) <= 64 && restoreID(r.Operation) {

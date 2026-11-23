@@ -41,6 +41,27 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 	if json.NewDecoder(io.LimitReader(c, 1024)).Decode(&raw) != nil || json.Unmarshal(raw, &r) != nil {
 		return
 	}
+	if r.Command == "conditional_recovery" {
+		if !validRecoveryWire(raw) || r.Version != Version || r.ID == "" || len(r.ID) > 64 {
+			return
+		}
+		var peer ProcessWatch
+		if s.PeerProcess != nil {
+			peer = s.PeerProcess(c)
+		}
+		if peer != nil {
+			defer peer.Close()
+		}
+		operation, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		disposition := s.recoverConditionally(operation, r.RecoveryIdentity, peer)
+		_ = c.SetWriteDeadline(time.Now().Add(time.Second))
+		_ = json.NewEncoder(c).Encode(Response{Version: Version, ID: r.ID, Instance: s.instance, Disposition: disposition})
+		return
+	}
+	if r.RecoveryIdentity != nil {
+		return
+	}
 	if r.Command == "finalize_restore" {
 		if s.FinalizeRestore == nil || s.PeerProcess == nil || !strictForegroundJSON(raw) || !strictRestoreKeys(raw, "version", "id", "command", "operation_id", "instance", "residual_profile", "residual_generation", "target_sha256") || r.Version != Version || r.Instance != s.instance || !restoreID(r.Operation) || len(r.ID) == 0 || len(r.ID) > 64 {
 			return

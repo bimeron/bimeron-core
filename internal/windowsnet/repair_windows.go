@@ -69,3 +69,27 @@ func RestoreNetworkPending(ctx context.Context) (bool, error) {
 	}
 	return strings.TrimSpace(string(out)) != "0", nil
 }
+
+// BeginServiceUpdate shares image replacement exclusion with conditional
+// recovery. Only the existing updater may proceed after abandonment.
+func BeginServiceUpdate(allowAbandoned bool) (func(), error) {
+	runtime.LockOSThread()
+	name, _ := windows.UTF16PtrFromString(`Global\BimeronCoreUpdate`)
+	h, err := windows.CreateMutex(nil, false, name)
+	if err != nil && err != windows.ERROR_ALREADY_EXISTS {
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	state, err := windows.WaitForSingleObject(h, 0)
+	release := func() { windows.ReleaseMutex(h); windows.CloseHandle(h); runtime.UnlockOSThread() }
+	if err == nil && state == windows.WAIT_ABANDONED && !allowAbandoned {
+		release()
+		return nil, fmt.Errorf("service update abandoned")
+	}
+	if err != nil || (state != windows.WAIT_OBJECT_0 && state != windows.WAIT_ABANDONED) {
+		windows.CloseHandle(h)
+		runtime.UnlockOSThread()
+		return nil, fmt.Errorf("another service update is running")
+	}
+	return release, nil
+}

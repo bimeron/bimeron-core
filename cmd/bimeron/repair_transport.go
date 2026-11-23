@@ -59,7 +59,10 @@ func repairSessionCommand(args []string) error {
 	var envelope struct {
 		Version int `json:"version"`
 	}
-	if json.Unmarshal(line, &envelope) == nil && envelope.Version == 2 {
+	if json.Unmarshal(line, &envelope) == nil && envelope.Version == 3 {
+		return conditionalRepairSession(conn, identity, line)
+	}
+	if envelope.Version == 2 {
 		r, err := parseHeldRestore(line)
 		if err != nil {
 			return err
