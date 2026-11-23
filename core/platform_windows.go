@@ -28,13 +28,14 @@ import (
 // before any session traffic, each Open re-arms it for the new adapter, and the
 // release returned by Acquire removes it unless RetainProtection was called.
 type windowsPlatform struct {
-	updateResume *updateResume
-	killSwitch   bool
-	policy       *routing.Policy
-	disableIPv6  bool
-	guard        *killswitch.Guard
-	retain       bool
-	releaseErr   error // a failed removal, read after release returns
+	updateResume     *updateResume
+	killSwitch       bool
+	policy           *routing.Policy
+	disableIPv6      bool
+	protectForwarded bool
+	guard            *killswitch.Guard
+	retain           bool
+	releaseErr       error // a failed removal, read after release returns
 }
 
 var _ protectedPlatform = (*windowsPlatform)(nil)
@@ -42,7 +43,7 @@ var _ protectedPlatform = (*windowsPlatform)(nil)
 func init() { winTun.WintunTunnelType = windowsnet.TunnelType }
 
 func newPlatform(c SessionConfig) platform {
-	return &windowsPlatform{updateResume: c.updateResume, killSwitch: c.KillSwitch, policy: c.Policy, disableIPv6: c.DisableIPv6}
+	return &windowsPlatform{updateResume: c.updateResume, killSwitch: c.KillSwitch, policy: c.Policy, disableIPv6: c.DisableIPv6, protectForwarded: c.ForwardedTraffic != "off"}
 }
 func (p *windowsPlatform) Protected() bool     { return p.guard != nil }
 func (p *windowsPlatform) RetainProtection()   { p.retain = true }
@@ -85,7 +86,7 @@ func (p *windowsPlatform) Acquire(ctx context.Context) (func(), error) {
 		// Protect the run before Inspect, key resolution, DNS or transport
 		// traffic. Without an adapter yet, only the tunnel permit is missing;
 		// the arm replaces protection retained by an earlier process in place.
-		guard, err := killswitch.Arm(0, p.policy, p.disableIPv6)
+		guard, err := killswitch.Arm(0, p.policy, p.disableIPv6, p.protectForwarded)
 		if err != nil {
 			release()
 			return nil, fault("kill_switch_arm_failed_run_recover", false)
@@ -176,7 +177,7 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 	// is configured. Neither rollback nor Close removes run protection.
 	if p.guard != nil {
 		report("kill_switch_arm", "Installing persistent Windows protection")
-		armed, armErr := killswitch.Arm(index, p.policy, p.disableIPv6)
+		armed, armErr := killswitch.Arm(index, p.policy, p.disableIPv6, p.protectForwarded)
 		if armErr != nil {
 			// The failed attempt removed only itself; the previous set remains.
 			return nil, fault("kill_switch_arm_failed_run_recover", false)
@@ -191,7 +192,7 @@ func (p *windowsPlatform) Open(ctx context.Context, c SessionConfig, h *flowRout
 			if p.guard == nil {
 				return nil
 			}
-			early, err := killswitch.Arm(0, p.policy, p.disableIPv6)
+			early, err := killswitch.Arm(0, p.policy, p.disableIPv6, p.protectForwarded)
 			if err != nil {
 				return err
 			}

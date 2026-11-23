@@ -69,12 +69,115 @@ func (f *fakeAPI) reopen() *fakeAPI { f.closed = false; return f }
 func priorRule() *wf.Rule {
 	return &wf.Rule{ID: wf.RuleID(windows.GUID{Data1: 9}), Provider: provider, Sublayer: sublayer, Action: wf.ActionBlock, Persistent: true}
 }
+
+func TestForwardingRuleLifecycle(t *testing.T) {
+	f := &fakeAPI{}
+	plan, err := Plan(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []struct {
+		name string
+		luid uint64
+		on   bool
+		want int
+	}{
+		{"early", 0, true, 2},
+		{"connected", 42, true, 6},
+		{"holding", 0, true, 2},
+		{"reconnected", 43, true, 6},
+		{"off", 43, false, 0},
+	} {
+		t.Run(stage.name, func(t *testing.T) {
+			if err := f.Transaction(func() error {
+				_, err := arm(f, stage.luid, "test-app", plan, stage.on)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, layer := range []wf.LayerID{wf.LayerIPForwardV4, wf.LayerIPForwardV6} {
+				permits := map[wf.FieldID]bool{}
+				blocks := 0
+				for _, rule := range f.rules {
+					if rule.Layer != layer {
+						continue
+					}
+					count++
+					if !rule.Persistent || rule.Provider != provider || rule.Sublayer != sublayer {
+						t.Fatal("forwarding rule outside persistent ownership")
+					}
+					if rule.Action == wf.ActionBlock && rule.Weight == 0 && len(rule.Conditions) == 0 {
+						blocks++
+						continue
+					}
+					if rule.Action != wf.ActionPermit || rule.Weight == 0 || len(rule.Conditions) != 1 {
+						t.Fatal("unexpected forwarding rule")
+					}
+					match := rule.Conditions[0]
+					if match.Op != wf.MatchTypeEqual || match.Value != stage.luid {
+						t.Fatal("wrong tunnel match")
+					}
+					permits[match.Field] = true
+				}
+				if stage.on && blocks != 1 {
+					t.Fatalf("got %d default blocks", blocks)
+				}
+				if stage.on && stage.luid != 0 && (!permits[wf.FieldIPForwardInterface] || !permits[wf.FieldIPPhysicalArrivalInterface]) {
+					t.Fatal("missing tunnel direction")
+				}
+			}
+			if count != stage.want {
+				t.Fatalf("got %d forwarding rules, want %d", count, stage.want)
+			}
+			if stage.name == "connected" {
+				before, err := ruleGeneration(f.rules)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Fail the first forwarding rule after installing the ALE rules.
+				f.failAt = f.adds + len(f.rules) - count + 1
+				if err := f.Transaction(func() error {
+					_, err := arm(f, stage.luid, "test-app", plan, true)
+					return err
+				}); err == nil {
+					t.Fatal("replacement unexpectedly succeeded")
+				}
+				after, err := ruleGeneration(f.rules)
+				if err != nil || before != after {
+					t.Fatal("failed replacement changed the held generation", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPacketKillSwitchReplacement(b *testing.B) {
+	plan, err := Plan(nil, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, mode := range []string{"off", "vpn-only"} {
+		b.Run(mode, func(b *testing.B) {
+			f := &fakeAPI{}
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := f.Transaction(func() error {
+					_, err := arm(f, 42, "test-app", plan, mode == "vpn-only")
+					return err
+				}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 func TestPersistentFiltersAndOwnedCleanup(t *testing.T) {
 	other := &wf.Rule{ID: wf.RuleID(windows.GUID{Data1: 7})}
 	f := &fakeAPI{rules: []*wf.Rule{priorRule(), other}}
 	plan, _ := Plan(nil, false)
 	var g *Guard
-	err := f.Transaction(func() error { var e error; g, e = arm(f, 42, "test-app", plan); return e })
+	err := f.Transaction(func() error { var e error; g, e = arm(f, 42, "test-app", plan, false); return e })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +213,7 @@ func TestAtomicInstallAndRemoveFailureKeepProtection(t *testing.T) {
 	plan, _ := Plan(nil, false)
 	for _, failAt := range []int{1, 5, 15} {
 		f := &fakeAPI{rules: []*wf.Rule{old}, failAt: failAt}
-		err := f.Transaction(func() error { _, e := arm(f, 42, "test-app", plan); return e })
+		err := f.Transaction(func() error { _, e := arm(f, 42, "test-app", plan, false); return e })
 		if err == nil || !reflect.DeepEqual(f.rules, []*wf.Rule{old}) {
 			t.Fatal("failed update lost old protection", failAt)
 		}
@@ -164,7 +267,7 @@ func TestCoreExceptionRequiresAdministrativeToken(t *testing.T) {
 		Conditions: []*wf.Match{{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: "test-app"}}}
 	f := &fakeAPI{rules: []*wf.Rule{legacy}}
 	plan, _ := Plan(nil, false)
-	if err := f.Transaction(func() error { _, e := arm(f, 42, "test-app", plan); return e }); err != nil {
+	if err := f.Transaction(func() error { _, e := arm(f, 42, "test-app", plan, false); return e }); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range f.rules {
@@ -208,7 +311,7 @@ func armFake(t *testing.T, f *fakeAPI, luid uint64) *Guard {
 		t.Fatal(err)
 	}
 	var g *Guard
-	if err = f.Transaction(func() error { var e error; g, e = arm(f, luid, "test-app", plan); return e }); err != nil {
+	if err = f.Transaction(func() error { var e error; g, e = arm(f, luid, "test-app", plan, false); return e }); err != nil {
 		t.Fatal(err)
 	}
 	return g
@@ -313,7 +416,7 @@ func TestLiveCoreExceptionCondition(t *testing.T) {
 	plan, _ := Plan(nil, false)
 	abort := errors.New("abort")
 	err = s.Transaction(func() error {
-		if _, e := arm(s, 1, app, plan); e != nil {
+		if _, e := arm(s, 1, app, plan, true); e != nil {
 			return e
 		}
 		rules, e := owned(s)
