@@ -50,3 +50,22 @@ func BeginRepairTransaction() (func(), error) {
 	}
 	return func() { windows.ReleaseMutex(h); windows.CloseHandle(h); runtime.UnlockOSThread() }, nil
 }
+
+// RestoreNetworkPending also checks the four split-default routes installed by
+// nativeAddRoutes. After a service replacement the process-local ownership table
+// is gone. A matching foreign route prevents proof and must never be removed.
+func RestoreNetworkPending(ctx context.Context) (bool, error) {
+	pending, err := RecoveryPending(ctx)
+	if err != nil || pending {
+		return pending, err
+	}
+	cmd, err := PowerShellCommand(ctx, `$ErrorActionPreference='Stop'; $routes=@(Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.DestinationPrefix -in '0.0.0.0/1','128.0.0.0/1','::/1','8000::/1' }); [Console]::Out.Write($routes.Count)`)
+	if err != nil {
+		return false, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}

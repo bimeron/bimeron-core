@@ -56,6 +56,16 @@ func repairSessionCommand(args []string) error {
 	if err != nil || len(line) > 1024 {
 		return errors.New("invalid repair request")
 	}
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(line, &envelope) == nil && envelope.Version == 2 {
+		r, err := parseHeldRestore(line)
+		if err != nil {
+			return err
+		}
+		return guardedRepairSession(conn, identity, r)
+	}
 	request, err := parseRepairRequest(line)
 	if err != nil {
 		return err
