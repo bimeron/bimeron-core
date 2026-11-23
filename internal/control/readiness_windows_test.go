@@ -48,6 +48,43 @@ func TestReadinessWindowsACLAndServerPID(t *testing.T) {
 	}
 }
 
+// The listener runs with Authenticated Users enabled, while the client token
+// has that group disabled. Only the listener can create additional instances.
+func TestReadinessClientWithoutInstanceRight(t *testing.T) {
+	_, sid, err := pipeIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testutil.LimitedToken(t, authenticatedUsers)
+	// Exercise the production client ACE and a narrower one that rejects
+	// generic requests. Windows pipe opens also use read attributes and sync.
+	const transportRights = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE
+	for _, rights := range []string{pipeClientRights, fmt.Sprintf("%#x", transportRights)} {
+		t.Run(rights, func(t *testing.T) {
+			sddl := "O:" + sid + "G:BAD:P(A;;" + rights + ";;;" + sid + ")(A;;GA;;;" + authenticatedUsers + ")"
+			if got := testutil.GrantedPipeRights(t, client, sddl); got&0x4 != 0 {
+				t.Fatalf("client granted instance creation: %#x", got)
+			}
+			path := fmt.Sprintf(`\\.\pipe\Bimeron.Readiness.Client.%d.%d`, os.Getpid(), time.Now().UnixNano())
+			l, err := listenServiceReadinessPipe(path, sddl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			done := make(chan error, 1)
+			go func() { done <- NewServer(core.New(core.Options{})).ServeReadiness(ctx, l) }()
+			defer func() { cancel(); <-done }()
+			var response Response
+			testutil.Impersonating(t, client, func() {
+				response, err = callServiceReadinessPipe(ctx, path, uint32(os.Getpid()), Request{Command: "hello"})
+			})
+			if err != nil || response.Core == nil {
+				t.Fatalf("readiness hello: core=%v err=%v", response.Core, err)
+			}
+		})
+	}
+}
+
 // Administrators can connect to the readiness pipe but cannot create
 // instances or change its security; other principals get nothing.
 func TestReadinessPipeRights(t *testing.T) {
