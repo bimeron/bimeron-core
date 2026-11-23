@@ -12,6 +12,9 @@ func TestHandshakeIdentityAndCorrelation(t *testing.T) {
 	if a.Error != "" || a.ID != "gui-1" || len(a.Instance) != 32 || a.Capabilities == nil || a.Core == nil || a.Core.Version == "" {
 		t.Fatal(a)
 	}
+	if a.Capabilities.WireGuard == nil || !a.Capabilities.WireGuard.Reserved {
+		t.Fatal("service hello must advertise WireGuard Reserved runtime support")
+	}
 	next := s.dispatch(context.Background(), Request{Version: Version, Command: "status"})
 	if next.Instance != a.Instance {
 		t.Fatal("unstable instance")

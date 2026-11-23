@@ -1,5 +1,8 @@
 # ADR 0043: WireGuard and AmneziaWG client upstream
 
+[ADR 0045](0045-wireguard-reserved-bytes.md) extends this design for
+plain WireGuard profiles with Reserved bytes.
+
 Status: accepted, November 20, 2026. Tracks issue #202.
 
 ## Context

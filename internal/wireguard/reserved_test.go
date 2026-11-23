@@ -2,13 +2,16 @@ package wireguard
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"net"
 	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"bimeron/internal/wgconf"
 	"bimeron/internal/wireguard/wgtest"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
@@ -100,6 +103,37 @@ func TestReservedHandshakeCookieTrafficReconnect(t *testing.T) {
 		if err := client.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestReservedPeerRejectsMissingAndWrongStamp(t *testing.T) {
+	key := wgtest.NewKeyPair(t)
+	server := wgtest.StartUpstream(t, key)
+	endpoint, _ := reservedPeer(t, server, [3]byte{0, 12, 255}, false)
+	text := strings.Replace(server.ClientText(key, "0.0.0.0/0"), server.Addr.String(), endpoint.String(), 1)
+	for _, tc := range []struct{ name, extra string }{
+		{"missing", ""},
+		{"wrong", "\nReserved = 0, 12, 254\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := wgconf.Parse(text + tc.extra)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := New(Options{Config: cfg, Endpoint: endpoint})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if err := client.WaitHandshake(ctx); err != errHandshake {
+				t.Fatalf("expected handshake timeout, got %v", err)
+			}
+			if sent, received := client.Traffic(); sent == 0 || received != 0 {
+				t.Fatalf("traffic sent=%d received=%d", sent, received)
+			}
+		})
 	}
 }
 
