@@ -1021,6 +1021,46 @@ The GUI range in `release/compatibility.json` is widened to include Desktop
 - On `start` with `kill_switch_held`, explain that protection is held by the
   failed session and offer Disconnect before connecting with that profile.
 
+### Conditional Windows network recovery
+
+An authenticated Windows service `hello` advertises integer
+`capabilities.conditional_recovery_contract = 1`. Its optional top-level
+`recovery_identity` contains `owner` (the literal `system`), `instance`
+(the same 32 lowercase hexadecimal digits as the hello instance), and
+`generation` (64 lowercase hexadecimal digits). The service offers this
+identity for its own remaining WFP generation while idle, with no update
+hold and clear route/DNS recovery probes. A restarted service cannot
+attest to the previous process's filters. An absent identity leaves
+recovery pending.
+
+Core allows five seconds for one inspection under lifecycle and update
+exclusion. One trusted Windows PowerShell process checks owned NRPT rules
+first. It reads the four split-default prefixes in the ActiveStore only
+when DNS is clear. An expired or incomplete inspection yields no identity.
+Desktop allows six seconds for each independent hello before consent,
+after consent, and after pipe peer verification. Once the broker authenticates
+the GUI, it requires a complete newline-terminated first frame within eight
+seconds. Partial reads do not extend that deadline.
+
+After explicit consent, verify the elevated repair-session pipe peer
+against the pinned broker image. Fetch a fresh authenticated hello and
+require the same complete identity before sending a single JSON line:
+
+```json
+{"version":3,"command":"conditional_recovery","recovery_identity":{"owner":"system","instance":"<hello instance>","generation":"<filter generation>"}}
+```
+
+The broker validates the registered service and caller SID and forwards
+the identity to the privileged readiness pipe bound to the running SCM PID.
+The service serializes admission with update preparation and commit, and
+holds engine, updater and network locks through the exact-generation WFP
+transaction. The broker returns `version:3`, `done:true`, `ok` and
+`disposition`. Only `recovered` sets `ok:true`. A conflict or unsupported
+service leaves protection in place. An unknown result or lost reply
+requires fresh observation. Never retry automatically or invoke disruptive
+v1 repair as a fallback. Update-held profiles use the separate guarded
+Restore protocol.
+
 ## Explicit DNS over HTTPS
 
 Read the additive `doh` capability before enabling the DoH editor. An older

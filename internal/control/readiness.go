@@ -2,6 +2,7 @@ package control
 
 import (
 	"bimeron/core"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-// ServeReadiness exposes no command dispatch or profile/session details. The
+// ServeReadiness serves bounded, privileged maintenance commands. The
 // platform must restrict its listener to privileged maintenance principals.
 func (s *Server) ServeReadiness(ctx context.Context, l net.Listener) error {
 	stop := context.AfterFunc(ctx, func() { l.Close() })
@@ -37,8 +38,29 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 		return
 	}
 	var r Request
-	var raw json.RawMessage
-	if json.NewDecoder(io.LimitReader(c, 1024)).Decode(&raw) != nil || json.Unmarshal(raw, &r) != nil {
+	raw, err := bufio.NewReader(io.LimitReader(c, 1025)).ReadBytes('\n')
+	if err != nil || len(raw) > 1024 || json.Unmarshal(raw, &r) != nil {
+		return
+	}
+	if r.Command == "conditional_recovery" {
+		if !validRecoveryWire(raw) || r.Version != Version || r.ID == "" || len(r.ID) > 64 {
+			return
+		}
+		var peer ProcessWatch
+		if s.PeerProcess != nil {
+			peer = s.PeerProcess(c)
+		}
+		if peer != nil {
+			defer peer.Close()
+		}
+		operation, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		disposition := s.recoverConditionally(operation, r.RecoveryIdentity, peer)
+		_ = c.SetWriteDeadline(time.Now().Add(time.Second))
+		_ = json.NewEncoder(c).Encode(Response{Version: Version, ID: r.ID, Instance: s.instance, Disposition: disposition})
+		return
+	}
+	if r.RecoveryIdentity != nil {
 		return
 	}
 	if r.Command == "finalize_restore" {
@@ -135,6 +157,9 @@ func (s *Server) readinessAnswerFor(r Request) Response {
 		b := s.build()
 		a.Core = &b
 		a.UpdateCommitSupported = s.UpdateCommitted != nil
+		if s.ConditionalRecovery != nil {
+			a.ConditionalRecoveryContract = 1
+		}
 	case "prepare_update", "commit_update":
 		// The updater asks to keep kill switch protection on the next
 		// service stop (ADR 0041). Only administrators reach this pipe.

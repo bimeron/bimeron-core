@@ -281,7 +281,9 @@ func CallServiceReadiness(ctx context.Context, pid uint32, r Request) (Response,
 	return callServiceReadinessPipe(ctx, ServiceReadinessPipe, pid, r)
 }
 func callServiceReadinessPipe(ctx context.Context, path string, pid uint32, r Request) (Response, error) {
-	c, err := winio.DialPipeContext(ctx, path)
+	// A readiness client only needs to read and write bytes. GENERIC_WRITE
+	// also maps to FILE_CREATE_PIPE_INSTANCE on a named pipe.
+	c, err := winio.DialPipeAccess(ctx, path, windows.FILE_READ_DATA|windows.FILE_WRITE_DATA)
 	if err != nil {
 		return Response{}, err
 	}

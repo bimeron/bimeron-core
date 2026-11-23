@@ -81,6 +81,9 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	hold := h.holdRecord()
 	engine := core.New(core.Options{ResidualProtection: true, UpdateHold: hold})
 	server := control.NewServer(engine)
+	if hold != nil {
+		server.ConditionalRecovery = engine.ConditionalRecovery
+	}
 	if hold != nil && guardedRestoreTargetBuild == "1" {
 		wireRestoreService(server, engine, h.owner, hold)
 	}

@@ -5,6 +5,7 @@ package main
 import (
 	"bimeron/core"
 	"bimeron/internal/control"
+	"bimeron/internal/windowsnet"
 	"context"
 	"crypto/rand"
 	"debug/buildinfo"
@@ -16,7 +17,6 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -91,20 +91,11 @@ func updateWindowsServiceGuarded(ctx context.Context, s *mgr.Service, expect upd
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Serialize installers without sharing the VPN session mutex.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	name, _ := windows.UTF16PtrFromString(`Global\BimeronCoreUpdate`)
-	lock, err := windows.CreateMutex(nil, false, name)
-	if err != nil && err != windows.ERROR_ALREADY_EXISTS {
+	releaseUpdate, err := windowsnet.BeginServiceUpdate(true)
+	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(lock)
-	result, err := windows.WaitForSingleObject(lock, 0)
-	if err != nil || (result != windows.WAIT_OBJECT_0 && result != windows.WAIT_ABANDONED) {
-		return fmt.Errorf("another service update is running")
-	}
-	defer windows.ReleaseMutex(lock)
+	defer releaseUpdate()
 	config, err := s.Config()
 	if err != nil {
 		return err
