@@ -354,9 +354,15 @@ Alternate-administrator UAC preserved the requesting user's service owner but
 could not open that owner's control pipe. The chosen minimal boundary is a
 separate Windows maintenance pipe, `Bimeron.Core.Readiness`, with a protected
 SYSTEM/Administrators-only DACL and go-winio's local, exclusive first-instance
-creation. It exposes only hello (build and instance) and status (state and
-instance). It never calls command dispatch, returns profile/session/network or
-authentication details, or accepts mutation commands. Requests and time are
+creation. Hello and status expose limited build, instance, capability and state data.
+Separate maintenance commands prepare and commit an update stop, finalize a
+guarded Restore, or conditionally remove an exact owned filter generation.
+For conditional recovery, the broker authenticates the GUI client SID and
+matches it against SCM registration even when a different administrator
+authorized elevation. It reads the capability and instance from the SCM
+PID-bound readiness hello, then submits the GUI's expected tuple on the same
+PID-bound endpoint. The service rechecks that tuple under lifecycle exclusion.
+Requests and time are
 bounded. The broker validates canonical SCM configuration/owner/account, requires
 Running with a nonzero PID, and matches the pipe server PID to SCM before reading
 responses. Hello and status must share the instance and an authoritative ready
@@ -368,9 +374,8 @@ Alternatives: widening the main pipe to Administrators would grant cross-user
 control and expose user data; SCM Running alone would lose application readiness
 and IPC compatibility checks; GUI confirmation adds a new protocol and a GUI
 lifetime dependency; caller-token impersonation adds credential/token handling
-and Windows thread-affinity complexity. The dedicated read-only channel grants
-all elevated local administrators only the minimum build/state observation,
-rather than granting a broker temporary mutation access. It does not change the
+and Windows thread-affinity complexity. The dedicated channel confines administrative access to the maintenance protocol.
+It does not change the
 main pipe DACL (SYSTEM and authenticated owner only), IPC 1 or request ownership.
 
 Linux has no equivalent alternate-admin access failure: pkexec executes the

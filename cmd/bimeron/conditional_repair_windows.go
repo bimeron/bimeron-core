@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 	"net"
 	"time"
 )
@@ -34,26 +35,39 @@ func forwardConditionalRecovery(caller string, i control.RecoveryIdentity) strin
 	b := backend.(*windowsRepairBackend)
 	defer b.Close()
 	b.service, err = b.manager.OpenService(serviceName)
-	if err != nil || b.validateIdentity() != nil {
+	if err != nil {
+		return "unknown"
+	}
+	config, err := b.service.Config()
+	if err != nil {
 		return "unknown"
 	}
 	state, err := b.service.Query()
-	if err != nil || state.State != svc.Running || state.ProcessId == 0 {
+	if err != nil {
+		return "unknown"
+	}
+	return requestConditionalRecovery(b.owner, config, state, i, control.CallServiceReadiness)
+}
+
+// The owner is authenticated from the original GUI pipe peer, including under
+// alternate-administrator elevation. Both requests use the SCM PID-bound pipe.
+func requestConditionalRecovery(owner string, config mgr.Config, state svc.Status, i control.RecoveryIdentity, readiness func(context.Context, uint32, control.Request) (control.Response, error)) string {
+	if validateRepairRegistration(config, owner) != nil || state.State != svc.Running || state.ProcessId == 0 {
 		return "unknown"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	hello, err := control.CallService(ctx, control.Request{Command: "hello"})
+	hello, err := readiness(ctx, state.ProcessId, control.Request{Command: "hello"})
 	if err != nil {
 		return "unknown"
 	}
-	if hello.Capabilities == nil || hello.Capabilities.ConditionalRecoveryContract != 1 {
+	if hello.ConditionalRecoveryContract != 1 {
 		return "unsupported"
 	}
-	if hello.Instance != i.Instance || hello.RecoveryIdentity == nil || *hello.RecoveryIdentity != i {
+	if hello.Instance != i.Instance {
 		return "conflict"
 	}
-	answer, err := control.CallServiceReadiness(ctx, state.ProcessId, control.Request{Command: "conditional_recovery", ID: "repair", RecoveryIdentity: &i})
+	answer, err := readiness(ctx, state.ProcessId, control.Request{Command: "conditional_recovery", ID: "repair", RecoveryIdentity: &i})
 	if err != nil || answer.Instance != i.Instance {
 		return "unknown"
 	}

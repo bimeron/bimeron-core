@@ -375,9 +375,13 @@ func (b *windowsRepairBackend) validateIdentity() error {
 	if err != nil {
 		return err
 	}
+	return validateRepairRegistration(config, b.owner)
+}
+
+func validateRepairRegistration(config mgr.Config, authenticatedOwner string) error {
 	argv, err := windows.DecomposeCommandLine(config.BinaryPathName)
 	root, e := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
-	if err != nil || e != nil || len(argv) != 4 || argv[1] != "service" || argv[2] != "run" || argv[3] != b.owner || !strings.EqualFold(filepath.Clean(argv[0]), filepath.Join(root, "Bimeron Core", "bimeron.exe")) || config.ServiceStartName != "LocalSystem" {
+	if err != nil || e != nil || len(argv) != 4 || argv[1] != "service" || argv[2] != "run" || argv[3] != authenticatedOwner || !strings.EqualFold(filepath.Clean(argv[0]), filepath.Join(root, "Bimeron Core", "bimeron.exe")) || config.ServiceStartName != "LocalSystem" {
 		return fmt.Errorf("service identity changed")
 	}
 	return nil

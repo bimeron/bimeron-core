@@ -55,12 +55,13 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	RecoveryIdentity      *RecoveryIdentity `json:"recovery_identity,omitempty"`
-	Disposition           string            `json:"disposition,omitempty"`
-	Restore               *RestoreProof     `json:"restore,omitempty"`
-	UpdateTransaction     string            `json:"update_transaction,omitempty"`
-	UpdateCommitSupported bool              `json:"update_commit_supported,omitempty"`
-	closeAccepted         bool              // internal admission result; never serialized
+	RecoveryIdentity            *RecoveryIdentity `json:"recovery_identity,omitempty"`
+	Disposition                 string            `json:"disposition,omitempty"`
+	Restore                     *RestoreProof     `json:"restore,omitempty"`
+	UpdateTransaction           string            `json:"update_transaction,omitempty"`
+	ConditionalRecoveryContract int               `json:"conditional_recovery_contract,omitempty"`
+	UpdateCommitSupported       bool              `json:"update_commit_supported,omitempty"`
+	closeAccepted               bool              // internal admission result; never serialized
 
 	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`

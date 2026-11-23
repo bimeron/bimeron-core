@@ -2,6 +2,9 @@ package control
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -77,5 +80,38 @@ func TestPrepareDuringConditionalRecovery(t *testing.T) {
 	}
 	if a := <-prepared; a.Error != "" || a.UpdateTransaction == "" {
 		t.Fatal(a)
+	}
+}
+
+func TestReadinessConsumesEntireConditionalRequestLine(t *testing.T) {
+	s := NewServer(&holdEngine{})
+	count := 0
+	closed := 0
+	s.PeerProcess = func(net.Conn) ProcessWatch { return fakeWatch{alive: true, closed: &closed} }
+	s.ConditionalRecovery = func(context.Context, string) (string, string) { count++; return "", "recovered" }
+	raw, err := json.Marshal(Request{Version: Version, Command: "conditional_recovery", ID: "repair", RecoveryIdentity: &RecoveryIdentity{"system", s.instance, strings.Repeat("e", 64)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{" {}", " garbage", strings.Repeat(" ", 1024) + "{}", ""} {
+		peer, server := net.Pipe()
+		done := make(chan struct{})
+		go func() { s.readinessConnection(context.Background(), server); close(done) }()
+		_, err = io.WriteString(peer, string(raw)+suffix+"\n")
+		if err != nil && suffix == "" {
+			t.Fatal(err)
+		}
+		reply, err := io.ReadAll(peer)
+		peer.Close()
+		<-done
+		if err != nil {
+			t.Fatal(err)
+		}
+		if suffix != "" && (count != 0 || len(reply) != 0) {
+			t.Fatalf("invalid suffix produced effect/reply: %d %q", count, reply)
+		}
+		if suffix == "" && (count != 1 || !strings.Contains(string(reply), `"disposition":"recovered"`)) {
+			t.Fatalf("valid request: %d %q", count, reply)
+		}
 	}
 }
