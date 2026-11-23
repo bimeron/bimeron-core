@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+func TestExpiredRecoveryInspection(t *testing.T) {
+	s := NewServer(&holdEngine{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	earliestDeadline := time.Now().Add(5 * time.Second)
+	s.ConditionalRecovery = func(ctx context.Context, _ string) (string, string) {
+		deadline, ok := ctx.Deadline()
+		if !ok || deadline.Before(earliestDeadline) || deadline.After(time.Now().Add(5*time.Second)) {
+			t.Fatal("unexpected inspection deadline", deadline)
+		}
+		cancel()
+		return strings.Repeat("a", 64), "eligible"
+	}
+	if s.inspectRecovery(ctx) != nil {
+		t.Fatal("expired proof authorized recovery")
+	}
+}
+
 func TestConditionalRecoveryAdmission(t *testing.T) {
 	ctx := context.Background()
 	s := NewServer(&holdEngine{})

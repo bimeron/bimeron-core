@@ -30,11 +30,12 @@ func (s *Server) inspectRecovery(ctx context.Context) *RecoveryIdentity {
 	if s.closing || s.hold != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	generation, result := s.ConditionalRecovery(ctx, "")
+	deadline, _ := ctx.Deadline()
 	i := RecoveryIdentity{"system", s.instance, generation}
-	if result != "eligible" || !i.Valid() {
+	if ctx.Err() != nil || !time.Now().Before(deadline) || result != "eligible" || !i.Valid() {
 		return nil
 	}
 	return &i

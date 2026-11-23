@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -49,11 +50,15 @@ func repairSessionCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	firstFrameBudget := 5 * time.Second
+	if runtime.GOOS == "windows" {
+		firstFrameBudget = 8 * time.Second
+	}
+	deadline := time.Now().Add(firstFrameBudget)
 	// One request and at most two consent replies; the entire input is bounded.
 	reader := bufio.NewReader(io.LimitReader(conn, 3073))
-	line, err := reader.ReadBytes('\n')
-	if err != nil || len(line) > 1024 {
+	line, err := readFirstRepairFrame(conn, reader, deadline)
+	if err != nil {
 		return errors.New("invalid repair request")
 	}
 	var envelope struct {
@@ -117,6 +122,24 @@ func repairSessionCommand(args []string) error {
 		return fmt.Errorf("repair session: %w", err)
 	}
 	return nil
+}
+
+// A partial frame cannot renew the authenticated peer's deadline.
+func readFirstRepairFrame(conn net.Conn, reader *bufio.Reader, deadline time.Time) ([]byte, error) {
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return nil, err
+	}
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		return nil, err
+	}
+	if !time.Now().Before(deadline) {
+		return nil, context.DeadlineExceeded
+	}
+	if len(line) > 1024 {
+		return nil, errors.New("repair request too large")
+	}
+	return line, nil
 }
 
 type repairPeerCheck func(net.Conn) (string, error)

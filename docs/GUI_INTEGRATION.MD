@@ -1033,6 +1033,15 @@ hold and clear route/DNS recovery probes. A restarted service cannot
 attest to the previous process's filters. An absent identity leaves
 recovery pending.
 
+Core allows five seconds for one inspection under lifecycle and update
+exclusion. One trusted Windows PowerShell process checks owned NRPT rules
+first. It reads the four split-default prefixes in the ActiveStore only
+when DNS is clear. An expired or incomplete inspection yields no identity.
+Desktop allows six seconds for each independent hello before consent,
+after consent, and after pipe peer verification. Once the broker authenticates
+the GUI, it requires a complete newline-terminated first frame within eight
+seconds. Partial reads do not extend that deadline.
+
 After explicit consent, verify the elevated repair-session pipe peer
 against the pinned broker image. Fetch a fresh authenticated hello and
 require the same complete identity before sending a single JSON line:
