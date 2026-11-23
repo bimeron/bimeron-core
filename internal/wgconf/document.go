@@ -181,7 +181,7 @@ func sectionKeys(section string) []string {
 }
 
 var interfaceKeys = append([]string{"PrivateKey", "Address", "DNS", "MTU", "ListenPort"}, AWGKeys...)
-var peerKeys = []string{"PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive"}
+var peerKeys = []string{"PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive", "Reserved"}
 
 // AWGKeys lists the AmneziaWG [Interface] options of all versions.
 var AWGKeys = []string{

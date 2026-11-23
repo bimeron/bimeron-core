@@ -141,7 +141,7 @@ func newWithEngine(o Options, start engine) (*Client, error) {
 		}
 	}
 	lc := net.ListenConfig{Control: client.control}
-	client.bind = NewBind(lc.ListenPacket, endpoint, uint16(c.ListenPort))
+	client.bind = NewBind(lc.ListenPacket, endpoint, uint16(c.ListenPort), c.Peer.Reserved)
 	handshake, transportSize, junk, signature := c.PacketSizes()
 	t, err := start(tunnelConfig{
 		Addresses: c.LocalAddresses(),

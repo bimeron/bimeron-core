@@ -61,6 +61,21 @@ func TestExplicitWireGuard(t *testing.T) {
 	}
 }
 
+func TestExplicitWireGuardReserved(t *testing.T) {
+	c, err := ParseData([]byte(explicitWireGuard("Reserved = 0, 12, 255\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Resolve(t.Context())
+	if err != nil || p.WireGuard.Peer.Reserved != [3]byte{0, 12, 255} {
+		t.Fatalf("explicit Reserved did not reach the peer config: %v", err)
+	}
+	_, err = ParseData([]byte(explicitWireGuard("Reserved = 0, 12, 255\nJc = 4\n")))
+	if err == nil || problem.Of(err).Code != "wireguard_reserved_unsupported" {
+		t.Fatalf("nonzero Reserved with AWG: %v", err)
+	}
+}
+
 func TestWireGuardFileDNS(t *testing.T) {
 	dir := t.TempDir()
 	wg := "[Interface]\nPrivateKey = " + wgKey(1) + "\nAddress = 10.8.0.2/32\nDNS = 10.8.0.1, 2001:db8::53, 10.8.0.1\n[Peer]\nPublicKey = " + wgKey(2) + "\nEndpoint = vpn.example.test:51820\nAllowedIPs = 0.0.0.0/0\n"

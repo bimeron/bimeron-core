@@ -69,6 +69,7 @@ type WireGuardCapabilities struct {
 	URISchemes      []string `json:"uri_schemes"`
 	AllowedIPsModes []string `json:"allowed_ips_modes"`
 	DocumentAPI     int      `json:"document_api"`
+	Reserved        bool     `json:"reserved,omitempty"`
 	// KeyOperations lists the key operations of the CLI bridge; empty
 	// where the bridge does not exist.
 	KeyOperations []string `json:"key_operations,omitempty"`
@@ -76,7 +77,7 @@ type WireGuardCapabilities struct {
 
 // WireGuardSupport returns the static WireGuard capability object.
 func WireGuardSupport() *WireGuardCapabilities {
-	return &WireGuardCapabilities{Supported: true, Experimental: true, Protocols: []string{wgconf.ProtocolWireGuard, wgconf.ProtocolAmneziaWG}, AWGVersions: slices.Clone(wgconf.AWGVersions), URISchemes: []string{"vpn", "wireguard", "wg"}, AllowedIPsModes: slices.Clone(config.AllowedIPsModes), DocumentAPI: 1, KeyOperations: slices.Clone(wgconf.KeyOperations)}
+	return &WireGuardCapabilities{Supported: true, Experimental: true, Protocols: []string{wgconf.ProtocolWireGuard, wgconf.ProtocolAmneziaWG}, AWGVersions: slices.Clone(wgconf.AWGVersions), URISchemes: []string{"vpn", "wireguard", "wg"}, AllowedIPsModes: slices.Clone(config.AllowedIPsModes), DocumentAPI: 1, Reserved: true, KeyOperations: slices.Clone(wgconf.KeyOperations)}
 }
 
 // IKEv2Capabilities applies only to the system backend. Top-level flags retain

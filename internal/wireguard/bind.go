@@ -20,8 +20,9 @@ type Listen func(ctx context.Context, network, address string) (net.PacketConn, 
 // Bind is a single-socket conn.Bind for one fixed peer endpoint. Datagrams
 // from other sources are dropped before they reach the engine.
 type Bind struct {
-	listen Listen
-	peer   netip.AddrPort
+	listen   Listen
+	peer     netip.AddrPort
+	reserved [3]byte
 	// port is a configured ListenPort; zero means ephemeral. Open always
 	// binds it, whatever the engine requests, so a failed attempt can
 	// never fall back to another port.
@@ -41,8 +42,8 @@ var _ conn.Bind = (*Bind)(nil)
 
 // NewBind returns a bind that reaches peer through listen from local port
 // (zero for an ephemeral port).
-func NewBind(listen Listen, peer netip.AddrPort, port uint16) *Bind {
-	return &Bind{listen: listen, peer: netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port()), port: port}
+func NewBind(listen Listen, peer netip.AddrPort, port uint16, reserved [3]byte) *Bind {
+	return &Bind{listen: listen, peer: netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port()), port: port, reserved: reserved}
 }
 
 // errBind replaces socket errors, which may contain local addresses.
@@ -100,6 +101,9 @@ func (b *Bind) receiver(socket *net.UDPConn) conn.ReceiveFunc {
 			if netip.AddrPortFrom(from.Addr().Unmap(), from.Port()) != b.peer {
 				continue
 			}
+			if b.reserved != [3]byte{} && n >= 4 {
+				clear(packets[0][1:4])
+			}
 			b.received.Add(uint64(n))
 			sizes[0] = n
 			eps[0] = endpoint(b.peer)
@@ -137,7 +141,19 @@ func (b *Bind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		to = netip.AddrPort(e)
 	}
 	for _, buf := range bufs {
-		if _, err := socket.WriteToUDPAddrPort(buf, to); err != nil {
+		// The peer normalizes this stamp before checking handshake MACs.
+		// Restore the engine-owned buffer after the synchronous UDP write.
+		var header [3]byte
+		stamp := b.reserved != [3]byte{} && to == b.peer && len(buf) >= 4
+		if stamp {
+			header = [3]byte(buf[1:4])
+			copy(buf[1:4], b.reserved[:])
+		}
+		_, err := socket.WriteToUDPAddrPort(buf, to)
+		if stamp {
+			copy(buf[1:4], header[:])
+		}
+		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return net.ErrClosed
 			}

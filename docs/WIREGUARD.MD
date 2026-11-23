@@ -248,9 +248,10 @@ its text; the inspection's `problems` report why.
     accept `1`/`0` and `yes`/`no`.
   - In key parameters, spaces are restored to `+`, and base64url keys and
     64-digit hex keys are converted to standard base64.
-  - A non-zero `reserved` (Cloudflare WARP) fails with
-    `wireguard_reserved_unsupported` ([#208](https://github.com/bimeron/bimeron-core/issues/208)).
-    An all-zero `reserved` is ignored.
+  - The document bridge imports comma- or hyphen-separated decimal `reserved`
+    triples and standard Base64 encoding exactly three bytes as `Reserved`
+    under `[Peer]`. Each decimal byte is in the range 0–255. Existing all-zero
+    URI aliases are ignored. Nonzero Reserved requires plain WireGuard.
   - Unknown or duplicate parameters fail with `uri_option_unsupported`.
   - `awg://` is not supported.
 
@@ -280,6 +281,14 @@ its text; the inspection's `problems` report why.
 | `detect` | `text` | `format`: `bimeron` or `wireguard`, or problem `document_format_unknown` / `document_format_ambiguous` |
 | `inspect` | `text` | inspection |
 | `edit` | `text`, `operations` | inspection plus `text` |
+
+For a plain WireGuard document, inspect exposes `fields["Peer/Reserved"]`
+when the field has a value. The value is the preserved document string.
+To set it, send a `set_field` operation with section `Peer`, key `Reserved`,
+and a value such as `0, 12, 255`. An empty edit value removes the option.
+The response reports invalid byte tuples in `problems` at `Peer/Reserved`.
+Use the same comma-separated value under `[AccessKey]` with
+`Type = wireguard` for embedded profiles.
 | `import_uri` | `uri` | inspection plus `text` and `name` (`""` when the link has none), or only `problems` when the link cannot be converted |
 
 Detection treats text as `wireguard` when it has a `[Peer]` section, or a
@@ -360,6 +369,12 @@ results include the object with `document_api` 0 and no `key_operations`:
 there is no CLI bridge there, and profiles use explicit `Type = wireguard`
 options.
 
+`reserved: true` in the CLI bridge's capabilities response advertises
+document support when `document_api` is available. For a profile with
+nonzero Reserved, check the WireGuard capability in the connected service's
+own hello response before connecting. If the service omits `reserved` or
+returns false, retain the saved profile and ask the user to update Core.
+
 ## Runtime
 
 Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
@@ -367,6 +382,10 @@ Design record: [ADR 0043](adr/0043-wireguard-amneziawg-client.md).
 - Engine: `github.com/amnezia-vpn/amneziawg-go/v3` `v3.1.20261116` (MIT) with
   its gVisor netstack. Plain WireGuard runs on the same engine without
   AmneziaWG options.
+- For a nonzero plain WireGuard Reserved value, the UDP Bind stamps bytes
+  1–3 on send and clears them on receive. The handshake MACs and cookie
+  exchange use the normalized header. The remote peer must follow the same
+  convention. Live WARP compatibility is pending verification.
 - The WireGuard UDP socket is opened through the session's outbound path
   (desktop interface binding, Android protect, Apple host network), so it
   never loops into Bimeron's TUN. The kill switch already permits the core's
