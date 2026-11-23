@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/streamtransport"
 	"bimeron/internal/vless"
 	"golang.getoutline.org/sdk/transport"
@@ -193,12 +194,12 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 		if host == "" {
 			host = c.settings.ServerName
 		}
-		conn, err = streamtransport.WebSocket(conn, "wss", host, c.settings.WSPath, nil)
+		conn, err = streamtransport.WebSocket(setup, conn, "wss", host, c.settings.WSPath, nil)
 		if err != nil {
 			return nil, fmt.Errorf("VMess %w", err)
 		}
 	} else if c.settings.Network == "httpupgrade" {
-		conn, err = c.httpUpgrade(conn)
+		conn, err = c.httpUpgrade(setup, conn)
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +209,7 @@ func (c *Client) directTransport(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
-func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
+func (c *Client) httpUpgrade(ctx context.Context, conn net.Conn) (net.Conn, error) {
 	host := c.settings.WSHost
 	if host == "" {
 		host = c.settings.ServerName
@@ -221,9 +222,13 @@ func (c *Client) httpUpgrade(conn net.Conn) (net.Conn, error) {
 	reader := bufio.NewReader(limited)
 	response, err := http.ReadResponse(reader, request)
 	if err != nil {
+		captiveportal.Failed(ctx, conn.RemoteAddr().String(), false)
 		return nil, fmt.Errorf("VMess HTTPUpgrade response failed: %w", err)
 	}
 	if response.StatusCode != http.StatusSwitchingProtocols || !strings.EqualFold(response.Header.Get("Upgrade"), "websocket") || !strings.EqualFold(response.Header.Get("Connection"), "upgrade") {
+		if captiveportal.RedirectStatus(response.StatusCode) {
+			captiveportal.Failed(ctx, conn.RemoteAddr().String(), true)
+		}
 		_ = response.Body.Close()
 		return nil, fmt.Errorf("VMess HTTPUpgrade rejected")
 	}

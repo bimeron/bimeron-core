@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/guard"
 	"golang.getoutline.org/sdk/transport"
 )
@@ -51,9 +52,13 @@ func (s *SOCKS5) connect(ctx context.Context, command byte, target string) (*net
 	}
 	var reply [4]byte
 	if _, err = io.ReadFull(c, reply[:2]); err != nil {
+		captiveportal.Failed(ctx, endpoint, false)
 		return nil, "", err
 	}
 	if reply[0] != 5 || reply[1] != method {
+		if reply[0] != 5 {
+			captiveportal.Failed(ctx, endpoint, false)
+		}
 		return nil, "", fmt.Errorf("SOCKS5 authentication method rejected")
 	}
 	if method == 2 {

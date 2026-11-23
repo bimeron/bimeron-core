@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 )
 
 // Control-plane connections use this resolver for ssconf and upstream endpoints.
@@ -80,6 +81,7 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 			}
 		}
 		download.ResolvedAddress = chosen.Unmap().String()
+		captiveportal.Resolved(ctx, download.Address, net.JoinHostPort(download.ResolvedAddress, strconv.Itoa(download.Port)))
 	}
 	for _, ep := range []*Endpoint{&p.TCP, &p.UDP} {
 		// MASQUE and WireGuard use one physical endpoint for both: resolve
@@ -108,7 +110,11 @@ func resolveOnPath(ctx context.Context, c SessionConfig, path networkPath) (Prof
 				break
 			}
 		}
-		ep.Host = chosen.Unmap().String()
+		address := chosen.Unmap().String()
+		if ep == &p.TCP {
+			captiveportal.Resolved(ctx, ep.Host, net.JoinHostPort(address, strconv.Itoa(ep.Port)))
+		}
+		ep.Host = address
 	}
 	if p.Type == "masque" || p.Type == "wireguard" {
 		p.UDP = p.TCP

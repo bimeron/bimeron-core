@@ -57,6 +57,8 @@ type Status struct {
 	// KillSwitch is KillSwitchActive or KillSwitchHolding while the run owns
 	// kill switch protection; omitted otherwise.
 	KillSwitch string `json:",omitempty"`
+	// NetworkHint is an advisory signal for the current network.
+	NetworkHint string `json:",omitempty"`
 	// ResidualReason is ResidualUpdate when residual protection was kept on
 	// purpose across a service update (ADR 0041); omitted otherwise.
 	ResidualReason string `json:",omitempty"`
@@ -158,6 +160,7 @@ type Engine struct {
 	lifecycle sync.Mutex
 	mu        sync.Mutex
 	recovery  recovery
+	portal    *captivePortalState
 	wake      chan struct{}
 	holding   bool // a failed run keeps kill switch protection until Stop
 	protected bool // the run owns kill switch protection
@@ -341,6 +344,9 @@ func (e *Engine) transitionLocked(state State, err error) {
 	}
 	if state == Connected {
 		e.connectedLocked()
+	}
+	if state == Connected || state == Stopping || state == Disconnected {
+		e.status.NetworkHint = ""
 	}
 	e.emitLocked("state", string(state))
 }
@@ -751,6 +757,11 @@ func (e *Engine) run(ctx context.Context, cfg SessionConfig, r *runResult) {
 		e.mu.Unlock()
 	}
 	r.protectionAcquired = owner != nil
+	if owner != nil && cfg.IKEv2 == nil && captivePortalEnabled {
+		cfg.portalAttempt = e.beginPortalAttempt
+		stopWatching := e.watchPortalNetwork(ctx)
+		defer stopWatching()
+	}
 	acquired()
 	for {
 		err, settled := e.connect(ctx, cfg, b)

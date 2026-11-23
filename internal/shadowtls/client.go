@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"bimeron/internal/captiveportal"
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -187,6 +188,7 @@ func Client(ctx context.Context, raw net.Conn, name, password string, roots *x50
 	copy(hello.SessionId[28:], mac.Sum(nil)[:tagSize])
 	copy(hello.Raw[39:71], hello.SessionId)
 	if err := secure.HandshakeContext(setup); err != nil {
+		captiveportal.TLSFailed(setup, raw, name, err)
 		if setup.Err() != nil {
 			return nil, setup.Err()
 		}

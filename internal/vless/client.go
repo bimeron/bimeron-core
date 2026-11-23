@@ -163,7 +163,7 @@ func (c *Client) open(ctx context.Context, command byte, destination string) (*s
 		if c.settings.WSEarlyData > 0 && len(header) <= c.settings.WSEarlyData {
 			early = header
 		}
-		conn, err = c.webSocket(conn, early)
+		conn, err = c.webSocket(ctx, conn, early)
 		if err != nil {
 			return nil, err
 		}
@@ -229,7 +229,7 @@ func (c *Client) tlsHandshake(ctx context.Context, raw net.Conn) (net.Conn, erro
 // SetRootCAs supplies a trust store before opening transport streams.
 func (c *Client) SetRootCAs(roots *x509.CertPool) { c.rootCAs = roots }
 
-func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
+func (c *Client) webSocket(ctx context.Context, conn net.Conn, early []byte) (net.Conn, error) {
 	host := c.settings.WSHost
 	if host == "" {
 		host = c.settings.ServerName
@@ -241,7 +241,7 @@ func (c *Client) webSocket(conn net.Conn, early []byte) (net.Conn, error) {
 	if path == "" {
 		path = "/"
 	}
-	return streamtransport.WebSocket(conn, "wss", host, path, early)
+	return streamtransport.WebSocket(ctx, conn, "wss", host, path, early)
 }
 
 func (c *Client) DialStream(ctx context.Context, address string) (transport.StreamConn, error) {

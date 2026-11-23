@@ -87,6 +87,7 @@ type SessionConfig struct {
 	stats *telemetry.Counters
 	// endpointChanged publishes only transport addresses to local session status.
 	endpointChanged func(sessionEndpoints)
+	portalAttempt   func(string) func()
 }
 
 func DefaultConfig() SessionConfig {

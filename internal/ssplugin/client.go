@@ -192,7 +192,7 @@ func (c *Client) connect(ctx context.Context) (transport.StreamConn, error) {
 	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
 		host = "[" + host + "]"
 	}
-	ws, err := streamtransport.WebSocket(conn, scheme, host, c.settings.Path, nil)
+	ws, err := streamtransport.WebSocket(setup, conn, scheme, host, c.settings.Path, nil)
 	if err != nil {
 		stop()
 		return nil, err

@@ -12,6 +12,7 @@ import (
 
 	"bimeron/internal/accesskey"
 	"bimeron/internal/anytls"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/guard"
 	"bimeron/internal/hysteria2"
 	"bimeron/internal/masque"
@@ -184,7 +185,17 @@ func CheckProfileDoH(ctx context.Context, c SessionConfig, prompt sshtunnel.Prom
 	return err
 }
 
-func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (*vpn.Handler, transport.StreamDialer, transport.PacketListener, func() error, error) {
+func prepareVPN(lifetime, ctx context.Context, c SessionConfig, path networkPath, report func(string, string), metadata *vpn.DNSMetadata) (_ *vpn.Handler, _ transport.StreamDialer, _ transport.PacketListener, _ func() error, result error) {
+	if c.portalAttempt != nil {
+		suspect := c.portalAttempt(path.identity)
+		var attempt *captiveportal.Attempt
+		ctx, attempt = captiveportal.Observe(ctx)
+		defer func() {
+			if result != nil && ctx.Err() != context.Canceled && attempt.Suspected() {
+				suspect()
+			}
+		}()
+	}
 	report("key_resolve", "Resolving access key through outbound interface")
 	p, outbound, endpoints, err := resolveOnPath(ctx, c, path)
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/streamtransport"
 	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
@@ -112,7 +113,7 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 	c.mu.Unlock()
 	// DialStream's context governs setup only. Callers cancel it immediately
 	// after connecting; the established stream belongs to the client lifetime.
-	requestCtx, cancel := context.WithCancel(c.ctx)
+	requestCtx, cancel := context.WithCancel(captiveportal.CopyObservation(c.ctx, ctx))
 	stop := context.AfterFunc(ctx, cancel)
 	setupTimer := time.AfterFunc(15*time.Second, cancel)
 	reader, writer := io.Pipe()
@@ -136,6 +137,9 @@ func (c *Client) DialStream(ctx context.Context, target string) (transport.Strea
 		return nil, fmt.Errorf("NaiveProxy CONNECT failed")
 	}
 	if resp.StatusCode != http.StatusOK {
+		if captiveportal.RedirectStatus(resp.StatusCode) {
+			captiveportal.Failed(ctx, endpoint, true)
+		}
 		_ = resp.Body.Close()
 		cancel()
 		_ = writer.Close()

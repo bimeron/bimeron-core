@@ -1,12 +1,16 @@
 package streamtransport
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"sync/atomic"
 
+	"bimeron/internal/captiveportal"
 	"golang.org/x/net/websocket"
 )
 
@@ -25,6 +29,8 @@ type UpgradeConn struct {
 	net.Conn
 	left     int
 	released atomic.Bool
+	status   *[12]byte
+	read     int
 }
 
 func NewUpgradeConn(conn net.Conn) *UpgradeConn {
@@ -40,6 +46,9 @@ func (c *UpgradeConn) Read(b []byte) (int, error) {
 	}
 	n, err := c.Conn.Read(b[:min(len(b), c.left)])
 	c.left -= n
+	if c.status != nil && c.read < len(c.status) {
+		c.read += copy(c.status[c.read:], b[:n])
+	}
 	return n, err
 }
 
@@ -48,7 +57,7 @@ func (c *UpgradeConn) Release() { c.released.Store(true) }
 
 // WebSocket performs an HTTP/1.1 upgrade over an already connected stream.
 // TLS and setup deadlines belong to the caller. Early data is optional.
-func WebSocket(conn net.Conn, scheme, host, path string, early []byte) (*websocket.Conn, error) {
+func WebSocket(ctx context.Context, conn net.Conn, scheme, host, path string, early []byte) (*websocket.Conn, error) {
 	origin := "http"
 	if scheme == "wss" {
 		origin = "https"
@@ -62,8 +71,17 @@ func WebSocket(conn net.Conn, scheme, host, path string, early []byte) (*websock
 	}
 	// The client keeps reading through limited after the handshake.
 	limited := NewUpgradeConn(conn)
+	if captiveportal.Observing(ctx) {
+		limited.status = new([12]byte)
+	}
 	ws, err := websocket.NewClient(config, limited)
 	if err != nil {
+		if limited.status != nil {
+			status := string(limited.status[:])
+			code, _ := strconv.Atoi(status[9:])
+			redirect := strings.HasPrefix(status, "HTTP/1.") && status[8] == ' ' && captiveportal.RedirectStatus(code)
+			captiveportal.Failed(ctx, conn.RemoteAddr().String(), redirect)
+		}
 		return nil, fmt.Errorf("WebSocket handshake failed")
 	}
 	limited.Release()

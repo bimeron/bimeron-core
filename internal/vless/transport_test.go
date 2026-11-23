@@ -26,7 +26,7 @@ func TestWebSocketTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &Client{endpoint: accesskey.Endpoint{Host: address}, settings: accesskey.VLESS{WSPath: "/"}}
-	ws, err := client.webSocket(conn, nil)
+	ws, err := client.webSocket(t.Context(), conn, nil)
 	if err != nil {
 		conn.Close()
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestWebSocketEarlyData(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &Client{endpoint: accesskey.Endpoint{Host: address}, settings: accesskey.VLESS{WSPath: "/"}}
-	ws, err := client.webSocket(conn, []byte("early-vless-header"))
+	ws, err := client.webSocket(t.Context(), conn, []byte("early-vless-header"))
 	if err != nil {
 		_ = conn.Close()
 		t.Fatal(err)

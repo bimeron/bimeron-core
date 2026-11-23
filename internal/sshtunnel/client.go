@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bimeron/internal/accesskey"
+	"bimeron/internal/captiveportal"
 	"bimeron/internal/displaytext"
 	"bimeron/internal/guard"
 	"bimeron/internal/safefile"
@@ -291,6 +292,7 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 	if err != nil {
 		return nil, err
 	}
+	evidenceCtx := ctx
 	a := newAttempt(ctx)
 	defer a.close()
 	ctx = a.ctx
@@ -369,8 +371,10 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		callback = policy.check
 	}
 	var hostKeyFailed atomic.Bool
+	var authenticatedServer atomic.Bool
 	config := &ssh.ClientConfig{User: p.SSH.User, Auth: methods, Timeout: 20 * time.Second,
 		HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
+			authenticatedServer.Store(true)
 			err := callback(host, remote, key)
 			if err != nil {
 				hostKeyFailed.Store(true)
@@ -379,9 +383,17 @@ func NewWithOptions(ctx context.Context, p accesskey.Profile, dialer net.Dialer,
 		},
 		HostKeyAlgorithms: order.algorithms(address, conn.RemoteAddr()),
 	}
-	sshConn, chans, reqs, err := ssh.NewClientConn(attemptConn{Conn: conn, cancel: a.cancel}, address, config)
+	handshake := &attemptConn{Conn: conn, cancel: a.cancel}
+	if captiveportal.Observing(evidenceCtx) {
+		handshake.prefix = new([5]byte)
+		captiveportal.Resolved(evidenceCtx, p.TCP.Host, conn.RemoteAddr().String())
+	}
+	sshConn, chans, reqs, err := ssh.NewClientConn(handshake, address, config)
 	stop()
 	if err != nil {
+		if handshake.prefix != nil && !authenticatedServer.Load() {
+			captiveportal.Failed(evidenceCtx, conn.RemoteAddr().String(), string(handshake.prefix[:]) == "HTTP/")
+		}
 		conn.Close()
 		if policy != nil {
 			if e := policy.result(); e != nil {

@@ -30,7 +30,7 @@ func TestHTTPUpgradeDataAfterResponse(t *testing.T) {
 		_, _ = server.Write(append([]byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"), payload...))
 	}()
 	c := &Client{settings: accesskey.VMess{ServerName: "example.com", WSPath: "/"}}
-	conn, err := c.httpUpgrade(client)
+	conn, err := c.httpUpgrade(t.Context(), client)
 	if err != nil {
 		t.Fatal(err)
 	}

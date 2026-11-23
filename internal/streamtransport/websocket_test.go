@@ -31,7 +31,7 @@ func TestWebSocketDataAfterUpgrade(t *testing.T) {
 		// One write puts the first frame into the handshake read-ahead.
 		_, _ = server.Write(append(frame, payload...))
 	}()
-	ws, err := WebSocket(client, "ws", "example.com", "/", nil)
+	ws, err := WebSocket(t.Context(), client, "ws", "example.com", "/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestWebSocketUpgradeResponseLimit(t *testing.T) {
 			go func() { written <- testutil.OversizedUpgrade(server, chunk) }()
 			done := make(chan error, 1)
 			go func() {
-				_, err := WebSocket(client, "ws", "example.com", "/", nil)
+				_, err := WebSocket(t.Context(), client, "ws", "example.com", "/", nil)
 				done <- err
 			}()
 			select {
