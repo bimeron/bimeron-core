@@ -45,6 +45,11 @@
       "en": "No DNS server is available to find the VPN server. Check your internet connection or set a DNS server in the profile.",
       "ru": "Нет DNS-сервера, через который можно найти VPN-сервер. Проверьте подключение к интернету или укажите DNS-сервер в профиле."
     },
+    "proof_unavailable": {
+      "kind": "connection",
+      "en": "The service could not verify the outcome of network recovery.",
+      "ru": "Службе не удалось подтвердить результат восстановления сети."
+    },
     "cleanup_failed_run_recover": {
       "kind": "connection",
       "en": "Network settings were not fully restored after disconnecting. Run network recovery to get your internet access back.",

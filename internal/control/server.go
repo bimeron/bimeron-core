@@ -28,6 +28,8 @@ const Version = 1
 const maxRequest = 16 * 1024
 
 type Request struct {
+	Operation          string   `json:"operation_id,omitempty"`
+	TargetSHA          string   `json:"target_sha256,omitempty"`
 	ResidualProfile    string   `json:"residual_profile,omitempty"`
 	ResidualGeneration string   `json:"residual_generation,omitempty"`
 	Installation       string   `json:"installation,omitempty"`
@@ -52,9 +54,10 @@ type LoggedEvent struct {
 	Event    core.Event `json:"event"`
 }
 type Response struct {
-	UpdateTransaction     string `json:"update_transaction,omitempty"`
-	UpdateCommitSupported bool   `json:"update_commit_supported,omitempty"`
-	closeAccepted         bool   // internal admission result; never serialized
+	Restore               *RestoreProof `json:"restore,omitempty"`
+	UpdateTransaction     string        `json:"update_transaction,omitempty"`
+	UpdateCommitSupported bool          `json:"update_commit_supported,omitempty"`
+	closeAccepted         bool          // internal admission result; never serialized
 
 	SessionBoundStats   bool                   `json:"session_bound_stats,omitempty"`
 	DaemonSessionGuards bool                   `json:"daemon_session_guards,omitempty"`
@@ -128,6 +131,8 @@ type Server struct {
 	shutdown              context.CancelFunc
 	closing               bool // protected by command
 	abandonOnExit         atomic.Bool
+	QueryRestore          func(net.Conn, Request) RestoreProof
+	FinalizeRestore       func(context.Context, Request, ProcessWatch) RestoreProof
 	UpdateCommitted       func(string)
 	WriteUpdateHold       func(string, string) error
 	RenewUpdateHold       func(string) func(string) error
@@ -347,6 +352,9 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			answer.DaemonSessionGuards = !s.foreground
 			c := core.PlatformCapabilities()
 			c.KillSwitchUpdateResume = s.supportsUpdateResume()
+			if s.QueryRestore != nil {
+				c.GuardedRestoreContract = 1
+			}
 			answer.Capabilities = &c
 			build := s.build()
 			answer.Core = &build
@@ -383,6 +391,9 @@ func (s *Server) dispatch(ctx context.Context, r Request) Response {
 			_, answer.SessionBoundStats = s.engine.(statsSnapshotProvider)
 			c := core.PlatformCapabilities()
 			c.KillSwitchUpdateResume = s.supportsUpdateResume()
+			if s.QueryRestore != nil {
+				c.GuardedRestoreContract = 1
+			}
 			answer.Capabilities = &c
 		case "events":
 			if r.Config != "" {
@@ -563,7 +574,16 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	var answer Response
-	if s.foregroundDispatch != nil {
+	if r.Command == "query_restore" || r.Operation != "" || r.TargetSHA != "" {
+		answer = Response{Version: Version, Instance: s.instance, ID: r.ID, Error: "invalid_request"}
+		if r.Command == "query_restore" && s.QueryRestore != nil && !s.foreground && strictRestoreKeys(line, "version", "id", "command", "instance", "operation_id") && r.Version == Version && r.Instance == s.instance && len(r.ID) > 0 && len(r.ID) <= 64 && restoreID(r.Operation) {
+			s.command.Lock()
+			proof := s.QueryRestore(c, r)
+			s.command.Unlock()
+			answer.Error = ""
+			answer.Restore = &proof
+		}
+	} else if s.foregroundDispatch != nil {
 		answer = s.foregroundDispatch(ctx, r)
 	} else {
 		answer = s.dispatch(ctx, r)

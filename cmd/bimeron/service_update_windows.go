@@ -84,7 +84,10 @@ func updateWindowsService(s *mgr.Service, expect updateExpectation) error {
 func updateWindowsServiceContext(ctx context.Context, s *mgr.Service, expect updateExpectation) error {
 	return updateWindowsServiceMode(ctx, s, expect, false)
 }
-func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool) (err error) {
+func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool) error {
+	return updateWindowsServiceGuarded(ctx, s, expect, forceActivate, nil)
+}
+func updateWindowsServiceGuarded(ctx context.Context, s *mgr.Service, expect updateExpectation, forceActivate bool, guard *restoreIntent) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -181,6 +184,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		return fmt.Errorf("wait for stable service state before updating")
 	}
 	wasRunning := status.State == svc.Running
+	if guard != nil && !wasRunning {
+		return fmt.Errorf("held restore requires running source")
+	}
 	if !wasRunning {
 		if expect.keepKillSwitch {
 			fmt.Println("warning: the service is stopped; no running session can keep kill switch protection during the update")
@@ -199,6 +205,16 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		answer, prepareErr := requestUpdateHold(ctx, s)
 		kept, message, err = updateHoldMessage(answer, prepareErr)
 		transaction = answer.UpdateTransaction
+		if guard != nil {
+			if prepareErr != nil || transaction == "" || answer.Instance != guard.Request.Instance || answer.Status.KillSwitch != core.KillSwitchResidual || answer.Status.ResidualReason != core.ResidualUpdate {
+				return fmt.Errorf("held restore preparation changed")
+			}
+			a, e := control.CallService(ctx, control.Request{Command: "status"})
+			image, imageErr := regularFileSHA256(target)
+			if e != nil || imageErr != nil || image != guard.InitialSHA256 || a.Instance != guard.Request.Instance || !a.Status.HasUpdateHold() || a.Status.ResidualProfile != guard.Request.Profile || a.Status.ResidualGeneration != guard.Request.Generation {
+				return fmt.Errorf("held restore identity changed")
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -217,6 +233,9 @@ func updateWindowsServiceMode(ctx context.Context, s *mgr.Service, expect update
 		profile, err = marker.StopOutcome(transaction)
 		if err == nil && kept && profile == "" {
 			return fmt.Errorf("prepared protection missing at update stop")
+		}
+		if guard != nil && profile != guard.Request.Profile {
+			return fmt.Errorf("unexpected stopped profile")
 		}
 		kept = profile != ""
 		return err

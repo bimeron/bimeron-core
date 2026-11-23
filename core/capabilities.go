@@ -11,20 +11,21 @@ import (
 // Capabilities describes what the current build supports on this platform.
 // A GUI should read these instead of assuming feature parity across targets.
 type Capabilities struct {
-	GeoIPSplit    bool              `json:"geoip_split"`
-	GeoSiteSplit  bool              `json:"geosite_split"`
-	GeoDataSchema string            `json:"geodata_schema"`
-	IKEv2         IKEv2Capabilities `json:"ikev2"`
-	Platform      string            `json:"platform"`
-	VPN           bool              `json:"vpn"`
-	Proxy         bool              `json:"proxy"`
-	IPv4          bool              `json:"ipv4"`
-	IPv6          bool              `json:"ipv6"`
-	IPSplit       bool              `json:"ip_split"`
-	DomainSplit   bool              `json:"domain_split"`
-	AppSplit      bool              `json:"app_split"`
-	KillSwitch    bool              `json:"kill_switch"`
-	Daemon        bool              `json:"daemon"`
+	GuardedRestoreContract int               `json:"guarded_restore_contract,omitempty"`
+	GeoIPSplit             bool              `json:"geoip_split"`
+	GeoSiteSplit           bool              `json:"geosite_split"`
+	GeoDataSchema          string            `json:"geodata_schema"`
+	IKEv2                  IKEv2Capabilities `json:"ikev2"`
+	Platform               string            `json:"platform"`
+	VPN                    bool              `json:"vpn"`
+	Proxy                  bool              `json:"proxy"`
+	IPv4                   bool              `json:"ipv4"`
+	IPv6                   bool              `json:"ipv6"`
+	IPSplit                bool              `json:"ip_split"`
+	DomainSplit            bool              `json:"domain_split"`
+	AppSplit               bool              `json:"app_split"`
+	KillSwitch             bool              `json:"kill_switch"`
+	Daemon                 bool              `json:"daemon"`
 	// ExplicitAccess lists protocols accepted as explicit [AccessKey]
 	// parameters; "naive_quic" is Type = naive with Network = quic.
 	ExplicitAccess []string `json:"explicit_access"`

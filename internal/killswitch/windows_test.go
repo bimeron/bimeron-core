@@ -416,3 +416,27 @@ func TestImagePermittedMatchesProtectingExecutable(t *testing.T) {
 		t.Fatal("core permit must match the installed app ID")
 	}
 }
+
+func TestRecoverGeneration(t *testing.T) {
+	owned := priorRule()
+	foreign := &wf.Rule{ID: wf.RuleID(windows.GUID{Data1: 7})}
+	f := &fakeAPI{rules: []*wf.Rule{owned, foreign}, hasLayer: true, hasProvider: true}
+	gen, err := ruleGeneration([]*wf.Rule{owned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverGeneration(f, "stale"); err == nil || len(f.rules) != 2 {
+		t.Fatal("stale generation mutated rules")
+	}
+	f.deleteErr = true
+	if err := recoverGeneration(f, gen); err == nil || len(f.rules) != 2 || !f.hasLayer || !f.hasProvider {
+		t.Fatal("failed transaction changed protection")
+	}
+	f.deleteErr = false
+	if err := recoverGeneration(f, gen); err != nil || len(f.rules) != 1 || f.rules[0] != foreign {
+		t.Fatal("incorrect committed rule set", err)
+	}
+	if err := recoverGeneration(f, gen); err == nil {
+		t.Fatal("consumed generation accepted")
+	}
+}

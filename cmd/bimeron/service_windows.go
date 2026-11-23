@@ -29,6 +29,7 @@ import (
 const serviceName = "BimeronCore"
 
 var windowsUpdateArtifactContract string
+var guardedRestoreTargetBuild string
 
 type windowsService struct {
 	owner  string
@@ -78,7 +79,11 @@ func (h windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	defer cancel()
 	done := make(chan error, 1)
 	hold := h.holdRecord()
-	server := control.NewServer(core.New(core.Options{ResidualProtection: true, UpdateHold: hold}))
+	engine := core.New(core.Options{ResidualProtection: true, UpdateHold: hold})
+	server := control.NewServer(engine)
+	if hold != nil && guardedRestoreTargetBuild == "1" {
+		wireRestoreService(server, engine, h.owner, hold)
+	}
 	// An update hold lasts only while the updater that asked for it runs.
 	server.PeerProcess = control.PipePeerProcess
 	var transaction, protectedProfile string

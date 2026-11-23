@@ -37,7 +37,33 @@ func (s *Server) readinessConnection(ctx context.Context, c net.Conn) {
 		return
 	}
 	var r Request
-	if json.NewDecoder(io.LimitReader(c, 1024)).Decode(&r) != nil {
+	var raw json.RawMessage
+	if json.NewDecoder(io.LimitReader(c, 1024)).Decode(&raw) != nil || json.Unmarshal(raw, &r) != nil {
+		return
+	}
+	if r.Command == "finalize_restore" {
+		if s.FinalizeRestore == nil || s.PeerProcess == nil || !strictForegroundJSON(raw) || !strictRestoreKeys(raw, "version", "id", "command", "operation_id", "instance", "residual_profile", "residual_generation", "target_sha256") || r.Version != Version || r.Instance != s.instance || !restoreID(r.Operation) || len(r.ID) == 0 || len(r.ID) > 64 {
+			return
+		}
+		peer := s.PeerProcess(c)
+		if peer == nil {
+			return
+		}
+		defer peer.Close()
+		s.command.Lock()
+		defer s.command.Unlock()
+		if s.closing || !peer.Alive() {
+			return
+		}
+		_ = c.SetDeadline(time.Time{})
+		operation, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		proof := s.FinalizeRestore(operation, r, peer)
+		_ = c.SetWriteDeadline(time.Now().Add(time.Second))
+		_ = json.NewEncoder(c).Encode(Response{Version: Version, ID: r.ID, Instance: s.instance, Restore: &proof})
+		return
+	}
+	if r.Operation != "" || r.TargetSHA != "" {
 		return
 	}
 	var peer ProcessWatch

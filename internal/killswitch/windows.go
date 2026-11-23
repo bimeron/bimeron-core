@@ -86,6 +86,10 @@ func FilterGeneration() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return ruleGeneration(rules)
+}
+
+func ruleGeneration(rules []*wf.Rule) (string, error) {
 	if len(rules) == 0 {
 		return "", errors.New("no installed kill switch rules")
 	}
@@ -370,6 +374,10 @@ func remove(s api) error {
 	if err != nil {
 		return err
 	}
+	return removeRules(s, rules)
+}
+func removeRules(s api, rules []*wf.Rule) error {
+	var err error
 	for _, r := range rules {
 		if err = s.DeleteRule(r.ID); err != nil {
 			return err
@@ -392,4 +400,31 @@ func Recover() error {
 	}
 	defer s.Close()
 	return s.Transaction(func() error { return remove(s) })
+}
+
+// RecoverGeneration removes the matching protection while the caller holds network ownership.
+func RecoverGeneration(expected string) error {
+	s, err := open()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return recoverGeneration(s, expected)
+}
+
+func recoverGeneration(s api, expected string) error {
+	return s.Transaction(func() error {
+		rules, err := owned(s)
+		if err != nil {
+			return err
+		}
+		actual, err := ruleGeneration(rules)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return errors.New("installed filter generation changed")
+		}
+		return removeRules(s, rules)
+	})
 }
