@@ -21,6 +21,41 @@ func TestEmbeddedCompatibilityMatchesSource(t *testing.T) {
 	}
 }
 
+func TestReviewedDesktopVersionBounds(t *testing.T) {
+	compat, err := ReviewedCompatibility()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"0.3.0", false},
+		{"0.3.1-rc.1", false},
+		{"0.3.1", true},
+		{"0.3.2", true},
+		{"0.3.3", true},
+		{"0.4.0", true},
+		{"0.4.1-rc.1", true},
+		{"0.4.1", true},
+		{"0.4.2-0", false},
+		{"0.4.2-0.1", false},
+		{"0.4.2-alpha.1", false},
+		{"0.4.2", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			min, minErr := CompareVersions(tc.version, compat.Min)
+			max, maxErr := CompareVersions(tc.version, compat.Max)
+			if minErr != nil || maxErr != nil {
+				t.Fatalf("compare Desktop version: %v, %v", minErr, maxErr)
+			}
+			if got := min >= 0 && max < 0; got != tc.want {
+				t.Fatalf("within reviewed Desktop interval = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEmbeddedCompatibilityFailsClosed(t *testing.T) {
 	original := compatibilityJSON
 	t.Cleanup(func() { compatibilityJSON = original })

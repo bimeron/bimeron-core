@@ -65,7 +65,7 @@ func TestManifestGenerationAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.3.1"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.3.3"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
+	if !strings.Contains(string(data), `"channel": "beta"`) || !strings.Contains(string(data), `"size":`) || !strings.Contains(string(data), `"gui_min": "0.3.1"`) || !strings.Contains(string(data), `"gui_max_exclusive": "0.4.2-0"`) || !strings.Contains(string(data), `"gui_reviewed": true`) {
 		t.Fatal(string(data))
 	}
 	var manifest struct {
