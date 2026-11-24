@@ -64,7 +64,7 @@ func keyOf(s string) Key      { k, _ := parseKey(s); return k }
 func TestImportURIRejections(t *testing.T) {
 	base := "wireguard://" + url.QueryEscape(testKey(1)) + "@vpn.example.test:51820?publickey=" + url.QueryEscape(testKey(2)) + "&address=10.0.0.2/32"
 	cases := map[string]string{
-		base + "&reserved=1,2,3":       "wireguard_reserved_unsupported",
+		base + "&reserved=1,2,256":     "number_invalid",
 		base + "&workers=2":            "uri_option_unsupported",
 		base + "&mtu=1&mtu=2":          "uri_option_unsupported",
 		"wireguard://vpn.example.test": "wireguard_endpoint_invalid",

@@ -104,11 +104,25 @@ func TestWireGuardBridgeDetectImportCapabilities(t *testing.T) {
 		t.Fatalf("import %s", raw)
 	}
 	r, raw = callWireGuard(t, map[string]any{"version": 1, "op": "import_uri", "uri": strings.Replace(link, "#Home", "&reserved=1,2,3", 1)})
-	if r.Text != nil || r.Error == "" || problemCode(r) != "wireguard_reserved_unsupported" || strings.Contains(raw, bridgeKey(1)) {
+	if r.Text == nil || r.Error != "" || problemCode(r) != "" || r.Fields["Peer/Reserved"] != "1, 2, 3" {
 		t.Fatalf("reserved %s", raw)
 	}
+	hyphen := strings.Replace(strings.Replace(link, "wireguard://", "wg://", 1), "#Home", "&reserved=0-12-255#Home", 1)
+	r, raw = callWireGuard(t, map[string]any{"version": 1, "op": "import_uri", "uri": hyphen})
+	if r.Text == nil || problemCode(r) != "" || r.Fields["Peer/Reserved"] != "0, 12, 255" {
+		t.Fatalf("reserved %s", raw)
+	}
+	b64 := strings.Replace(hyphen, "0-12-255", url.QueryEscape(base64.StdEncoding.EncodeToString([]byte{255, 255, 254})), 1)
+	r, raw = callWireGuard(t, map[string]any{"version": 1, "op": "import_uri", "uri": b64})
+	if r.Text == nil || problemCode(r) != "" || r.Fields["Peer/Reserved"] != "255, 255, 254" {
+		t.Fatalf("base64 reserved %s", raw)
+	}
+	r, raw = callWireGuard(t, map[string]any{"version": 1, "op": "import_uri", "uri": strings.Replace(hyphen, "#Home", "&enable_amnezia=true#Home", 1)})
+	if r.Text != nil || problemCode(r) != "wireguard_reserved_unsupported" || strings.Contains(raw, bridgeKey(1)) {
+		t.Fatalf("combined reserved and AWG %s", raw)
+	}
 	r, _ = callWireGuard(t, map[string]any{"version": 1, "op": "capabilities"})
-	if r.Capabilities == nil || !r.Capabilities.Supported || r.Capabilities.DocumentAPI != 1 {
+	if r.Capabilities == nil || !r.Capabilities.Supported || !r.Capabilities.Reserved || r.Capabilities.DocumentAPI != 1 {
 		t.Fatal("capabilities")
 	}
 	for _, bad := range []any{
@@ -123,6 +137,50 @@ func TestWireGuardBridgeDetectImportCapabilities(t *testing.T) {
 		if r.Error == "" {
 			t.Fatalf("accepted %v", bad)
 		}
+	}
+}
+
+func TestWireGuardBridgeReservedRoundTrip(t *testing.T) {
+	original := strings.Replace(bridgeWG(), "Jc = 4\nS3 = 10\n", "", 1)
+	edit := func(text, section, key, value string) wireguardResponse {
+		t.Helper()
+		r, _ := callWireGuard(t, map[string]any{"version": 1, "op": "edit", "text": text, "operations": []any{
+			map[string]string{"op": "set_field", "section": section, "key": key, "value": value},
+		}})
+		if r.Error != "" || r.Text == nil || problemCode(r) != "" {
+			t.Fatalf("edit %s failed: %s", key, problemCode(r))
+		}
+		return r
+	}
+	r := edit(original, "Peer", "Reserved", "0, 12, 255")
+	if r.Fields["Peer/Reserved"] != "0, 12, 255" {
+		t.Fatal("missing reserved field")
+	}
+	saved := *r.Text
+	r, _ = callWireGuard(t, map[string]any{"version": 1, "op": "inspect", "text": saved})
+	if problemCode(r) != "" || r.Fields["Peer/Reserved"] != "0, 12, 255" {
+		t.Fatal("reopen lost reserved field")
+	}
+	r = edit(saved, "Interface", "MTU", "1280")
+	if !strings.Contains(*r.Text, "Reserved = 0, 12, 255") {
+		t.Fatal("unrelated edit lost reserved field")
+	}
+	r = edit(*r.Text, "Peer", "Reserved", "")
+	if _, exists := r.Fields["Peer/Reserved"]; exists || strings.Contains(*r.Text, "Reserved") {
+		t.Fatal("clear retained reserved field")
+	}
+	for _, value := range []string{"1,2", "1,,2,3", "-1,2,3", "1,2,256", "1,2,pasted-secret"} {
+		r, _ := callWireGuard(t, map[string]any{"version": 1, "op": "inspect", "text": original + "Reserved = " + value + "\n"})
+		if problemCode(r) != "number_invalid" || (*r.Problems)[0].Field != "Reserved" || strings.Contains((*r.Problems)[0].Error(), "pasted-secret") {
+			t.Fatal("invalid reserved diagnostic")
+		}
+	}
+	path := filepath.Join(t.TempDir(), "reserved.conf")
+	if err := os.WriteFile(path, []byte(saved), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadAny(path); err != nil {
+		t.Fatalf("runtime load: %v", err)
 	}
 }
 

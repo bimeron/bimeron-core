@@ -3,6 +3,7 @@ package wgconf
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"net/url"
 	"slices"
@@ -142,9 +143,14 @@ func importWireGuardURI(raw string) (Imported, error) {
 		}
 		switch normalized {
 		case "reserved":
-			if !zeroReserved(value) {
-				return Imported{}, problem.New("wireguard_reserved_unsupported", "WireGuard reserved bytes are not supported")
+			if zeroReserved(value) {
+				continue
 			}
+			reserved, err := parseURIReserved(value)
+			if err != nil {
+				return Imported{}, problem.Of(err).In(Peer).At("Reserved")
+			}
+			fields["Peer/Reserved"] = fmt.Sprintf("%d, %d, %d", reserved[0], reserved[1], reserved[2])
 			continue
 		case "enableamnezia":
 			if amnezia, _ = uriBool(value); amnezia == "" {
@@ -190,7 +196,29 @@ func importWireGuardURI(raw string) (Imported, error) {
 	if err != nil {
 		return Imported{}, err
 	}
+	if fields["Peer/Reserved"] != "" {
+		doc, err := ParseDocument(text)
+		if err != nil {
+			return Imported{}, err
+		}
+		protocol, _ := doc.Protocol()
+		if amnezia == "true" || protocol == ProtocolAmneziaWG {
+			return Imported{}, reservedWithAWG()
+		}
+	}
 	return Imported{Text: text, Name: u.Fragment}, nil
+}
+
+func parseURIReserved(value string) ([3]byte, error) {
+	if len(value) == 4 {
+		if decoded, err := base64.StdEncoding.Strict().DecodeString(value); err == nil && len(decoded) == 3 {
+			return [3]byte(decoded), nil
+		}
+	}
+	if !strings.Contains(value, ",") {
+		value = strings.ReplaceAll(value, "-", ",")
+	}
+	return parseReserved(value)
 }
 
 // zeroReserved accepts an absent reserved field: decimal bytes separated by
@@ -220,7 +248,7 @@ var canonicalOrder = func() []string {
 	for _, k := range AWGKeys {
 		out = append(out, "Interface/"+k)
 	}
-	return append(out, "Peer/PublicKey", "Peer/PresharedKey", "Peer/Endpoint", "Peer/AllowedIPs", "Peer/PersistentKeepalive")
+	return append(out, "Peer/PublicKey", "Peer/PresharedKey", "Peer/Endpoint", "Peer/AllowedIPs", "Peer/PersistentKeepalive", "Peer/Reserved")
 }()
 
 // Build renders fields as canonical wg-quick text. Empty values are omitted.

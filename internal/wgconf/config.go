@@ -60,6 +60,7 @@ type Config struct {
 type PeerConfig struct {
 	PublicKey    Key
 	PresharedKey Key
+	Reserved     [3]byte
 	// EndpointHost is an IP literal or a DNS name; EndpointPort is 1-65535.
 	EndpointHost string
 	EndpointPort int
@@ -203,6 +204,25 @@ func (d *Document) Config() (*Config, error) {
 		return nil, p
 	}
 	return c, nil
+}
+
+func parseReserved(value string) ([3]byte, error) {
+	var reserved [3]byte
+	invalid := func() ([3]byte, error) {
+		return [3]byte{}, problem.New("number_invalid", "WireGuard Reserved must contain three comma-separated decimal bytes (0–255)")
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) != len(reserved) {
+		return invalid()
+	}
+	for i, part := range parts {
+		n, err := strconv.ParseUint(strings.TrimSpace(part), 10, 8)
+		if err != nil {
+			return invalid()
+		}
+		reserved[i] = byte(n)
+	}
+	return reserved, nil
 }
 
 var requiredKeys = map[string]bool{"PrivateKey": true, "Address": true, "PublicKey": true, "Endpoint": true, "AllowedIPs": true}
@@ -417,6 +437,10 @@ func (c *Config) set(section, key, value string) error {
 			return problem.New("host_invalid", "invalid WireGuard endpoint host")
 		}
 		c.Peer.EndpointHost, c.Peer.EndpointPort = host, n
+	case "Peer/Reserved":
+		reserved, err := parseReserved(value)
+		c.Peer.Reserved = reserved
+		return err
 	case "Peer/AllowedIPs":
 		for _, item := range listItems(value) {
 			p, ok := parsePrefix(item)
@@ -621,6 +645,9 @@ func (c *Config) PacketSizes() (handshake, transport, junk, signature int) {
 var defaultHeaders = [4]Range{{1, 1}, {2, 2}, {3, 3}, {4, 4}}
 
 func (c *Config) validateCombinations() error {
+	if c.Peer.Reserved != [3]byte{} && c.Protocol() == ProtocolAmneziaWG {
+		return reservedWithAWG()
+	}
 	awg := func(code, message, field string) *problem.Error {
 		return problem.New(code, message).In(Interface).At(field).Arg("param", field)
 	}
@@ -666,4 +693,8 @@ func (c *Config) validateCombinations() error {
 		return problem.New("number_out_of_range", "IPv6 tunnel addresses require MTU of at least 1280").In(Interface).At("MTU").Arg("min", "1280").Arg("max", "9000")
 	}
 	return nil
+}
+
+func reservedWithAWG() *problem.Error {
+	return problem.New("wireguard_reserved_unsupported", "Nonzero WireGuard Reserved is only supported for plain WireGuard").In(Peer).At("Reserved")
 }
